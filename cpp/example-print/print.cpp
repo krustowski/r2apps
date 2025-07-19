@@ -1,4 +1,4 @@
-#include "syscall.h"
+#include "syscall.hpp"
 
 extern "C" int64_t syscall(int64_t number, int64_t arg1, int64_t arg2, int64_t arg3) 
 {
