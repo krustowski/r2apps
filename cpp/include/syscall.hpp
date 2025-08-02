@@ -24,14 +24,15 @@ static_assert(sizeof(int64_t) == 8, "Type int64_t is required to be 64bit (8 byt
  *  change in the future --- a syscall is reassigned to the different value).
  */
 enum SyscallNumber: int64_t {
-	ScNull,
+	ScExit,
 	ScSysinfo,
 	// [...]
 	ScMalloc = 0x0f,
 	// [...]
 	ScPrints = 0x10,
 	// [...]
-	ScReadFile = 0x20
+	ScReadFile = 0x20,
+	ScWriteFile = 0x21
 };
 
 /*
@@ -44,6 +45,11 @@ enum SyscallNumber: int64_t {
  *  
  */
 extern "C" int64_t syscall(int64_t number, int64_t arg1, int64_t arg2, int64_t arg3);
+
+void exit(int64_t pid, int64_t code);
+int64_t print(const char *str);
+int64_t read_file(const char *name, char *buffer);
+int64_t write_file(const char *name, const char *buffer);
 
 /*
  *  SysInfo_T structure
