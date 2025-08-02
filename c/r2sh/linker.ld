@@ -1,4 +1,4 @@
-/* Linker script for a basic C++ project memory layout */
+/* Linker script for a basic C project memory layout */
 ENTRY(main)
 
 PHDRS {
