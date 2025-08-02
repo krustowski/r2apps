@@ -20,7 +20,7 @@ void exit(int64_t pid, int64_t code)
 	{}
 }
 
-int64_t print(const char *str) 
+int64_t print(const uint8_t *str) 
 {
 	int64_t len = 0;
 	while (str[len]) ++len;
@@ -36,7 +36,7 @@ int64_t print(const char *str)
 	return len;
 }
 
-int64_t read_file(const char *name, char *buffer)
+int64_t read_file(const uint8_t *name, uint8_t *buffer)
 {
 	int64_t len = 0;
 	while (name[len]) ++len;
@@ -54,7 +54,7 @@ int64_t read_file(const char *name, char *buffer)
 	return 0;
 }
 
-int64_t write_file(const char *name, const char *buffer)
+int64_t write_file(const uint8_t *name, const uint8_t *buffer)
 {
 	int64_t len = 0;
 	while (name[len]) ++len;
@@ -72,17 +72,14 @@ int64_t write_file(const char *name, const char *buffer)
 	return 0;
 }
 
-int64_t list_dir(int64_t cluster)
+int64_t list_dir(int64_t cluster, Entry_T entries[32])
 {
-	int i = 0;
-	Entry_T entries[32];
-
-	if (syscall(ScListDir, cluster, (int64_t)&entries, 0))
+	if (syscall(ScListDir, cluster, (int64_t)entries, 0))
 	{
 		return 0;
 	}
 
-	for (i = 0; i < 32; i++) 
+	for (uint8_t i = 0; i < 32; i++) 
 	{
 		if (entries[i].name[0] == 0x00) 
 		{
@@ -90,7 +87,7 @@ int64_t list_dir(int64_t cluster)
 		}
 
 		print(" ");
-		print( (const char*)&(entries[i].name) );
+		print( (const uint8_t*)(entries[i].name) );
 		print("\n");
 	}
 
