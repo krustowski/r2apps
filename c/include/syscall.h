@@ -46,29 +46,63 @@ enum SyscallNumber: int64_t {
  *  have to be 64bit (8 bytes long).
  *  The implemented function prototype is to wrap a raw interrupt settings provided via 
  *  inline x86 assembly.
- *  
  */
 int64_t syscall(int64_t number, int64_t arg1, int64_t arg2, int64_t arg3);
 
+/*
+ *  void exit() prototype
+ *
+ *  Implementation of syscall 0x00.
+ */
 void exit(int64_t pid, int64_t code);
-int64_t print(const char *str);
-int64_t read_file(const char *name, char *buffer);
-int64_t write_file(const char *name, const char *buffer);
-int64_t list_dir();
 
 /*
- *  SysInfo_T structure
+ *  int64_t print() prototype
+ *
+ *  Implementation of syscall 0x10.
+ */
+int64_t print(const char *str);
+
+/*
+ *  int64_t read_file() prototype
+ *
+ *  Implementation of syscall 0x20.
+ */
+int64_t read_file(const char *name, char *buffer);
+
+/*
+ *  int64_t write_file() prototype
+ *
+ *  Implementation of syscall 0x21.
+ */
+int64_t write_file(const char *name, const char *buffer);
+
+/*
+ *  int64_t list_dir() prototype
+ *
+ *  Implementation of syscall 0x28.
+ */
+int64_t list_dir(int64_t cluster);
+
+/*
+ *  type SysInfo_T structure
  *
  *  This structure is used when invoking the syscall with ScSysinfo and value of `0x01` in the 
  *  first argument, whereas the second argument is for a pointer to SysInfo_T instance.
  */
 typedef struct {
-	char *system_name;
-	char *system_user;
-	char *system_version;
-	int   system_uptime;
-} SysInfo_T;
+	uint8_t system_name[32];
+	uint8_t system_user[32];
+	uint8_t system_version[9];
+	uint32_t  system_uptime;
+} __attribute__((packed)) SysInfo_T;
 
+/*
+ *  type Entry_T structure
+ *
+ *  This structure is to contain all attributes and info about a directory entry. Related 
+ *  syscalls can be found in the Filesystem section of the ABI specification doc: 0x20--0x2f
+ */
 #pragma pack(push, 1)
 typedef struct {
 	uint8_t name[8];
