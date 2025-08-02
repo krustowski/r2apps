@@ -20,6 +20,26 @@ void exit(int64_t pid, int64_t code)
 	{}
 }
 
+int64_t read_sysinfo(SysInfo_T *sysinfo)
+{
+	if (syscall(ScSysInfo, 0x01, (int64_t)sysinfo, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+int64_t write_sysinfo(const SysInfo_T *sysinfo)
+{
+	if (syscall(ScSysInfo, 0x02, (int64_t)sysinfo, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
 int64_t print(const uint8_t *str) 
 {
 	int64_t len = 0;

@@ -65,7 +65,7 @@ typedef struct {
  */
 enum SyscallNumber: int64_t {
 	ScExit,
-	ScSysinfo,
+	ScSysInfo,
 	// [...]
 	ScMalloc = 0x0f,
 	// [...]
@@ -92,6 +92,20 @@ int64_t syscall(int64_t number, int64_t arg1, int64_t arg2, int64_t arg3);
  *  Implementation of syscall 0x00.
  */
 void exit(int64_t pid, int64_t code);
+
+/*
+ *  int64_t read_sysinfo() prototype
+ *
+ *  Implementation of syscall 0x01 (arg1 0x01).
+ */
+int64_t read_sysinfo(SysInfo_T *sysinfo);
+
+/*
+ *  int64_t write_sysinfo() prototype
+ *
+ *  Implementation of syscall 0x01 (arg1 0x02).
+ */
+int64_t write_sysinfo(const SysInfo_T *sysinfo);
 
 /*
  *  int64_t print() prototype
