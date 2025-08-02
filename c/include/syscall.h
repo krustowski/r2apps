@@ -15,6 +15,11 @@
 
 typedef long int64_t;
 
+typedef unsigned char 	uint8_t;
+typedef unsigned short 	uint16_t;
+typedef unsigned int 	uint32_t;
+typedef unsigned long 	uint64_t;
+
 /*
  *  SyscallNumber enumeration
  *
@@ -66,19 +71,19 @@ typedef struct {
 
 #pragma pack(push, 1)
 typedef struct {
-	char name[8];
-	char ext[3];
-	char attr;
-	char reserved;
-	char tenths;
-	unsigned short create_time;
-	unsigned short create_date;
-	unsigned short last_access_time;
-	unsigned short high_cluster;
-	unsigned short write_time;
-	unsigned short write_date;
-	unsigned short start_cluster;
-	unsigned int file_size;
+	uint8_t name[8];
+	uint8_t ext[3];
+	uint8_t attr;
+	uint8_t reserved;
+	uint8_t tenths;
+	uint16_t create_time;
+	uint16_t create_date;
+	uint16_t last_access_time;
+	uint16_t high_cluster;
+	uint16_t write_time;
+	uint16_t write_date;
+	uint16_t start_cluster;
+	uint32_t file_size;
 } Entry_T;
 #pragma pack(pop)
 

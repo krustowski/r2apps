@@ -72,12 +72,12 @@ int64_t write_file(const char *name, const char *buffer)
 	return 0;
 }
 
-int64_t list_dir()
+int64_t list_dir(int64_t cluster)
 {
 	int i = 0;
 	Entry_T entries[32];
 
-	if (syscall(ScListDir, 0, (int64_t)&entries, 0))
+	if (syscall(ScListDir, cluster, (int64_t)&entries, 0))
 	{
 		return 0;
 	}
@@ -89,6 +89,7 @@ int64_t list_dir()
 			continue;
 		}
 
+		print(" ");
 		print( (const char*)&(entries[i].name) );
 		print("\n");
 	}

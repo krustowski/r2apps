@@ -1,9 +1,10 @@
 # rou2exOS apps
 
-An application suite for the [rou2exOS kernel](https://github.com/krustowski/rou2exOS). All aplications must follow the syscall [ABI specification](https://github.com/krustowski/rou2exOS/blob/master/docs/ABI_OVERVIEW.md). 
+An application suite for the [rou2exOS kernel](https://github.com/krustowski/rou2exOS). All aplications must follow (implement) the syscall [ABI specification](https://github.com/krustowski/rou2exOS/blob/master/docs/ABI_OVERVIEW.md). 
 
 Languages currently implementing (parts of) the ABI:
 
++ C
 + C++
 + Go (using TinyGo)
 + NASM 

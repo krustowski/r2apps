@@ -19,9 +19,9 @@ int main(int64_t pid, int64_t *args)
 	    print(rbuffer);
     }
 
-    if (list_dir()) 
+    if (!list_dir(0)) 
     {
-	    print("*** Pochcal sem sa\n");
+	    print("*** Empty cluster\n");
     }
 
     exit(123, 999);
