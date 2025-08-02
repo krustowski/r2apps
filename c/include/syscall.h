@@ -30,7 +30,8 @@ enum SyscallNumber: int64_t {
 	ScPrints = 0x10,
 	// [...]
 	ScReadFile = 0x20,
-	ScWriteFile = 0x21
+	ScWriteFile = 0x21,
+	ScListDir = 0x28
 };
 
 /*
@@ -48,6 +49,7 @@ void exit(int64_t pid, int64_t code);
 int64_t print(const char *str);
 int64_t read_file(const char *name, char *buffer);
 int64_t write_file(const char *name, const char *buffer);
+int64_t list_dir();
 
 /*
  *  SysInfo_T structure
@@ -55,11 +57,29 @@ int64_t write_file(const char *name, const char *buffer);
  *  This structure is used when invoking the syscall with ScSysinfo and value of `0x01` in the 
  *  first argument, whereas the second argument is for a pointer to SysInfo_T instance.
  */
-struct SysInfo_T {
+typedef struct {
 	char *system_name;
 	char *system_user;
 	char *system_version;
 	int   system_uptime;
-};
+} SysInfo_T;
+
+#pragma pack(push, 1)
+typedef struct {
+	char name[8];
+	char ext[3];
+	char attr;
+	char reserved;
+	char tenths;
+	unsigned short create_time;
+	unsigned short create_date;
+	unsigned short last_access_time;
+	unsigned short high_cluster;
+	unsigned short write_time;
+	unsigned short write_date;
+	unsigned short start_cluster;
+	unsigned int file_size;
+} Entry_T;
+#pragma pack(pop)
 
 #endif

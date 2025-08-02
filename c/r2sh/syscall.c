@@ -72,3 +72,27 @@ int64_t write_file(const char *name, const char *buffer)
 	return 0;
 }
 
+int64_t list_dir()
+{
+	int i = 0;
+	Entry_T entries[32];
+
+	if (syscall(ScListDir, 0, (int64_t)&entries, 0))
+	{
+		return 0;
+	}
+
+	for (i = 0; i < 32; i++) 
+	{
+		if (entries[i].name[0] == 0x00) 
+		{
+			continue;
+		}
+
+		print( (const char*)&(entries[i].name) );
+		print("\n");
+	}
+
+	return 1;
+}
+

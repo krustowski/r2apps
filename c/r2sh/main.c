@@ -2,26 +2,26 @@
 
 int main(int64_t pid, int64_t *args)
 {
-    const char *s = "*** Hello from C!\n";
-
     const char *filename = "C.TXT";
-
     const char *wbuffer = "Written from C\n";
-    const char *written = "*** Written to a file\n";
-
-    print(s);
-
-
-    if (write_file(filename, wbuffer))
-    {
-	    print(written);
-    }
 
     char rbuffer[512];
 
-    if(read_file(filename, rbuffer))
+    print("*** Hello from C\n");
+
+    if (write_file(filename, wbuffer))
+    {
+	    print("*** Written to a file\n");
+    }
+
+    if (read_file(filename, rbuffer))
     {
 	    print(rbuffer);
+    }
+
+    if (list_dir()) 
+    {
+	    print("*** Pochcal sem sa\n");
     }
 
     exit(123, 999);
