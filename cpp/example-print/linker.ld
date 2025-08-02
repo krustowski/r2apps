@@ -12,7 +12,6 @@ SECTIONS
 
   .text :
   {
-    /*KEEP(*(.isr_vector))*/
     KEEP(*(.text.main))
     *(.text.)
     *(.rodata*)

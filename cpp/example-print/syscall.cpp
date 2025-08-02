@@ -12,9 +12,9 @@ extern "C" int64_t syscall(int64_t number, int64_t arg1, int64_t arg2, int64_t a
     return ret;
 }
 
-void exit(int64_t code)
+void exit(int64_t pid, int64_t code)
 {
-	syscall(ScNull, code, 0, 0);
+	syscall(ScExit, pid, code, 0);
 
 	for (;;)
 	{}
@@ -54,20 +54,21 @@ int64_t read_file(const char *name, char *buffer)
 	return 0;
 }
 
-extern "C" void main()
+int64_t write_file(const char *name, const char *buffer)
 {
-    const char *s = "Hello from C++!\n";
+	int64_t len = 0;
+	while (name[len]) ++len;
 
-    print(s);
+	if (len > 0)
+	{
+		if (syscall(ScWriteFile, (int64_t)name, (int64_t)buffer, 0))
+		{
+			return 0;
+		}
 
-    const char *filename = "HELLO.TXT";
-    char buffer[512];
+		return 1;
+	}
 
-    if (read_file(filename, buffer))
-    {
-	    print(buffer);
-    }
-
-    exit(999);
+	return 0;
 }
 
