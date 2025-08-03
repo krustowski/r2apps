@@ -29,6 +29,7 @@ typedef unsigned long 	uint64_t;
 typedef struct {
 	uint8_t system_name[32];
 	uint8_t system_user[32];
+	uint8_t system_path[32];
 	uint8_t system_version[8];
 	uint32_t  system_uptime;
 } __attribute__((packed)) SysInfo_T;
@@ -39,7 +40,6 @@ typedef struct {
  *  This structure is to contain all attributes and info about a directory entry. Related 
  *  syscalls can be found in the Filesystem section of the ABI specification doc: 0x20--0x2f
  */
-#pragma pack(push, 1)
 typedef struct {
 	uint8_t name[8];
 	uint8_t ext[3];
@@ -54,8 +54,7 @@ typedef struct {
 	uint16_t write_date;
 	uint16_t start_cluster;
 	uint32_t file_size;
-} Entry_T;
-#pragma pack(pop)
+} __attribute__((packed)) Entry_T;
 
 /*
  *  SyscallNumber enumeration
@@ -65,15 +64,25 @@ typedef struct {
  */
 enum SyscallNumber: int64_t {
 	ScExit,
+	// System + Memory Management
 	ScSysInfo,
-	// [...]
+	ScRTC,
+	ScFree = 0x0d,
+	ScRealloc = 0x0e,
 	ScMalloc = 0x0f,
-	// [...]
+	// Video
 	ScPrints = 0x10,
-	// [...]
+	// Filesystem
 	ScReadFile = 0x20,
 	ScWriteFile = 0x21,
-	ScListDir = 0x28
+	ScListDir = 0x28,
+	// Port IO + Networking
+	ScWritePort = 0x30,
+	ScReadPort = 0x31,
+	// Audio
+	ScPlayFreq = 0x40,
+	ScPlayFile = 0x41,
+	ScPlayStop = 0x4f
 };
 
 /*
