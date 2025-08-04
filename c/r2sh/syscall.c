@@ -92,6 +92,61 @@ int64_t write_file(const uint8_t *name, const uint8_t *buffer)
 	return 0;
 }
 
+int64_t rename_file(const uint8_t *old_name, const uint8_t *new_name)
+{
+	uint8_t len_old = 0, len_new = 0;
+	while (old_name[len_old]) ++len_old;
+	while (new_name[len_new]) ++len_new;
+
+	if (len_old > 0 && len_new > 0)
+	{
+		if (syscall(ScRenameFile, (int64_t)old_name, (int64_t)new_name, 0))
+		{
+			return 0;
+		}
+
+		return 1;
+	}
+
+	return 0;
+}
+
+int64_t delete_file(const uint8_t *name)
+{
+	uint8_t len = 0;
+	while (name[len]) ++len;
+
+	if (len > 0)
+	{
+		if (syscall(ScDeleteFile, (int64_t)name, 0, 0))
+		{
+			return 0;
+		}
+
+		return 1;
+	}
+
+	return 0;
+}
+
+int64_t write_subdir(uint16_t cluster, const uint8_t *name)
+{
+	uint8_t len = 0;
+	while (name[len]) ++len;
+
+	if (len > 0)
+	{
+		if (syscall(ScWriteSubdir, (int64_t)cluster, (int64_t)name, 0))
+		{
+			return 0;
+		}
+
+		return 1;
+	}
+
+	return 0;
+}
+
 int64_t list_dir(int64_t cluster, Entry_T entries[32])
 {
 	if (syscall(ScListDir, cluster, (int64_t)entries, 0))

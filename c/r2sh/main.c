@@ -72,6 +72,24 @@ int main(int64_t pid, int64_t arg)
 		print(rbuffer);
 	}
 
+	/* Test writing/creating new subdirectory (syscall 0x27) */
+	if (write_subdir(0, (const uint8_t *) "TESTDIR")) 
+	{
+		print("*** Created a new subdirectory\n");
+	}
+
+	/* Test entry renaming (syscall 0x22) */
+	if (rename_file((const uint8_t *) "TESTDIR", (const uint8_t *) "NEWDIR"))
+	{
+		print("*** Subdirectory renamed successfully\n");
+	}
+
+	/* Test entry deletion (syscall 0x23) */
+	if (delete_file(filename))
+	{
+		print("*** Text file deleted successfully\n");
+	}
+
 	/* Test listing a directory (syscall 0x28) */
 	if (list_dir(0, entries)) 
 	{

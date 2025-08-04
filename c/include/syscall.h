@@ -75,6 +75,9 @@ enum SyscallNumber: int64_t {
 	// Filesystem
 	ScReadFile = 0x20,
 	ScWriteFile = 0x21,
+	ScRenameFile = 0x22,
+	ScDeleteFile = 0x23,
+	ScWriteSubdir = 0x27,
 	ScListDir = 0x28,
 	// Port IO + Networking
 	ScWritePort = 0x30,
@@ -136,6 +139,27 @@ int64_t read_file(const uint8_t *name, uint8_t *buffer);
  *  Implementation of syscall 0x21.
  */
 int64_t write_file(const uint8_t *name, const uint8_t *buffer);
+
+/*
+ *  int64_t rename_file() prototype
+ *
+ *  Implementation of syscall 0x22.
+ */
+int64_t rename_file(const uint8_t *old_name, const uint8_t *new_name);
+
+/*
+ *  int64_t delete_file() prototype
+ *
+ *  Implementation of syscall 0x23.
+ */
+int64_t delete_file(const uint8_t *name);
+
+/*
+ *  int64_t write_subdir() prototype
+ *
+ *  Implementation of syscall 0x27.
+ */
+int64_t write_subdir(uint16_t cluster, const uint8_t *name);
 
 /*
  *  int64_t list_dir() prototype
