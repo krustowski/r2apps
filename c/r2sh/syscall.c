@@ -157,3 +157,13 @@ int64_t list_dir(int64_t cluster, Entry_T entries[32])
 	return 1;
 }
 
+int64_t run_elf(const uint8_t *name, uint8_t *pid)
+{
+	if (syscall(ScRunELF, (int64_t)name, (int64_t)pid, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+

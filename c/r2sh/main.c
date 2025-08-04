@@ -30,6 +30,7 @@ int main(int64_t pid, int64_t arg)
 	const uint8_t *wbuffer = "Written by C using the rou2exOS ABI\n";
 
 	uint8_t rbuffer[512];
+	uint8_t elf_pid = 0;
 
 	SysInfo_T sysinfo;
 	Entry_T entries[32];
@@ -127,6 +128,19 @@ int main(int64_t pid, int64_t arg)
 
 			//printf(" %s\n", (const uint8_t *)(entries[i].name));
 		}
+	}
+
+	/* Test running an ELF executable (syscall 0x2A) */
+	print("*** Running external ELF executable...\n");
+
+	if (run_elf((const uint8_t *) "PRINT.ELF", &elf_pid))
+	{
+		uint8_t pids[11];
+		u32_to_str((uint32_t) elf_pid, pids);
+
+		print("*** External ELF executed successfully (PID: ");
+		print(pids);
+		print(")\n");
 	}
 
 	print("*** Exit\n");

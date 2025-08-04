@@ -79,6 +79,7 @@ enum SyscallNumber: int64_t {
 	ScDeleteFile = 0x23,
 	ScWriteSubdir = 0x27,
 	ScListDir = 0x28,
+	ScRunELF = 0x2a,
 	// Port IO + Networking
 	ScWritePort = 0x30,
 	ScReadPort = 0x31,
@@ -167,5 +168,12 @@ int64_t write_subdir(uint16_t cluster, const uint8_t *name);
  *  Implementation of syscall 0x28.
  */
 int64_t list_dir(int64_t cluster, Entry_T entries[32]);
+
+/*
+ *  int64_t run_elf() prototype
+ *
+ *  Implementation of syscall 0x2A.
+ */
+int64_t run_elf(const uint8_t *name, uint8_t *pid);
 
 #endif
