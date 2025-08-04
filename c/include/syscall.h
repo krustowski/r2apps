@@ -67,26 +67,26 @@ enum SyscallNumber: int64_t {
 	// System + Memory Management
 	ScSysInfo,
 	ScRTC,
-	ScFree = 0x0d,
-	ScRealloc = 0x0e,
-	ScMalloc = 0x0f,
-	// Video
-	ScPrints = 0x10,
-	// Filesystem
-	ScReadFile = 0x20,
-	ScWriteFile = 0x21,
-	ScRenameFile = 0x22,
-	ScDeleteFile = 0x23,
-	ScWriteSubdir = 0x27,
-	ScListDir = 0x28,
-	ScRunELF = 0x2a,
-	// Port IO + Networking
-	ScWritePort = 0x30,
-	ScReadPort = 0x31,
-	// Audio
-	ScPlayFreq = 0x40,
-	ScPlayFile = 0x41,
-	ScPlayStop = 0x4f
+	ScFree 		= 0x0d,
+	ScRealloc 	= 0x0e,
+	ScMalloc 	= 0x0f,
+	// Video + Audio Operations
+	ScPrints 	= 0x10,
+	ScClear		= 0x11,
+	ScPlayFreq 	= 0x1a,
+	ScPlayFile 	= 0x1b,
+	ScPlayStop 	= 0x1f,
+	// Filesystem IO Operations
+	ScReadFile 	= 0x20,
+	ScWriteFile 	= 0x21,
+	ScRenameFile 	= 0x22,
+	ScDeleteFile 	= 0x23,
+	ScWriteSubdir 	= 0x27,
+	ScListDir 	= 0x28,
+	ScRunELF 	= 0x2a,
+	// Port IO + Networking Operations
+	ScWritePort 	= 0x30,
+	ScReadPort 	= 0x31
 };
 
 /*
