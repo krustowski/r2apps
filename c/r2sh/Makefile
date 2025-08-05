@@ -9,7 +9,7 @@ build:
 		-I ../include \
 		-Xlinker "-Tlinker.ld" \
 		-o r2sh.elf \
-		*.c
+		../include/*.c *.c
 	@llvm-objcopy \
 		-O binary \
 		r2sh.elf \
