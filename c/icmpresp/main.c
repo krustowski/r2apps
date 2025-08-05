@@ -215,13 +215,37 @@ int main(int64_t pid, int64_t arg)
 			continue;
 		}
 
-		print("-> Received an ICMP packet!\n");
-
 		if (icmp_header.type != 8 || icmp_header.code != 0)
 		{
-			print("Unknown ICMP type or code\n");
+			print("-> Unknown ICMP type or code\n");
 			continue;
 		}
+
+		print("-> Received an ICMP Echo Request!\n");
+
+		// Create a reply ICMP packet
+		if (!new_packet(0x02, (uint8_t *) icmp_packet))
+		{
+			print("-> ICMP packet creation failed\n");
+			continue;
+		}
+
+		// Copy the ICMP packet into IPv4 packet
+		memcpy(packet_buf + ipv4_header_len, icmp_packet, decoded_len - ipv4_header_len);
+
+		if (!new_packet(0x01, (uint8_t *) packet_buf))
+		{
+			print("-> IPv4 packet creation failed\n");
+			continue;
+		}
+
+		if (!send_packet(0x01, packet_buf))
+		{
+			print("-> Failed to send the IPv4 packet\n");
+			continue;
+		}
+
+		print("-> Response sent\n");
 	}
 
 	print("*** Exit\n");
