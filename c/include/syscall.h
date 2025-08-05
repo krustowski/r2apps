@@ -122,8 +122,9 @@ enum SyscallNumber: int64_t {
 	// Port IO + Networking Operations
 	ScWritePort 		= 0x30,
 	ScReadPort 		= 0x31,
-	ScNewPacket 		= 0x32,
-	ScSendPacket		= 0x33
+	ScSerialPort		= 0x32,
+	ScNewPacket 		= 0x33,
+	ScSendPacket		= 0x34
 };
 
 /*
@@ -228,16 +229,37 @@ int64_t read_port(uint8_t port, uint64_t *value);
 int64_t write_port(uint8_t port, const uint64_t value);
 
 /*
+ *  int64_t serial_init() prototype
+ *
+ *  Implementation of syscall 0x32 (arg1 0x01).
+ */
+int64_t serial_init();
+
+/*
+ *  int64_t serial_read() prototype
+ *
+ *  Implementation of syscall 0x32 (arg1 0x02).
+ */
+int64_t serial_read(uint32_t *value);
+
+/*
+ *  int64_t serial_write() prototype
+ *
+ *  Implementation of syscall 0x32 (arg1 0x03).
+ */
+int64_t serial_write(const uint32_t value);
+
+/*
  *  int64_t new_packet() prototype
  *
- *  Implementation of syscall 0x32. The buffer should contain a dummy packet header!
+ *  Implementation of syscall 0x33. The buffer should contain a dummy packet header!
  */
 int64_t new_packet(uint8_t type, uint8_t *buffer);
 
 /*
  *  int64_t send_packet() prototype
  *
- *  Implementation of syscall 0x33. The buffer should contain a full packet header!
+ *  Implementation of syscall 0x34. The buffer should contain a full packet header!
  */
 int64_t send_packet(uint8_t type, uint8_t *buffer);
 

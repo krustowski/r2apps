@@ -187,6 +187,36 @@ int64_t write_port(uint8_t port, const uint64_t value)
 	return 1;
 }
 
+int64_t serial_init()
+{
+	if (syscall(ScSerialPort, 0x01, 0x00, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+int64_t serial_read(uint32_t *value)
+{
+	if (syscall(ScSerialPort, 0x02, (int64_t)value, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+int64_t serial_write(const uint32_t value)
+{
+	if (syscall(ScSerialPort, 0x03, (int64_t)value, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
 int64_t new_packet(uint8_t type, uint8_t *buffer) 
 {
 	if (syscall(ScNewPacket, (int64_t)type, (int64_t)buffer, 0))
