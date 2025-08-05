@@ -17,15 +17,19 @@
 #define SLIP_ESC_ESC 0xDD
 
 // Returns number of decoded bytes, or -1 on protocol error, or 0 if frame not yet complete
-int64_t decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, uint32_t output_len) {
+int64_t decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, uint32_t output_len)
+{
 	uint32_t out_pos = 0;
 	uint8_t escape = 0;
 
-	for (uint8_t i = 0; i < input_len; ++i) {
+	for (uint8_t i = 0; i < input_len; ++i)
+	{
 		uint8_t b = input[i];
 
-		if (b == SLIP_END) {
-			if (out_pos > 0) {
+		if (b == SLIP_END)
+		{
+			if (out_pos > 0)
+			{
 				// Frame complete
 				return (int64_t)out_pos;  
 			}
@@ -33,24 +37,32 @@ int64_t decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, u
 			continue;
 		}
 
-		if (b == SLIP_ESC) {
+		if (b == SLIP_ESC)
+		{
 			escape = 1;
 			continue;
 		}
 
-		if (escape) {
-			if (b == SLIP_ESC_END) {
+		if (escape)
+		{
+			if (b == SLIP_ESC_END)
+			{
 				b = SLIP_END;
-			} else if (b == SLIP_ESC_ESC) {
+			}
+			else if (b == SLIP_ESC_ESC)
+			{
 				b = SLIP_ESC;
-			} else {
+			} 
+			else
+			{
 				// Protocol error
 				return -1; 
 			}
 			escape = 0;
 		}
 
-		if (out_pos >= output_len) {
+		if (out_pos >= output_len)
+		{
 			// Output buffer overflow
 			return -1; 
 		}
@@ -62,11 +74,13 @@ int64_t decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, u
 	return 0; 
 }
 
-void *memcpy(void *dest, const void *src, uint16_t n) {
+void *memcpy(void *dest, const void *src, uint16_t n)
+{
 	uint8_t *d = (uint8_t *)dest;
 	const uint8_t *s = (const uint8_t *)src;
 
-	for (uint16_t i = 0; i < n; ++i) {
+	for (uint16_t i = 0; i < n; ++i)
+	{
 		d[i] = s[i];
 	}
 
@@ -83,10 +97,10 @@ uint16_t parse_ipv4_packet(const uint8_t *packet, Ipv4Header_T *header)
 
 	/*while (packet[packet_len]) ++packet_len;
 
-	if (packet_len < header_len)
-	{
-		return 0;
-	}*/
+	  if (packet_len < header_len)
+	  {
+	  return 0;
+	  }*/
 
 	return header_len;
 }
@@ -103,32 +117,36 @@ uint8_t parse_icmp_packet(const uint8_t *packet, IcmpHeader_T *header)
 
 	/*while (packet[packet_len]) ++packet_len;
 
-	if (packet_len < header_len)
-	{
-		return 0;
-	}*/
+	  if (packet_len < header_len)
+	  {
+	  return 0;
+	  }*/
 
 	return header_len;
 }
 
-void u32_to_str(uint32_t value, uint8_t *buffer) {
+void u32_to_str(uint32_t value, uint8_t *buffer)
+{
 	uint8_t temp[10];
 	uint32_t i = 0;
 
-	if (value == 0) {
+	if (value == 0)
+	{
 		buffer[0] = '0';
 		buffer[1] = '\0';
 		return;
 	}
 
 	// Convert digits in reverse order
-	while (value > 0 && i < 10) {
+	while (value > 0 && i < 10)
+	{
 		temp[i++] = '0' + (value % 10);
 		value /= 10;
 	}
 
 	// Reverse the digits into the output buffer
-	for (uint8_t j = 0; j < i; j++) {
+	for (uint8_t j = 0; j < i; j++)
+	{
 		buffer[j] = temp[i - j - 1];
 	}
 
@@ -193,11 +211,11 @@ int main(int64_t pid, int64_t arg)
 
 		/*print("-> Received an IPv4 packet (protocol: ");
 
-		uint8_t proto[11];
-		u32_to_str((uint32_t) ipv4_header.protocol, proto);
+		  uint8_t proto[11];
+		  u32_to_str((uint32_t) ipv4_header.protocol, proto);
 
-		print(proto);
-		print(")\n");*/
+		  print(proto);
+		  print(")\n");*/
 
 		if (ipv4_header.protocol != 1) 
 		{
