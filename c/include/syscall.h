@@ -61,36 +61,69 @@ typedef struct {
 } __attribute__((packed)) Entry_T;
 
 /*
+ *  type Ipv4Header_T structure
+ *
+ *  This structure specifies the property list of an IPv4 packet header.
+ */
+typedef struct {
+	uint8_t version;
+	uint8_t dscp_ecn;
+	uint16_t total_length;
+	uint16_t identification;
+	uint16_t flags_fragment_offset;
+	uint8_t ttl;
+	uint8_t protocol;
+	uint16_t header_checksum;
+	uint8_t source_addr[4];
+	uint8_t destination_addr[4];
+} __attribute__((packed)) Ipv4Header_T;
+
+/*
+ *  type IcmpHeader_T structure
+ *
+ *  This structure specifies the property list of an ICMP packet header.
+ */
+typedef struct {
+	uint8_t type;
+	uint8_t code;
+	uint16_t checksum;
+	uint16_t identifier;
+	uint16_t sequence_number;
+} __attribute__((packed)) IcmpHeader_T;
+
+/*
  *  SyscallNumber enumeration
  *
  *  This enum suits as a helper for a syscall caller not to use hardcoded integers (as those may
  *  change in the future --- a syscall is reassigned to the different value).
  */
 enum SyscallNumber: int64_t {
-	ScExit,
+	ScExit			= 0x00,
 	// System + Memory Management
-	ScSysInfo,
-	ScRTC,
-	ScFree 		= 0x0d,
-	ScRealloc 	= 0x0e,
-	ScMalloc 	= 0x0f,
+	ScSysInfo		= 0x01,
+	ScRTC			= 0x02,
+	ScMalloc 		= 0x0a,
+	ScRealloc 		= 0x0b,
+	ScFree 			= 0x0f,
 	// Video + Audio Operations
-	ScPrints 	= 0x10,
-	ScClear		= 0x11,
-	ScPlayFreq 	= 0x1a,
-	ScPlayFile 	= 0x1b,
-	ScPlayStop 	= 0x1f,
+	ScPrints 		= 0x10,
+	ScClear			= 0x11,
+	ScPlayFreq 		= 0x1a,
+	ScPlayFile 		= 0x1b,
+	ScPlayStop 		= 0x1f,
 	// Filesystem IO Operations
-	ScReadFile 	= 0x20,
-	ScWriteFile 	= 0x21,
-	ScRenameFile 	= 0x22,
-	ScDeleteFile 	= 0x23,
-	ScWriteSubdir 	= 0x27,
-	ScListDir 	= 0x28,
-	ScRunELF 	= 0x2a,
+	ScReadFile 		= 0x20,
+	ScWriteFile 		= 0x21,
+	ScRenameFile 		= 0x22,
+	ScDeleteFile 		= 0x23,
+	ScWriteSubdir 		= 0x27,
+	ScListDir 		= 0x28,
+	ScRunELF 		= 0x2a,
 	// Port IO + Networking Operations
-	ScWritePort 	= 0x30,
-	ScReadPort 	= 0x31
+	ScWritePort 		= 0x30,
+	ScReadPort 		= 0x31,
+	ScNewPacket 		= 0x32,
+	ScSendPacket		= 0x33
 };
 
 /*
@@ -179,6 +212,34 @@ int64_t list_dir(int64_t cluster, Entry_T entries[32]);
  *  Implementation of syscall 0x2A.
  */
 int64_t run_elf(const uint8_t *name, uint8_t *pid);
+
+/*
+ *  int64_t read_port() prototype
+ *
+ *  Implementation of syscall 0x30!
+ */
+int64_t read_port(uint8_t port, uint64_t *value);
+
+/*
+ *  int64_t write_port() prototype
+ *
+ *  Implementation of syscall 0x31!
+ */
+int64_t write_port(uint8_t port, const uint64_t value);
+
+/*
+ *  int64_t new_packet() prototype
+ *
+ *  Implementation of syscall 0x32. The buffer should contain a dummy packet header!
+ */
+int64_t new_packet(uint8_t type, uint8_t *buffer);
+
+/*
+ *  int64_t send_packet() prototype
+ *
+ *  Implementation of syscall 0x33. The buffer should contain a full packet header!
+ */
+int64_t send_packet(uint8_t type, uint8_t *buffer);
 
 #ifdef __cplusplus
 }

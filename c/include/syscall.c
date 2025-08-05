@@ -167,3 +167,43 @@ int64_t run_elf(const uint8_t *name, uint8_t *pid)
 	return 1;
 }
 
+int64_t read_port(uint8_t port, uint64_t *value)
+{
+	if (syscall(ScReadPort, (int64_t)port, (int64_t)value, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+int64_t write_port(uint8_t port, const uint64_t value)
+{
+	if (syscall(ScWritePort, (int64_t)port, (int64_t)value, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+int64_t new_packet(uint8_t type, uint8_t *buffer) 
+{
+	if (syscall(ScNewPacket, (int64_t)type, (int64_t)buffer, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+int64_t send_packet(uint8_t type, uint8_t *buffer)
+{
+	if (syscall(ScSendPacket, (int64_t)type, (int64_t)buffer, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
