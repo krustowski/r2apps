@@ -3,10 +3,10 @@
 /*
  *  icmpresp
  *
- *  This program acts like a sample service for the rou2exOS kernel. It is to receive
+ *  This program acts as a sample service for the rou2exOS kernel. It is to receive
  *  an ICMP pakcet, to parse it and to respond accordingally.
  *
- *  As the time of the initial development this prog could be run in userspace.
+ *  At the time of the initial development this prog could be run in userspace.
  *
  *  krusty@vxn.dev / Aug 5, 2025
  */
