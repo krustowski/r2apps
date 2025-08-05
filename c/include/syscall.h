@@ -63,7 +63,7 @@ typedef struct {
 /*
  *  type Ipv4Header_T structure
  *
- *  This structure specifies the property list of an IPv4 packet header.
+ *  This structure specifies the property list of an IPv4 header.
  */
 typedef struct {
 	uint8_t version;
@@ -81,7 +81,7 @@ typedef struct {
 /*
  *  type IcmpHeader_T structure
  *
- *  This structure specifies the property list of an ICMP packet header.
+ *  This structure specifies the property list of an ICMP header.
  */
 typedef struct {
 	uint8_t type;
@@ -90,6 +90,22 @@ typedef struct {
 	uint16_t identifier;
 	uint16_t sequence_number;
 } __attribute__((packed)) IcmpHeader_T;
+
+/*
+ *  type TcpHeader_T structure
+ *
+ *  This structure specifies the property list of a TCP header.
+ */
+typedef struct {
+    uint16_t source_port;
+    uint16_t dest_port;
+    uint32_t seq_num;
+    uint32_t ack_num;
+    uint16_t data_offset_reserved_flags;
+    uint16_t window_size;
+    uint16_t checksum;
+    uint16_t urgent_pointer;
+} __attribute__((packed)) TcpHeader_T;
 
 /*
  *  SyscallNumber enumeration
