@@ -10,6 +10,10 @@
  *  krusty@vxn.dev / June 30, 2025
  */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Software CPU interrupt number to access the ABI.  */
 #define ABI_INTERRUPT 	0x7f
 
@@ -175,5 +179,9 @@ int64_t list_dir(int64_t cluster, Entry_T entries[32]);
  *  Implementation of syscall 0x2A.
  */
 int64_t run_elf(const uint8_t *name, uint8_t *pid);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
