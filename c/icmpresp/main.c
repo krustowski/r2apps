@@ -4,7 +4,7 @@
  *  icmpresp
  *
  *  This program acts as a sample service for the rou2exOS kernel. It is to receive
- *  an ICMP pakcet, to parse it and to respond accordingally.
+ *  an ICMP packet, to parse it and to respond accordingally.
  *
  *  At the time of the initial development this prog could be run in userspace.
  *
@@ -17,7 +17,7 @@
 #define SLIP_ESC_ESC 0xDD
 
 // Returns number of decoded bytes, or -1 on protocol error, or 0 if frame not yet complete
-int decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, uint32_t output_len) {
+int64_t decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, uint32_t output_len) {
 	uint32_t out_pos = 0;
 	uint8_t escape = 0;
 
@@ -27,7 +27,7 @@ int decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, uint3
 		if (b == SLIP_END) {
 			if (out_pos > 0) {
 				// Frame complete
-				return (int)out_pos;  
+				return (int64_t)out_pos;  
 			}
 			// Else ignore leading END
 			continue;
@@ -79,7 +79,7 @@ uint16_t parse_ipv4_packet(const uint8_t *packet, Ipv4Header_T *header)
 	//uint16_t packet_len = 0;
 
 	memcpy(header, packet, sizeof(Ipv4Header_T));
-	header_len = header->version & 0x0F * 4;
+	header_len = (header->version & 0x0F) * 4;
 
 	/*while (packet[packet_len]) ++packet_len;
 
@@ -146,6 +146,7 @@ int main(int64_t pid, int64_t arg)
 	uint8_t temp_buf[2048];
 	uint8_t packet_buf[2048];
 	uint8_t temp_len = 0;
+	int64_t decoded_len = 0;
 
 	Ipv4Header_T ipv4_header;
 	uint16_t ipv4_header_len = 0;
@@ -173,10 +174,12 @@ int main(int64_t pid, int64_t arg)
 		temp_len++;
 
 		// Try to decode the whole SLIP frame
-		if (!decode_slip(temp_buf, temp_len, packet_buf, 2048))
+		decoded_len = decode_slip(temp_buf, temp_len, packet_buf, 2048);
+		if (decoded_len <= 0)
 		{
 			continue;
 		}
+		temp_len = 0;
 
 		//print("-> Received a SLIP frame!\n");
 
@@ -188,20 +191,21 @@ int main(int64_t pid, int64_t arg)
 			continue;
 		}
 
-		print("-> Received an IPv4 packet (protocol: ");
+		/*print("-> Received an IPv4 packet (protocol: ");
 
 		uint8_t proto[11];
 		u32_to_str((uint32_t) ipv4_header.protocol, proto);
 
 		print(proto);
-		print(")\n");
+		print(")\n");*/
 
-		continue;
-
-		for (uint8_t i = 0; i < 512; i++)
+		if (ipv4_header.protocol != 1) 
 		{
-			icmp_packet[i] = packet_buf[ipv4_header_len + i];
+			//print("-> Not ICMP, skipping\n");
+			continue;
 		}
+
+		memcpy(icmp_packet, packet_buf + ipv4_header_len, decoded_len - ipv4_header_len);
 
 		// Parse the ICMP header
 		icmp_header_len = parse_icmp_packet(icmp_packet, &icmp_header);
@@ -212,6 +216,12 @@ int main(int64_t pid, int64_t arg)
 		}
 
 		print("-> Received an ICMP packet!\n");
+
+		if (icmp_header.type != 8 || icmp_header.code != 0)
+		{
+			print("Unknown ICMP type or code\n");
+			continue;
+		}
 	}
 
 	print("*** Exit\n");
