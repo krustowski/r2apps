@@ -15,6 +15,7 @@ extern "C" {
 
 #include "types.h"
 
+uint32_t strlen(const char *str);
 void u32_to_str(uint32_t value, uint8_t *buffer);
 
 #ifdef __cplusplus

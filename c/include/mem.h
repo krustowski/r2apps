@@ -15,6 +15,7 @@ extern "C" {
 
 #include "types.h"
 
+uint32_t memcmp(const uint8_t *s1, const uint8_t *s2, uint32_t len);
 void *memcpy(void *dest, const void *src, uint16_t n);
 
 #ifdef __cplusplus

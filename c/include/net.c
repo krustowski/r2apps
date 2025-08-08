@@ -96,4 +96,140 @@ uint8_t parse_icmp_packet(const uint8_t *packet, IcmpHeader_T *header)
 	return header_len;
 }
 
+TcpSocket *socket_tcp4()
+{
+	TcpSocket *sock = alloc_socket();
+	if (!sock)
+	{
+		return 0;
+	}
+
+	sock->state = SOCKET_CLOSED;
+
+	return sock;
+}
+
+void bind(TcpSocket *sock, uint16_t port)
+{
+	sock->local_port = port;
+}
+
+void listen(TcpSocket *sock)
+{
+	sock->state = SOCKET_LISTENING;
+}
+
+TcpSocket *accept(TcpSocket *listener)
+{
+	for (uint8_t i = 0; i < MAX_SOCKETS; i++)
+	{
+		TcpSocket *s = &sockets[i];
+
+		if (s->used && s->state == SOCKET_ESTABLISHED && s->local_port == listener->local_port)
+		{
+			if (s != listener)
+			{
+				return s;
+			}
+		}
+	}
+
+	return 0;
+}
+
+uint32_t read(TcpSocket *sock, uint8_t *buf, uint32_t maxlen)
+{
+	uint32_t n = (sock->rx_len < maxlen) ? sock->tx_len : maxlen;
+
+	for (uint32_t i = 0; i < n; i++)
+	{
+		buf[i] = sock->rx_buffer[i];
+	}
+
+	sock->rx_len = 0;
+	return n;
+}
+
+uint32_t write(TcpSocket *sock, const uint8_t *buf, uint32_t len)
+{
+	send_tcp_packet(sock, buf, len, TCP_FLAG_ACK);
+	return len;
+}
+
+void close(TcpSocket *sock)
+{
+	send_tcp_packet(sock, 0, 0, TCP_FLAG_FIN | TCP_FLAG_ACK);
+	sock->state = SOCKET_FIN_WAIT;
+}
+
+void on_tcp_packet(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint8_t flags, const uint8_t *payload, uint32_t len)
+{
+	for (uint8_t i = 0; i < MAX_SOCKETS; i++)
+	{
+		TcpSocket *s = &sockets[i];
+
+		if (!s->used || s->local_port != dst_port)
+		{
+			continue;
+		}
+
+		if (s->state == SOCKET_LISTENING && (flags & TCP_FLAG_SYN))
+		{
+			TcpSocket *new_conn = alloc_socket();
+
+			if (!new_conn)
+			{
+				return;
+			}
+
+			new_conn->local_port = dst_port;
+			new_conn->remote_port = src_port;
+			new_conn->remoze_ip = src_ip;
+			new_conn->state = SOCKET_ESTABLISHED;
+
+			send_tcp_packet(new_conn, 0, 0, TCP_FLAG_SYN | TCP_FLAG_ACK);
+			return;
+		}
+
+		if (s->state == SOCKET_ESTABLISHED && s->remoze_ip == src_ip && s->remote_port == src_port)
+		{
+			if (len > 0)
+			{
+				for (uint32_t j = 0; j < len && j < RX_BUFFER_SIZE; j++)
+				{
+					s->rx_buffer[j] = payload[j];
+				}
+
+				s->rx_len = len;
+			}
+
+			if (flags & TCP_FLAG_FIN)
+			{
+				send_tcp_packet(s, 0, 0, TCP_FLAG_ACK);
+				free_socket(s);
+			}
+		}
+	}
+}
+
+static TcpSocket *alloc_socket() 
+{
+	for (uint8_t i = 0; i < MAX_SOCKETS; i++)
+	{
+		if (!sockets[i].used)
+		{
+			sockets[i].used = 1;
+			sockets[i].id = i;
+			return &sockets[i];
+		}
+	}
+
+	return 0;
+}
+
+static void free_socket(TcpSocket *sock)
+{
+	sock->used = 0;
+	sock->state = SOCKET_CLOSED;
+}
 

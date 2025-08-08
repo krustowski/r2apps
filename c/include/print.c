@@ -1,5 +1,13 @@
 #include "print.h"
 
+uint32_t strlen(const char *str)
+{
+	uint32_t len = 0;
+	while (str[len]) ++len;
+
+	return len;
+}
+
 void u32_to_str(uint32_t value, uint8_t *buffer)
 {
 	uint8_t temp[10];

@@ -21,6 +21,14 @@ extern "C" {
 #define SLIP_ESC_END 0xDC
 #define SLIP_ESC_ESC 0xDD
 
+#define MAX_SOCKETS	8
+#define RX_BUFFER_SIZE  1024
+#define TX_BUFFER_SIZE  1024
+
+#define TCP_FLAG_FIN	0x01
+#define TCP_FLAG_SYN	0x02
+#define TCP_FLAG_ACK	0x10
+
 /*
  *  type Ipv4Header_T structure
  *
@@ -67,6 +75,43 @@ typedef struct {
     uint16_t checksum;
     uint16_t urgent_pointer;
 } __attribute__((packed)) TcpHeader_T;
+
+typedef enum {
+	SOCKET_CLOSED,
+	SOCKET_LISTENING,
+	SOCKET_ESTABLISHED,
+	SOCKET_FIN_WAIT
+} SocketState;
+
+typedef struct TcpSocket {
+	uint32_t id;
+	SocketState state;
+	uint16_t local_port;
+	uint32_t remoze_ip;
+	uint16_t remote_port;
+	uint8_t rx_buffer[RX_BUFFER_SIZE];
+	uint8_t tx_buffer[TX_BUFFER_SIZE];
+	uint32_t rx_len;
+	uint32_t tx_len;
+	uint8_t used;
+} TcpSocket;
+
+static TcpSocket sockets[MAX_SOCKETS];
+
+void send_tcp_packet(TcpSocket *sock, const uint8_t* data, uint32_t len, uint8_t flags);
+
+TcpSocket *socket_tcp4();
+static TcpSocket *alloc_socket();
+static void free_socket(TcpSocket *sock);
+
+void bind(TcpSocket *sock, uint16_t port);
+void listen(TcpSocket *sock);
+TcpSocket *accept(TcpSocket *listener);
+uint32_t read(TcpSocket *sock, uint8_t *buf, uint32_t maxlen);
+uint32_t write(TcpSocket *sock, const uint8_t *buf, uint32_t len);
+void close(TcpSocket *sock);
+
+void on_tcp_packet(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint8_t flags, const uint8_t *payload, uint32_t len);
 
 
 int64_t decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, uint32_t output_len);
