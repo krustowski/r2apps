@@ -1,10 +1,10 @@
-#ifndef _R2_PRINT_INCLUDED_
-#define _R2_PRINT_INCLUDED_
+#ifndef _R2_STRING_INCLUDED_
+#define _R2_STRING_INCLUDED_
 
 /*
- *  print.h
+ *  string.h
  *
- *  Print-related definitions, declarations and constants for the r2 kernel project.
+ *  String processing-related definitions, declarations and constants for the r2 kernel project.
  *
  *  krusty@vxn.dev / Aug 8, 2025
  */
