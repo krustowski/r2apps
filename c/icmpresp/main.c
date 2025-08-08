@@ -1,7 +1,6 @@
 #include "mem.h"
 #include "net.h"
-#include "print.h"
-#include "syscall.h"
+#include "printf.h"
 
 /*
  *  icmpresp
@@ -70,14 +69,6 @@ int main(int64_t pid, int64_t arg)
 			continue;
 		}
 
-		/*print("-> Received an IPv4 packet (protocol: ");
-
-		  uint8_t proto[11];
-		  u32_to_str((uint32_t) ipv4_header.protocol, proto);
-
-		  print(proto);
-		  print(")\n");*/
-
 		if (ipv4_header.protocol != 1) 
 		{
 			//print("-> Not ICMP, skipping\n");
@@ -100,7 +91,7 @@ int main(int64_t pid, int64_t arg)
 			continue;
 		}
 
-		print("-> Received an ICMP Echo Request!\n");
+		print(">> Received an ICMP Echo Request!\n");
 
 		// Create a reply ICMP packet
 		if (!new_packet(0x02, (uint8_t *) icmp_packet))
@@ -124,7 +115,7 @@ int main(int64_t pid, int64_t arg)
 			continue;
 		}
 
-		print("-> Response sent\n");
+		print("<< Echo Response sent\n");
 	}
 
 	print("*** Exit\n");
