@@ -233,3 +233,38 @@ static void free_socket(TcpSocket *sock)
 	sock->state = SOCKET_CLOSED;
 }
 
+void send_tcp_packet(TcpSocket *sock, const uint8_t* data, uint32_t len, uint8_t flags)
+{}
+/*void send_tcp_packet(TcpSocket *sock, const uint8_t* data, uint32_t len, uint8_t flags)
+{
+	uint8_t tcp_packet[TX_BUFFER_SIZE];
+	TcpHeader_T tcp_header;
+
+	tcp_header.source_port = sock->local_port;
+	tcp_header.dest_port = sock->remote_port;
+
+	//memcpy(header, packet, sizeof(IcmpHeader_T));
+
+	// Create a reply TCP packet
+	if (!new_packet(0x03, (uint8_t *) tcp_packet))
+	{
+		print("-> TCP packet creation failed\n");
+		continue;
+	}
+
+	// Copy the TCP packet into IPv4 packet
+	memcpy(packet_buf + ipv4_header_len, tcp_packet, decoded_len - ipv4_header_len);
+
+	if (!new_packet(0x01, (uint8_t *) packet_buf))
+	{
+		print("-> IPv4 packet creation failed\n");
+		continue;
+	}
+
+	if (!send_packet(0x01, packet_buf))
+	{
+		print("-> Failed to send the IPv4 packet\n");
+		continue;
+	}
+}*/
+

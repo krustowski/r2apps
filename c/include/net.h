@@ -15,6 +15,7 @@ extern "C" {
 #endif
 
 #include "mem.h"
+#include "syscall.h"
 
 #define SLIP_END     0xC0
 #define SLIP_ESC     0xDB

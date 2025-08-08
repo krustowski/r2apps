@@ -11,7 +11,7 @@ build:
 		-I ../include \
 		-Xlinker "-T../linker.ld" \
 		-o ${NAME}.elf \
-		../include/*.c *.c
+		../include/{mem,net,print,syscall}.c *.c
 	@llvm-objcopy \
 		-O binary \
 		${NAME}.elf \
