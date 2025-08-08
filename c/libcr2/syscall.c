@@ -57,13 +57,61 @@ int64_t print(const uint8_t *str)
 
 	if (len > 0)
 	{
-		if (syscall(ScPrints, (int64_t)str, len, 0))
+		if (syscall(ScPrintString, (int64_t)str, len, 0))
 		{
 			return 0;
 		}
 	}
 
 	return len;
+}
+
+int64_t clear_screen()
+{
+	if (syscall(ScClearScreen, 0, 0, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+int64_t play_freq(uint16_t freq, uint16_t duration)
+{
+	if (syscall(ScPlayFreq, (int64_t)freq, (int64_t)duration, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+int64_t play_midi_file(const uint8_t *name)
+{
+	int64_t len = 0;
+	while (name[len]) ++len;
+
+	if (len > 0)
+	{
+		if (syscall(ScPlayFile, 0x01, (int64_t)name, 0))
+		{
+			return 0;
+		}
+
+		return 1;
+	}
+
+	return 0;
+}
+
+int64_t stop_speaker()
+{
+	if (syscall(ScPlayStop, 0, 0, 0))
+	{
+		return 0;
+	}
+
+	return 1;
 }
 
 int64_t read_file(const uint8_t *name, uint8_t *buffer)

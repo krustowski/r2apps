@@ -84,8 +84,8 @@ enum SyscallNumber: int64_t {
 	ScRealloc 		= 0x0b,
 	ScFree 			= 0x0f,
 	// Video + Audio Operations
-	ScPrints 		= 0x10,
-	ScClear			= 0x11,
+	ScPrintString 		= 0x10,
+	ScClearScreen		= 0x11,
 	ScPlayFreq 		= 0x1a,
 	ScPlayFile 		= 0x1b,
 	ScPlayStop 		= 0x1f,
@@ -149,6 +149,34 @@ int64_t read_rtc(RTC_T *rtc_data);
  *  Implementation of syscall 0x10.
  */
 int64_t print(const uint8_t *str);
+
+/*
+ *  int64_t clear_screen() prototype
+ *
+ *  Implementation of syscall 0x11.
+ */
+int64_t clear_screen();
+
+/*
+ *  int64_t play_freq() prototype
+ *
+ *  Implementation of syscall 0x1a.
+ */
+int64_t play_freq(uint16_t freq, uint16_t duration);
+
+/*
+ *  int64_t play_midi_file() prototype
+ *
+ *  Implementation of syscall 0x1b (arg1 0x01).
+ */
+int64_t play_midi_file(const uint8_t *name);
+
+/*
+ *  int64_t stop_speaker() prototype
+ *
+ *  Implementation of syscall 0x1f.
+ */
+int64_t stop_speaker();
 
 /*
  *  int64_t read_file() prototype
