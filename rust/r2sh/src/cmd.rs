@@ -53,12 +53,6 @@ static COMMANDS: &[Command] = &[
         hidden: false,
     },
     Command {
-        name: b"ether",
-        description: b"runs the Ethernet frame handler",
-        function: cmd_ether,
-        hidden: true,
-    },
-    Command {
         name: b"fsck",
         description: b"runs the filesystem check",
         function: cmd_fsck,
@@ -71,18 +65,6 @@ static COMMANDS: &[Command] = &[
         hidden: false,
     },
     Command {
-        name: b"http",
-        description: b"runs a simple HTTP/UDP handler",
-        function: cmd_http,
-        hidden: true,
-    },
-    Command {
-        name: b"menu",
-        description: b"renders a sample menu",
-        function: cmd_menu,
-        hidden: true,
-    },
-    Command {
         name: b"mkdir",
         description: b"creates a subdirectory",
         function: cmd_mkdir,
@@ -93,12 +75,6 @@ static COMMANDS: &[Command] = &[
         description: b"renames a file",
         function: cmd_mv,
         hidden: false,
-    },
-    Command {
-        name: b"ping",
-        description: b"pings the host over the serial line (ICMP/SLIP)",
-        function: cmd_ping,
-        hidden: true,
     },
     Command {
         name: b"read",
@@ -140,12 +116,6 @@ static COMMANDS: &[Command] = &[
         name: b"tasks",
         description: b"lists currently running tasks",
         function: cmd_tasks,
-        hidden: true,
-    },
-    Command {
-        name: b"tcp",
-        description: b"tests the TCP implementation",
-        function: cmd_tcp,
         hidden: true,
     },
     Command {
@@ -433,69 +403,6 @@ fn cmd_help(_args: &[u8]) {
     }
 }
 
-/// Experimental command function to test the HTTP over UDP implementation.
-fn cmd_http(_args: &[u8]) {
-    /*fn callback(packet: &[u8]) -> u8 {
-        if let Some((ipv4_header, ipv4_payload)) = net::ipv4::parse_packet(packet) {
-            // Match only UDP
-            if ipv4_header.protocol != 17 {
-                return 1;
-            }
-
-            // Handle the connection
-            return app::http_udp::udp_handler(&ipv4_header, ipv4_payload);
-        }
-        0
-    }
-
-    println!("Starting a simple HTTP/UDP handler (hit any key to interrupt)...");
-
-    loop {
-        // Run the receive loop = try to extract an encapsulated IPv4 packet in SLIP
-        let ret = net::ipv4::receive_loop(callback);
-
-        if ret == 0 {
-            println!("Received a HTTP request, sending response");
-        } else if ret == 3 {
-            println!("Keyboard interrupt");
-            break;
-        }
-    }*/
-}
-
-/// Experimental command function to evaluate the current TUI rendering options.
-fn cmd_menu(_args: &[u8]) {
-    // Working sample, but loops without exit
-    //app::menu::menu_loop(vga_index);
-
-    // Set the labels
-    /*let mut label1 = Label { x: 0, y: 0, text: "Play", attr: 0x0F };
-    let mut label2 = Label { x: 0, y: 2, text: "Scores", attr: 0x0F };
-    let mut label3 = Label { x: 0, y: 4, text: "Quit", attr: 0x0F };
-
-    // Create a container to hold all labels
-    let mut menu = Container {
-        x: 30,
-        y: 10,
-        children: [&mut label1, &mut label2, &mut label3],
-    };
-
-    // Set the dimensions of a TUI window to render it with a proper title in the middle top
-    let mut window = Window {
-        x: 20,
-        y: 5,
-        w: 40,
-        h: 15,
-        title: Some("Snake Menu"),
-        child: Some(&mut menu),
-    };
-
-    // Run the experimental construction
-    let mut app = TuiApp::new();
-    app.set_root(&mut window);
-    app.run();*/
-}
-
 /// Creates new subdirectory in the current directory.
 fn cmd_mkdir(args: &[u8]) {
     /*if args.len() == 0 || args.len() > 11 {
@@ -568,35 +475,6 @@ fn cmd_mv(args: &[u8]) {
             error!();
         }
     }*/
-}
-
-/// Sends an ICMP Echo request to the provided IPv4 address.
-fn cmd_ping(args: &[u8]) {
-    // Extract the address(es) from the input
-    /*let mut ips = [[0u8; 4]; MAX_IPS];
-    let _count = parse_ip_args(args, &mut ips);
-
-    // Set the ICMP parameters
-    let protocol = 1;
-    let identifier = 1342;
-    let sequence_no = 1;
-    let payload = b"iEcho request from r2";
-
-    // Buffers for ICMP and IPv4 packets (ICMP packet prefixed by an IPv4 header)
-    let mut icmp_buf = [0u8; 256];
-    let mut ipv4_buf = [0u8; 1500];
-
-    // Create ICMP packet and encapsulate it in the IPv4 packet
-    let icmp_len = net::icmp::create_packet(8, identifier, sequence_no, payload, &mut icmp_buf);
-    let icmp_slice = icmp_buf.get(..icmp_len).unwrap_or(&[]);
-
-    // Use the prepared ICMP packet as payload for IPv4 packet
-    let ipv4_len = net::ipv4::create_packet(ips[0], ips[1], protocol, icmp_slice, &mut ipv4_buf);
-    let ipv4_slice = ipv4_buf.get(..ipv4_len).unwrap_or(&[]);
-
-    println!("Sending ICMP Echo request...");
-
-    net::ipv4::send_packet(ipv4_slice);*/
 }
 
 /// This command function takes the argument, then tries to find a matching filename in the current
@@ -841,11 +719,6 @@ fn cmd_task(_args: &[u8]) {
 
 fn cmd_tasks(_args: &[u8]) {
     //crate::task::task::status();
-}
-
-/// Experimental command function to demonstrate the implementation state of the TCP/IP stack.
-fn cmd_tcp(_args: &[u8]) {
-    //app::tcp_handler::handle();
 }
 
 /// Prints current time and date in UTC as read from RTC in CMOS.
