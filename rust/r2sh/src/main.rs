@@ -50,7 +50,7 @@ extern "C" fn entry() -> ! {
             // L key
             0x26 => {
                 if ctrl_down {
-                    //clear_screen!();
+                    abi::clear_screen();
 
                     // Clear input buffer
                     input_buffer = [0u8; 128];

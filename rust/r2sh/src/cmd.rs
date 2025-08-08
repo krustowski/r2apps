@@ -23,12 +23,6 @@ static COMMANDS: &[Command] = &[
         hidden: false,
     },
     Command {
-        name: b"chat",
-        description: b"starts a chat",
-        function: cmd_chat,
-        hidden: false,
-    },
-    Command {
         name: b"cls",
         description: b"clears the screen",
         function: cmd_clear,
@@ -113,12 +107,6 @@ static COMMANDS: &[Command] = &[
         hidden: false,
     },
     Command {
-        name: b"response",
-        description: b"waits for ICMP/SLIP request to come, then sends a response back",
-        function: cmd_response,
-        hidden: false,
-    },
-    Command {
         name: b"rm",
         description: b"removes a file",
         function: cmd_rm,
@@ -165,12 +153,6 @@ static COMMANDS: &[Command] = &[
         description: b"prints system time and date",
         function: cmd_time,
         hidden: false,
-    },
-    Command {
-        name: b"uptime",
-        description: b"prints system uptime",
-        function: cmd_uptime,
-        hidden: true,
     },
     Command {
         name: b"version",
@@ -372,21 +354,6 @@ fn cmd_cd(args: &[u8]) {
     }*/
 }
 
-/// Clears the screen and starts the TCP server accepting connections on TCP/12345. 
-fn cmd_chat(args: &[u8]) {
-    abi::clear_screen();
-
-    /*let mut ips = [[0u8; 4]; MAX_IPS];
-    let count = parse_ip_args(args, &mut ips);
-
-    if count > 0 {
-        app::chat::tcp::handle_conns(&ips);
-    } else {
-        // Use dummy IP addresses to 
-        app::chat::tcp::handle_conns(&[[0u8; 4]; 4]);
-    }*/
-}
-
 /// This just clears the whole screen with black background color.
 fn cmd_clear(_args: &[u8]) {
     abi::clear_screen();
@@ -400,7 +367,6 @@ fn cmd_debug(_args: &[u8]) {
 
 /// Prints the whole contents of the current directory.
 fn cmd_dir(_args: &[u8]) {
-
     let mut entries: [abi::Entry; 32] = [Default::default(); 32];
 
     abi::file_list_dir(&mut entries);
@@ -454,15 +420,15 @@ fn cmd_help(_args: &[u8]) {
     print(b"List of commands:\n");
 
     for cmd in COMMANDS {
-        if cmd.hidden {
+        /*if cmd.hidden {
             continue;
-        }
+        }*/
 
         // Print the command name and description
         print(b" ");
-        print(cmd.name);
+        //print(cmd.name);
         print(b": ");
-        print(cmd.description);
+        //print(cmd.description);
         print(b"\n");
     }
 }
@@ -677,67 +643,6 @@ fn cmd_read(args: &[u8]) {
     }*/
 }
 
-/// An experimental demonstration of the ICMP Echo request handler. The implementation sends ICMP
-/// Echo response back to the original sender via IPv4/SLIP.
-fn cmd_response(_args: &[u8]) {
-    /*fn callback(packet: &[u8]) -> u8 {
-        if let Some((ipv4_header, ipv4_payload)) = net::ipv4::parse_packet(packet) {
-            // Match only ICMP packets
-            if ipv4_header.protocol != 1 {
-                return 1;
-            }
-
-            // Extract the ICMP header and (optional) payload
-            if let Some((icmp_header, icmp_payload)) = net::icmp::parse_packet(ipv4_payload) {
-                // Type 8 is Echo request
-                if icmp_header.icmp_type != 8 {
-                    return 2;
-                }
-
-                // Prepare buffers for new packets.
-                let mut icmp_buf = [0u8; 64];
-                let mut ipv4_buf = [0u8; 1500];
-
-                // Create an ICMP Echo response packet...
-                let icmp_len = net::icmp::create_packet(0, icmp_header.identifier, icmp_header.sequence_number, icmp_payload, &mut icmp_buf);
-                let icmp_slice = icmp_buf.get(..icmp_len).unwrap_or(&[]);
-
-                // ...and prefix it with IPv4 header.
-                let ipv4_len = net::ipv4::create_packet(ipv4_header.dest_ip, ipv4_header.source_ip, ipv4_header.protocol, icmp_slice, &mut ipv4_buf);
-                let ipv4_slice = ipv4_buf.get(..ipv4_len).unwrap_or(&[]);
-
-                net::ipv4::send_packet(ipv4_slice);
-            }
-        }
-        0
-    }
-
-    println!("Waiting for an ICMP echo request (hit any key to interrupt)...");
-
-    loop {
-        // Start the receive loop where SLIP frames are extracted from serial line and passed into
-        // the callback when complete
-        let ret = net::ipv4::receive_loop(callback);
-
-        match ret {
-            0 => {
-                println!("Received ICMP Echo request, sending Echo response back");
-            }
-            2 => {
-                println!("Received ICMP packet (not the Echo request), ignoring");
-            }
-            3 => {
-                println!("Keyboard interrupt");
-                break;
-            }
-            _ => {
-                // Hide this as it would spam the screen 
-                //println!("Unknown IPv4 protocol number (not ICMP)");
-            }
-        }
-    }*/
-}
-
 /// Removes a file in the current directory according to the input.
 fn cmd_rm(args: &[u8]) {
     /*if args.len() == 0 || args.len() > 11 {
@@ -906,53 +811,6 @@ fn cmd_run(args: &[u8]) {
     }*/
 }
 
-/*const USER_STACK_SIZE: usize = 0x8000; // 32 KiB
-static mut USER_STACK: [u8; USER_STACK_SIZE] = [0; USER_STACK_SIZE];
-
-unsafe extern "C" fn user_program_return() -> ! {
-    core::arch::asm!(
-        "mov rdi, rax",     
-        "jmp {handler}",
-        handler = sym handle_program_return,
-        options(noreturn)
-    );
-}
-
-extern "C" fn handle_program_return(retval: u64) {
-    rprint!("Program returned: ");
-    rprintn!(retval);
-    rprint!("\n");
-
-    keyboard_loop();
-}
-
-unsafe fn run_program(entry: extern "C" fn(u32) -> u32, arg: u32) -> u32 {
-    let mut ret: u32;
-
-    // Get stack top
-    let user_stack_top = USER_STACK.as_ptr().add(USER_STACK_SIZE);
-
-    let return_addr = user_program_return() as usize;
-
-    core::arch::asm!(
-        "mov {old_rsp}, rsp",
-        "mov rsp, {stack}",
-        "push {ret_addr}",
-        "mov rdi, {arg:r}",
-        "call {entry}",
-        "mov rsp, {old_rsp}",
-        stack = in(reg) user_stack_top.offset(-8),
-        ret_addr = in(reg) return_addr,
-        entry = in(reg) entry,
-        old_rsp = lateout(reg) _,
-        arg = in(reg) arg,
-        out("rax") ret,
-        options(nostack),
-    );
-
-    ret
-}*/
-
 /// Experimental command function to demonstrate the current state of the shutdown process
 /// implemented.
 fn cmd_shutdown(_args: &[u8]) {
@@ -1031,35 +889,6 @@ fn cmd_time(_args: &[u8]) {
     print!("/");
 
     printn!(y as u64);
-    println!();*/
-}
-
-/// Experimental command function to show the system uptime.
-fn cmd_uptime(_args: &[u8]) {
-    /*let total_seconds = time::acpi::get_uptime_seconds();
-
-    let h = total_seconds / 3600;
-    let m = (total_seconds % 3600) / 60;
-    let s = total_seconds % 60;
-
-    print!("System uptime: ");
-
-    // Hours
-    printn!(h);
-    print!(":");
-
-    // Minutes
-    if m < 10 {
-        print!("0");
-    }
-    printn!(m);
-    print!(":");
-
-    // Seconds
-    if s < 10 {
-        print!("0");
-    }
-    printn!(s);
     println!();*/
 }
 

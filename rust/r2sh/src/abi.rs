@@ -88,7 +88,7 @@ pub struct Entry {
 }
 
 pub fn file_list_dir(entries: &mut [Entry; 32]) {
-    syscall(0x28, 0x00, entries as *mut _ as u64);
+    syscall(0x28, 0x00, entries.as_mut_ptr() as *mut _ as u64);
 }
 
 /*
