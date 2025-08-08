@@ -6,10 +6,10 @@ build:
 		-nostdinc \
 		-nostdlib \
 		-ffreestanding \
-		-I ../include \
+		-I ../libcr2 \
 		-Xlinker "-Tlinker.ld" \
 		-o r2sh.elf \
-		../include/{printf,syscall}.c *.c
+		../libcr2/{printf,syscall}.c *.c
 	@llvm-objcopy \
 		-O binary \
 		r2sh.elf \

@@ -8,11 +8,11 @@ build:
 		-nostdinc \
 		-nostdlib \
 		-ffreestanding \
-		-I ../include \
+		-I ../libcr2 \
 		-Xlinker "-T../linker.ld" \
 		-Wall \
 		-o ${NAME}.elf \
-		../include/{print,syscall}.c *.c
+		../libcr2/{print,syscall}.c *.c
 	@llvm-objcopy \
 		-O binary \
 		${NAME}.elf \
