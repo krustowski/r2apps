@@ -293,34 +293,6 @@ fn cmd_cd(args: &[u8]) {
     let mut filename = [b' '; 12];
     if let Some(slice) = filename.get_mut(..filename_input.len()) {
         slice.copy_from_slice(filename_input);
-    }
-
-    let floppy = Floppy::init();
-
-    // Init the filesystem to look for a match
-    match Filesystem::new(&floppy) {
-        Ok(fs) => {
-            let mut cluster: u16 = 0;
-
-            unsafe {
-                fs.for_each_entry(config::PATH_CLUSTER, |entry| {
-                    if entry.name.starts_with(&filename_input) {
-                        cluster = entry.start_cluster;
-                    }
-                });
-
-                if cluster > 0 {
-                    config::PATH_CLUSTER = cluster as u16;
-                    config::set_path(&filename_input);
-                } else {
-                    error!("No such directory\n");
-                }
-            }
-        }
-        Err(e) => {
-            error!(e);
-            error!();
-        }
     }*/
 }
 
@@ -437,43 +409,6 @@ fn cmd_mv(args: &[u8]) {
     /*if args.len() == 0 {
         warn!("Usage: mv <old> <new>");
         return;
-    }
-
-    let floppy = Floppy::init();
-
-    match Filesystem::new(&floppy) {
-        Ok(fs) => {
-            let (old, new) = split_cmd(args);
-
-            let mut old_filename: [u8; 11] = [b' '; 11];
-            let mut new_filename: [u8; 11] = [b' '; 11];
-
-            if new.len() == 0 || old.len() == 0 || old.len() > 11 || new.len() > 11 {
-                warn!("Usage: mv <old> <new>");
-                return;
-            }
-
-            if let Some(slice) = old_filename.get_mut(..) {
-                slice[..old.len()].copy_from_slice(old);
-                slice[8..11].copy_from_slice(b"TXT");
-            }
-
-            if let Some(slice) = new_filename.get_mut(..) {
-                slice[..new.len()].copy_from_slice(new);
-                slice[8..11].copy_from_slice(b"TXT");
-            }
-
-            to_uppercase_ascii(&mut old_filename);
-            to_uppercase_ascii(&mut new_filename);
-
-            unsafe {
-                fs.rename_file(PATH_CLUSTER, &old_filename, &new_filename);
-            }
-        }
-        Err(e) => {
-            error!(e);
-            error!();
-        }
     }*/
 }
 
@@ -483,41 +418,6 @@ fn cmd_read(args: &[u8]) {
     /*if args.len() == 0 || args.len() > 11 {
         warn!("Usage: read <filename>\n");
         return;
-    }
-
-    let floppy = Floppy::init();
-
-    match Filesystem::new(&floppy) {
-        Ok(fs) => {
-            let mut filename = [b' '; 11];
-
-            filename[..args.len()].copy_from_slice(args);
-            filename[8..11].copy_from_slice(b"TXT");
-
-            to_uppercase_ascii(&mut filename);
-
-            unsafe {
-                // TODO: tix this
-                //let cluster = fs.list_dir(config::PATH_CLUSTER, &filename);
-                let cluster = 0;
-
-                if cluster > 0 {
-                    let mut buf = [0u8; 512];
-
-                    fs.read_file(cluster as u16, &mut buf);
-
-                    print!("Dumping file raw contents:\n", video::vga::Color::DarkYellow);
-                    printb!(&buf);
-                    println!();
-                } else {
-                    error!("No such file found");
-                }
-            }
-        }
-        Err(e) => {
-            error!(e);
-            error!();
-        }
     }*/
 }
 
@@ -526,29 +426,6 @@ fn cmd_rm(args: &[u8]) {
     /*if args.len() == 0 || args.len() > 11 {
         warn!("Usage: rm <filename>\n");
         return;
-    }
-
-    let floppy = Floppy::init();
-
-    match Filesystem::new(&floppy) {
-        Ok(fs) => {
-            let mut filename: [u8; 11] = [b' '; 11];
-
-            if let Some(slice) = filename.get_mut(..) {
-                slice[..args.len()].copy_from_slice(args);
-                slice[8..11].copy_from_slice(b"TXT");
-            }
-
-            to_uppercase_ascii(&mut filename);
-
-            unsafe {
-                fs.delete_file(PATH_CLUSTER, &filename);
-            }
-        }
-        Err(e) => {
-            error!(e);
-            error!();
-        }
     }*/
 }
 
@@ -570,122 +447,6 @@ fn cmd_run(args: &[u8]) {
     let mut filename = [b' '; 12];
     if let Some(slice) = filename.get_mut(..filename_input.len()) {
         slice.copy_from_slice(filename_input);
-    }
-
-    let floppy = Floppy::init();
-
-    // Init the filesystem to look for a match
-    match Filesystem::new(&floppy) {
-        Ok(fs) => {
-            unsafe {
-                let mut cluster: u16 = 0;
-                let mut offset = 0;
-                let mut size = 0;
-
-                fs.for_each_entry(config::PATH_CLUSTER, |entry| {
-                    if entry.name.starts_with(&filename_input) && entry.ext.starts_with(b"ELF") {
-                        cluster = entry.start_cluster;
-                        size = entry.file_size;
-                        return;
-                    }
-                });
-
-                rprint!("Size: ");
-                rprintn!(size);
-                rprint!("\n");
-
-                if cluster == 0 {
-                    error!("no such file found");
-                    error!();
-                    return;
-                }
-
-                let load_addr: u64 = 0x690_000;
-
-                while size - offset > 0 {
-                    let lba = fs.cluster_to_lba(cluster);
-                    let mut sector = [0u8; 512];
-
-                    fs.device.read_sector(lba, &mut sector);
-
-                    let dst = load_addr as *mut u8;
-
-                    //core::ptr::copy_nonoverlapping(sector.as_ptr(), dst.add(offset as usize), 512.min((size - offset) as usize));
-
-                    rprint!("Loading ELF image to memory segment\n");
-                    for i in 0..512 {
-                        if let Some(byte) = sector.get(i) {
-                            *dst.add(i + offset as usize) = *byte;
-                        }
-                    }
-
-                    cluster = fs.read_fat12_entry(cluster);
-
-                    rprint!("Cluster: ");
-                    rprintn!(cluster);
-                    rprint!("\n");
-
-                    if cluster >= 0xFF8 || cluster == 0 {
-                        break;
-                    }
-
-                    //rprint!("offset++\n");
-                    offset += 512;
-                }
-
-                let arg: u64 = 555;
-                //let result: u32;
-
-                //let entry_ptr = (load_addr + 0x18) as *const u64;
-                //let entry_addr = *entry_ptr;
-                //let entry_addr = core::ptr::read_unaligned((load_addr + 0x18) as *const u64);
-                let entry_ptr = (load_addr + 0x18) as *const u8;
-
-                rprint!("First 16 bytes (load_addr + 0x18): ");
-                for i in 0..16 {
-                    rprintn!(*(entry_ptr as *const u8).add(i));
-                    rprint!(" ");
-                }
-                rprint!("\n");
-
-                /*let entry_addr = u64::from_le_bytes([
-                    *entry_ptr.add(0),
-                    *entry_ptr.add(1),
-                    *entry_ptr.add(2),
-                    *entry_ptr.add(3),
-                    *entry_ptr.add(4),
-                    *entry_ptr.add(5),
-                    *entry_ptr.add(6),
-                    *entry_ptr.add(7),
-                ]);*/
-
-                // assume `elf_image` is a pointer to the loaded ELF file in memory
-                let entry_addr = super::elf::load_elf64(load_addr as usize);
-
-                rprint!("ELF entry point: ");
-                rprintn!(entry_addr);
-                rprint!("\n");
-
-                let stack_top = 0x700000;
-
-                // cast and jump
-                let entry_fn: extern "C" fn() -> u64 = core::mem::transmute(entry_addr as *const ());
-
-                rprint!("Jumping to the program entry point...\n");
-                //prg_fn();
-                //super::elf::jump_to_elf(entry_fn, stack_top);
-                super::elf::jump_to_elf(entry_fn, stack_top, arg);
-
-                //let entry: extern "C" fn(u32) -> u32 = core::mem::transmute((load_addr + 0x41) as *mut u8);
-
-                //let result = run_program(entry, arg);
-                //let result = entry(arg);
-            }
-        }
-        Err(e) => {
-            error!(e);
-            error!();
-        }
     }*/
 }
 
@@ -774,39 +535,5 @@ fn cmd_version(_args: &[u8]) {
 
 /// Experimental command function to demonstrate the possibility of writing to files in FAT12 filesystem.
 fn cmd_write(args: &[u8]) {
-    /*let floppy = Floppy::init();
-
-    match Filesystem::new(&floppy) {
-        Ok(fs) => {
-            let (filename, content) = split_cmd(args);
-
-            if filename.len() == 0 || content.len() == 0 {
-                warn!("Usage <filename> <content>\n");
-                return;
-            }
-
-            if filename.len() > 8 {
-                error!("Filename too long (>8)\n");
-                return;
-            }
-
-            let mut name = [b' '; 11];
-
-            if let Some(slice) = name.get_mut(..) {
-                slice[..filename.len()].copy_from_slice(filename);
-                slice[8..11].copy_from_slice(b"TXT");
-            }
-
-            to_uppercase_ascii(&mut name);
-
-            unsafe {
-                fs.write_file(PATH_CLUSTER, &name, content);
-            }
-        }
-        Err(e) => {
-            error!(e);
-            error!();
-        }
-    }*/
 }
 
