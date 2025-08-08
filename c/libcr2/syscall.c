@@ -40,6 +40,16 @@ int64_t write_sysinfo(const SysInfo_T *sysinfo)
 	return 1;
 }
 
+int64_t read_rtc(RTC_T *rtc_data)
+{
+	if (syscall(ScRTC, 0x01, (int64_t)rtc_data, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
 int64_t print(const uint8_t *str) 
 {
 	int64_t len = 0;

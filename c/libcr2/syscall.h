@@ -56,6 +56,20 @@ typedef struct {
 } __attribute__((packed)) Entry_T;
 
 /*
+ *  type RTC_T structure
+ *
+ *  This structure is to hold all important fields needed to read time from the RTC hardware chip.
+ */
+typedef struct {
+	uint16_t seconds;
+	uint8_t minutes;
+	uint8_t hours;
+	uint8_t day;
+	uint8_t month;
+	uint8_t year;
+} __attribute__((packed)) RTC_T;
+
+/*
  *  SyscallNumber enumeration
  *
  *  This enum suits as a helper for a syscall caller not to use hardcoded integers (as those may
@@ -121,6 +135,13 @@ int64_t read_sysinfo(SysInfo_T *sysinfo);
  *  Implementation of syscall 0x01 (arg1 0x02).
  */
 int64_t write_sysinfo(const SysInfo_T *sysinfo);
+
+/*
+ *  int64_t read_rtc() prototype
+ *
+ *  Implementation of syscall 0x02 (arg1 0x01).
+ */
+int64_t read_rtc(RTC_T *rtc_data);
 
 /*
  *  int64_t print() prototype
