@@ -17,11 +17,19 @@ extern "C" {
 #include "mem.h"
 #include "syscall.h"
 
+/*
+ *  Serial-Line Internet Protocol
+ *
+ *  Definitions related to the decoder.
+ */
 #define SLIP_END     0xC0
 #define SLIP_ESC     0xDB
 #define SLIP_ESC_END 0xDC
 #define SLIP_ESC_ESC 0xDD
 
+/*
+ *  TCP socket-related definitions
+ */
 #define MAX_SOCKETS	8
 #define RX_BUFFER_SIZE  1024
 #define TX_BUFFER_SIZE  1024
@@ -77,6 +85,11 @@ typedef struct {
     uint16_t urgent_pointer;
 } __attribute__((packed)) TcpHeader_T;
 
+/*
+ *  type SocketState enumeration
+ *
+ *  Uncomplete list of various TCP connection states.
+ */
 typedef enum {
 	SOCKET_CLOSED,
 	SOCKET_LISTENING,
@@ -84,7 +97,13 @@ typedef enum {
 	SOCKET_FIN_WAIT
 } SocketState;
 
-typedef struct TcpSocket {
+/*
+ *  type TcpSocket_T structure
+ *
+ *  TCP connection implementing socket strucutre used to track the connection state, 
+ *  properties and stuff.
+ */
+typedef struct TcpSocket_T {
 	uint32_t id;
 	SocketState state;
 	uint16_t local_port;
@@ -95,29 +114,118 @@ typedef struct TcpSocket {
 	uint32_t rx_len;
 	uint32_t tx_len;
 	uint8_t used;
-} TcpSocket;
+} TcpSocket_T;
 
-static TcpSocket sockets[MAX_SOCKETS];
+/*
+ *  TcpSocket_T sockets
+ *
+ *  Static array of processable sockets. Experimental.
+ */
+static TcpSocket_T sockets[MAX_SOCKETS];
 
-void send_tcp_packet(TcpSocket *sock, const uint8_t* data, uint32_t len, uint8_t flags);
+/*
+ *  void send_tcp_packet() prototype
+ *
+ *  This function should be capeble of send the TCP packet wrapped in an IPv4 packet successfully over the line.
+ */
+void send_tcp_packet(TcpSocket_T *sock, const uint8_t* data, uint32_t len, uint8_t flags);
 
-TcpSocket *socket_tcp4();
-static TcpSocket *alloc_socket();
-static void free_socket(TcpSocket *sock);
+/*
+ *  TcpSocket_T *socket_tcp4() prototype
+ *
+ *  This function tries to allocate a new socket. Returns the socket on success, 0 otherwise.
+ */
+TcpSocket_T *socket_tcp4();
 
-void bind(TcpSocket *sock, uint16_t port);
-void listen(TcpSocket *sock);
-TcpSocket *accept(TcpSocket *listener);
-uint32_t read(TcpSocket *sock, uint8_t *buf, uint32_t maxlen);
-uint32_t write(TcpSocket *sock, const uint8_t *buf, uint32_t len);
-void close(TcpSocket *sock);
+/*
+ *  static TcpSocket_T *alloc_socket() prototype
+ *
+ *  This function tries to allocate a new socket (unused socket). Returns the socket on success, 0 otherwise.
+ */
+static TcpSocket_T *alloc_socket();
 
+/*
+ *  static void free_socket() prototype
+ *
+ *  This simple macro-like function sets socket <used> property to 0 and marks the socket as CLOSED.
+ */
+static void free_socket(TcpSocket_T *sock);
+
+/*
+ *  void bind() prototype
+ *
+ *  This function sets a socket's <local_port> property to the <port> value.
+ */
+void bind(TcpSocket_T *sock, uint16_t port);
+
+/*
+ *  void listen() prototype
+ *
+ *  This function sets a socket's state to SOCKET_LISTENING.
+ */
+void listen(TcpSocket_T *sock);
+
+/*
+ *  TcpSocket_T *accept() prototype
+ *
+ *  This function checks the array of sockets and returns the one marked as used, with the conn state as ESTABLISHED, 
+ *  and wuth the <local_port> being the same as the listener's one.
+ */
+TcpSocket_T *accept(TcpSocket_T *listener);
+
+/*
+ *  uint32_t read() prototype
+ *
+ *  This function reads the contents of socket's RX buffer into provided <buf> array. The number of bytes read
+ *  is then returned.
+ */
+uint32_t read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen);
+
+/*
+ *  uint32_t write() prototype
+ *
+ *  This function writes the given <buf> array directly over the line.
+ */
+uint32_t write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len);
+
+/*
+ *  void close() prototype
+ *
+ *  This function closes the connection tracked by such socket provided. 
+ */
+void close(TcpSocket_T *sock);
+
+/*
+ *  void on_tcp_packet() prototype
+ *
+ *  This function is to parse a TCP packet and to set according sockets as ESTABLISHED, FIN_WAIT or to free them.
+ */
 void on_tcp_packet(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint8_t flags, const uint8_t *payload, uint32_t len);
 
-
+/*
+ *  int64_t decode_slip() prototype
+ *
+ *  A function implementing this prototype should be capeble of parsing the <input* according to
+ *  the SLIP special chars and extracting the whole raw frame in <output>.
+ *
+ *  Function returns -1 when error occurs, 0 when the frame is not decoded yet, and N as the length of decoded frame.
+ */
 int64_t decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, uint32_t output_len);
 
+/*
+ *  uint16_t parse_ipv4_packet() prototype
+ *
+ *  A simple macro-like function that copyies the contents of the packet into the IPv4 
+ *  header structure of declared size. Function returns the header size.
+ */
 uint16_t parse_ipv4_packet(const uint8_t *packet, Ipv4Header_T *header);
+
+/*
+ *  uint8_t parse_icmp_packet() prototype
+ *
+ *  A simple macro-like function to copy the packet data into the ICMP header structure.
+ *  Returns 8 as that is the standard ICMP header size.
+ */
 uint8_t parse_icmp_packet(const uint8_t *packet, IcmpHeader_T *header);
 
 #ifdef __cplusplus

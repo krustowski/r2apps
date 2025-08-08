@@ -15,7 +15,18 @@ extern "C" {
 
 #include "types.h"
 
+/*
+ *  uint32_t memcmp() prototype
+ *
+ *  Custom memory comparison procedure.
+ */
 uint32_t memcmp(const uint8_t *s1, const uint8_t *s2, uint32_t len);
+
+/*
+ *  void *memcpy() prototype
+ *
+ *  Custom memory copying procedure.
+ */
 void *memcpy(void *dest, const void *src, uint16_t n);
 
 #ifdef __cplusplus

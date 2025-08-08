@@ -96,9 +96,9 @@ uint8_t parse_icmp_packet(const uint8_t *packet, IcmpHeader_T *header)
 	return header_len;
 }
 
-TcpSocket *socket_tcp4()
+TcpSocket_T *socket_tcp4()
 {
-	TcpSocket *sock = alloc_socket();
+	TcpSocket_T *sock = alloc_socket();
 	if (!sock)
 	{
 		return 0;
@@ -109,21 +109,21 @@ TcpSocket *socket_tcp4()
 	return sock;
 }
 
-void bind(TcpSocket *sock, uint16_t port)
+void bind(TcpSocket_T *sock, uint16_t port)
 {
 	sock->local_port = port;
 }
 
-void listen(TcpSocket *sock)
+void listen(TcpSocket_T *sock)
 {
 	sock->state = SOCKET_LISTENING;
 }
 
-TcpSocket *accept(TcpSocket *listener)
+TcpSocket_T *accept(TcpSocket_T *listener)
 {
 	for (uint8_t i = 0; i < MAX_SOCKETS; i++)
 	{
-		TcpSocket *s = &sockets[i];
+		TcpSocket_T *s = &sockets[i];
 
 		if (s->used && s->state == SOCKET_ESTABLISHED && s->local_port == listener->local_port)
 		{
@@ -137,7 +137,7 @@ TcpSocket *accept(TcpSocket *listener)
 	return 0;
 }
 
-uint32_t read(TcpSocket *sock, uint8_t *buf, uint32_t maxlen)
+uint32_t read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen)
 {
 	uint32_t n = (sock->rx_len < maxlen) ? sock->tx_len : maxlen;
 
@@ -150,13 +150,13 @@ uint32_t read(TcpSocket *sock, uint8_t *buf, uint32_t maxlen)
 	return n;
 }
 
-uint32_t write(TcpSocket *sock, const uint8_t *buf, uint32_t len)
+uint32_t write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len)
 {
 	send_tcp_packet(sock, buf, len, TCP_FLAG_ACK);
 	return len;
 }
 
-void close(TcpSocket *sock)
+void close(TcpSocket_T *sock)
 {
 	send_tcp_packet(sock, 0, 0, TCP_FLAG_FIN | TCP_FLAG_ACK);
 	sock->state = SOCKET_FIN_WAIT;
@@ -166,7 +166,7 @@ void on_tcp_packet(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint8_
 {
 	for (uint8_t i = 0; i < MAX_SOCKETS; i++)
 	{
-		TcpSocket *s = &sockets[i];
+		TcpSocket_T *s = &sockets[i];
 
 		if (!s->used || s->local_port != dst_port)
 		{
@@ -175,7 +175,7 @@ void on_tcp_packet(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint8_
 
 		if (s->state == SOCKET_LISTENING && (flags & TCP_FLAG_SYN))
 		{
-			TcpSocket *new_conn = alloc_socket();
+			TcpSocket_T *new_conn = alloc_socket();
 
 			if (!new_conn)
 			{
@@ -212,7 +212,7 @@ void on_tcp_packet(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint8_
 	}
 }
 
-static TcpSocket *alloc_socket() 
+static TcpSocket_T *alloc_socket() 
 {
 	for (uint8_t i = 0; i < MAX_SOCKETS; i++)
 	{
@@ -227,15 +227,15 @@ static TcpSocket *alloc_socket()
 	return 0;
 }
 
-static void free_socket(TcpSocket *sock)
+static void free_socket(TcpSocket_T *sock)
 {
 	sock->used = 0;
 	sock->state = SOCKET_CLOSED;
 }
 
-void send_tcp_packet(TcpSocket *sock, const uint8_t* data, uint32_t len, uint8_t flags)
+void send_tcp_packet(TcpSocket_T *sock, const uint8_t* data, uint32_t len, uint8_t flags)
 {}
-/*void send_tcp_packet(TcpSocket *sock, const uint8_t* data, uint32_t len, uint8_t flags)
+/*void send_tcp_packet(TcpSocket_T *sock, const uint8_t* data, uint32_t len, uint8_t flags)
 {
 	uint8_t tcp_packet[TX_BUFFER_SIZE];
 	TcpHeader_T tcp_header;
