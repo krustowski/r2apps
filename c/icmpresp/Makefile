@@ -11,7 +11,7 @@ build:
 		-I ../libcr2 \
 		-Xlinker "-T../linker.ld" \
 		-o ${NAME}.elf \
-		../libcr2/{mem,net,print,syscall}.c *.c
+		../libcr2/{mem,net,printf,syscall}.c *.c
 	@llvm-objcopy \
 		-O binary \
 		${NAME}.elf \
