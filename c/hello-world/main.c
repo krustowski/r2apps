@@ -2,6 +2,6 @@
 
 int main(int64_t pid, int64_t arg)
 {
-	print("Hello, world!\n");
+	print((const uint8_t *) "Hello, world!\n");
 	exit(pid, 101);
 }

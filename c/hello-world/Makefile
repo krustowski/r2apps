@@ -10,6 +10,7 @@ build:
 		-ffreestanding \
 		-I ../include \
 		-Xlinker "-T../linker.ld" \
+		-Wall \
 		-o ${NAME}.elf \
 		../include/{print,syscall}.c *.c
 	@llvm-objcopy \
