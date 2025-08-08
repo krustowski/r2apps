@@ -12,7 +12,7 @@ build:
 		-Xlinker "-T../linker.ld" \
 		-Wall \
 		-o ${NAME}.elf \
-		../libcr2/{print,syscall}.c *.c
+		../libcr2/{printf,syscall}.c *.c
 	@llvm-objcopy \
 		-O binary \
 		${NAME}.elf \
