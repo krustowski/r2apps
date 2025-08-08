@@ -15,7 +15,19 @@ extern "C" {
 
 #include "types.h"
 
-uint32_t strlen(const char *str);
+/*
+ *  uint32_t strlen() prototype
+ *
+ *  A macro-like function to count the given uint8_t array size. The string should be null-ended.
+ */
+uint32_t strlen(const uint8_t *str);
+
+/*
+ *  void u32_to_str() prototype
+ *
+ *  A simple helper function to convert unsigned 32bit integer into a string representation in
+ *  provided <buffer>.
+ */
 void u32_to_str(uint32_t value, uint8_t *buffer);
 
 #ifdef __cplusplus
