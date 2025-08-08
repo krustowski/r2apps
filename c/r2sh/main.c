@@ -9,6 +9,7 @@ int main(int64_t pid, int64_t arg)
 	uint8_t elf_pid = 0;
 
 	SysInfo_T sysinfo;
+	RTC_T rtc_data;
 	Entry_T entries[32];
 
 	/* Test printing to standard output (console, syscall 0x10) */
@@ -23,6 +24,12 @@ int main(int64_t pid, int64_t arg)
 
 		printf("System rou2exOS %s\n", sysinfo.system_version);
 		printf("[%s@%s:%s] > ...\n", sysinfo.system_user, sysinfo.system_name, sysinfo.system_path);
+	}
+
+	/* Test RTC clock read (syscall 0x02) */
+	if (read_rtc(&rtc_data))
+	{
+		printf("System time: %d:%d:%d %d-%d-%d\n", rtc_data.hours, rtc_data.minutes, rtc_data.seconds, rtc_data.year, rtc_data.month, rtc_data.day);
 	}
 
 	/* Test writing to a file (syscall 0x21) */
