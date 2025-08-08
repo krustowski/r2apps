@@ -14,15 +14,10 @@
 extern "C" {
 #endif
 
+#include "types.h"
+
 /* Software CPU interrupt number to access the ABI.  */
 #define ABI_INTERRUPT 	0x7f
-
-typedef long int64_t;
-
-typedef unsigned char 	uint8_t;
-typedef unsigned short 	uint16_t;
-typedef unsigned int 	uint32_t;
-typedef unsigned long 	uint64_t;
 
 /*
  *  type SysInfo_T structure
@@ -59,53 +54,6 @@ typedef struct {
 	uint16_t start_cluster;
 	uint32_t file_size;
 } __attribute__((packed)) Entry_T;
-
-/*
- *  type Ipv4Header_T structure
- *
- *  This structure specifies the property list of an IPv4 header.
- */
-typedef struct {
-	uint8_t version;
-	uint8_t dscp_ecn;
-	uint16_t total_length;
-	uint16_t identification;
-	uint16_t flags_fragment_offset;
-	uint8_t ttl;
-	uint8_t protocol;
-	uint16_t header_checksum;
-	uint8_t source_addr[4];
-	uint8_t destination_addr[4];
-} __attribute__((packed)) Ipv4Header_T;
-
-/*
- *  type IcmpHeader_T structure
- *
- *  This structure specifies the property list of an ICMP header.
- */
-typedef struct {
-	uint8_t type;
-	uint8_t code;
-	uint16_t checksum;
-	uint16_t identifier;
-	uint16_t sequence_number;
-} __attribute__((packed)) IcmpHeader_T;
-
-/*
- *  type TcpHeader_T structure
- *
- *  This structure specifies the property list of a TCP header.
- */
-typedef struct {
-    uint16_t source_port;
-    uint16_t dest_port;
-    uint32_t seq_num;
-    uint32_t ack_num;
-    uint16_t data_offset_reserved_flags;
-    uint16_t window_size;
-    uint16_t checksum;
-    uint16_t urgent_pointer;
-} __attribute__((packed)) TcpHeader_T;
 
 /*
  *  SyscallNumber enumeration
