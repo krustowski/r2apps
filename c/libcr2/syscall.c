@@ -50,6 +50,26 @@ int64_t read_rtc(RTC_T *rtc_data)
 	return 1;
 }
 
+int64_t pipe_subscribe(const uint8_t *buffer)
+{
+	if (syscall(ScPipeSubscribe, 0x01, (int64_t)buffer, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+int64_t pipe_unsubscribe(const uint8_t *buffer)
+{
+	if (syscall(ScPipeSubscribe, 0x02, (int64_t)buffer, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
 int64_t print(const uint8_t *str) 
 {
 	int64_t len = 0;

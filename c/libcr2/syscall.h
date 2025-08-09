@@ -80,6 +80,7 @@ enum SyscallNumber: int64_t {
 	// System + Memory Management
 	ScSysInfo		= 0x01,
 	ScRTC			= 0x02,
+	ScPipeSubscribe		= 0x03,
 	ScMalloc 		= 0x0a,
 	ScRealloc 		= 0x0b,
 	ScFree 			= 0x0f,
@@ -142,6 +143,20 @@ int64_t write_sysinfo(const SysInfo_T *sysinfo);
  *  Implementation of syscall 0x02 (arg1 0x01).
  */
 int64_t read_rtc(RTC_T *rtc_data);
+
+/*
+ *  int64_t pipe_subscribe() prototype
+ *
+ *  Implementation of syscall 0x03 (arg1 0x01).
+ */
+int64_t pipe_subscribe(const uint8_t *buffer);
+
+/*
+ *  int64_t pipe_unsubscribe() prototype
+ *
+ *  Implementation of syscall 0x03 (arg1 0x02).
+ */
+int64_t pipe_unsubscribe();
 
 /*
  *  int64_t print() prototype
