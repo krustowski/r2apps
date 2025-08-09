@@ -156,7 +156,14 @@ int64_t pipe_subscribe(const uint8_t *buffer);
  *
  *  Implementation of syscall 0x03 (arg1 0x02).
  */
-int64_t pipe_unsubscribe();
+int64_t pipe_unsubscribe(const uint8_t *buffer);
+
+/*
+ *  int64_t pipe_read() prototype
+ *
+ *  Implementation of syscall 0x03 (arg1 0x03).
+ */
+int64_t pipe_read(uint8_t *buffer);
 
 /*
  *  int64_t print() prototype

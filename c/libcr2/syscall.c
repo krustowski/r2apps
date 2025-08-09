@@ -70,6 +70,16 @@ int64_t pipe_unsubscribe(const uint8_t *buffer)
 	return 1;
 }
 
+int64_t pipe_read(uint8_t *buffer)
+{
+	if (syscall(ScPipeSubscribe, 0x03, (int64_t)buffer, 0))
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
 int64_t print(const uint8_t *str) 
 {
 	int64_t len = 0;
