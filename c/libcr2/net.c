@@ -212,6 +212,8 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
 			new_conn->seq_num = tcp_header->seq_num;
 			new_conn->ack_num = tcp_header->ack_num;
 
+			new_conn->used = 1;
+
 			send_tcp_packet(new_conn, 0, 0, TCP_FLAG_SYN | TCP_FLAG_ACK);
 			return;
 		}
@@ -245,6 +247,7 @@ static TcpSocket_T *alloc_socket()
 		{
 			sockets[i].used = 1;
 			sockets[i].id = i;
+
 			return &sockets[i];
 		}
 	}
@@ -260,17 +263,15 @@ static void free_socket(TcpSocket_T *sock)
 
 void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8_t flags)
 {
-	uint8_t packet_buf[1500];
-	uint8_t tcp_packet[1500];
+	static uint8_t packet_buf[1500];
+	static uint8_t tcp_packet[1500];
 	TcpPacketRequest_T request;
+	TcpHeader_T tcp_header;
 	Ipv4Header_T ipv4_header;
 
 	uint8_t ipv4_header_len = sizeof(Ipv4Header_T);
 	uint8_t tcp_header_len = sizeof(TcpHeader_T);
 	uint8_t tcp_req_len = sizeof(TcpPacketRequest_T);
-
-	uint16_t tcp_total_len = tcp_req_len + len;
-	uint16_t ipv4_total_len = ipv4_header_len + tcp_total_len;
 
 	request.header.source_port = sock->local_port;
 	request.header.dest_port = sock->remote_port;
@@ -281,8 +282,8 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8
 	uint16_t data_offset = (sizeof(TcpHeader_T) / 4) & 0xF;
 	request.header.data_offset_reserved_flags = (data_offset << 12) | (flags & 0xFF);
 
-	memcpy(request.src_ip, sock->remote_ip, 4);
-	memcpy(request.dst_ip, sock->local_ip, 4);
+	memcpy(request.src_ip, sock->local_ip, 4);
+	memcpy(request.dst_ip, sock->remote_ip, 4);
 
 	request.length = len;
 
@@ -290,7 +291,7 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8
 	memcpy(tcp_packet + tcp_req_len, data, len);
 
 	// Create a reply TCP packet
-	if (!new_packet(0x03, (uint8_t *) tcp_packet))
+	if (!new_packet(CRAFT_TCP_PACKET, (uint8_t *) tcp_packet))
 	{
 		print("-> TCP packet creation failed\n");
 		return;
@@ -300,25 +301,24 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8
 	memcpy(ipv4_header.source_addr, sock->remote_ip, 4);
 	memcpy(ipv4_header.destination_addr, sock->local_ip, 4);
 	ipv4_header.protocol = 6;
-	ipv4_header.total_length = htons(ipv4_total_len + tcp_header_len + len);
+	ipv4_header.total_length = htons(ipv4_header_len + tcp_header_len + len);
 
 	// Compose a dummy IP packet
-	memcpy(packet_buf, &ipv4_header, ipv4_header_len);
-	memcpy(packet_buf + ipv4_header_len, tcp_packet, 20 + len);
+	memcpy(packet_buf, (const uint8_t *) &ipv4_header, ipv4_header_len);
+	memcpy(packet_buf + ipv4_header_len, (const uint8_t *) tcp_packet, tcp_header_len + len);
 
-	if (!new_packet(0x01, (uint8_t *) packet_buf))
+	if (!new_packet(CRAFT_IPV4_PACKET, (uint8_t *) packet_buf))
 	{
 		print("-> IPv4 packet creation failed\n");
 		return;
 	}
 
-	if (!send_packet(0x01, packet_buf))
+	if (!send_packet(0x01, (uint8_t *) packet_buf))
 	{
 		print("-> Failed to send the IPv4 packet\n");
 		return;
 	}
 
-	TcpHeader_T tcp_header;
 	parse_tcp_packet(tcp_packet, &tcp_header);
 
 	printf("<< TCP: src_port: %u, dest_port: %u, seq %u\n", tcp_header.source_port, tcp_header.dest_port, tcp_header.seq_num);

@@ -38,6 +38,10 @@ extern "C" {
 #define TCP_FLAG_SYN	0x02
 #define TCP_FLAG_ACK	0x10
 
+#define CRAFT_IPV4_PACKET 	0x01
+#define CRAFT_ICMP_PACKET 	0x02
+#define CRAFT_TCP_PACKET 	0x03
+
 /*
  *  type Ipv4Header_T structure
  *

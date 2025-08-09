@@ -31,6 +31,8 @@ int main(int64_t pid, int64_t arg)
 	bind(server, 80);
 	listen(server);
 
+	print("-> garn HTTP service starting up...\n");
+
 	if (!serial_init())
 	{
 		// Could not init serial port...
@@ -50,7 +52,7 @@ int main(int64_t pid, int64_t arg)
 		temp_len++;
 
 		// Try to decode the whole SLIP frame
-		decoded_len = decode_slip(temp_buf, temp_len, packet_buf, 2048);
+		decoded_len = decode_slip(temp_buf, temp_len, packet_buf, sizeof(temp_buf));
 		if (decoded_len <= 0)
 		{
 			continue;
