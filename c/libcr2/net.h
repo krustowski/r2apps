@@ -75,15 +75,28 @@ typedef struct {
  *  This structure specifies the property list of a TCP header.
  */
 typedef struct {
-    uint16_t source_port;
-    uint16_t dest_port;
-    uint32_t seq_num;
-    uint32_t ack_num;
-    uint16_t data_offset_reserved_flags;
-    uint16_t window_size;
-    uint16_t checksum;
-    uint16_t urgent_pointer;
+	uint16_t source_port;
+	uint16_t dest_port;
+	uint32_t seq_num;
+	uint32_t ack_num;
+	uint16_t data_offset_reserved_flags;
+	uint16_t window_size;
+	uint16_t checksum;
+	uint16_t urgent_pointer;
 } __attribute__((packed)) TcpHeader_T;
+
+/*
+ *  type TcpPacketRequest_T
+ *
+ *  This special-purpose structure is to cotransport IPv4 addresses
+ *  with a TCP header when requesting a new TCP packet from r2 kernel.
+ */
+typedef struct {
+	TcpHeader_T header;
+	uint8_t src_ip[4];
+	uint8_t dst_ip[4];
+	uint16_t length;
+} __attribute__((packed)) TcpPacketRequest_T;
 
 /*
  *  type SocketState enumeration
@@ -107,13 +120,16 @@ typedef struct TcpSocket_T {
 	uint32_t id;
 	SocketState state;
 	uint16_t local_port;
-	uint32_t remoze_ip;
 	uint16_t remote_port;
+	uint8_t local_ip[4];
+	uint8_t remote_ip[4];
 	uint8_t rx_buffer[RX_BUFFER_SIZE];
 	uint8_t tx_buffer[TX_BUFFER_SIZE];
 	uint32_t rx_len;
 	uint32_t tx_len;
 	uint8_t used;
+	uint32_t seq_num;
+	uint32_t ack_num;
 } TcpSocket_T;
 
 /*
@@ -200,7 +216,7 @@ void close(TcpSocket_T *sock);
  *
  *  This function is to parse a TCP packet and to set according sockets as ESTABLISHED, FIN_WAIT or to free them.
  */
-void on_tcp_packet(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, uint8_t flags, const uint8_t *payload, uint32_t len);
+void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T *tcp_header, const uint8_t *payload, uint32_t len);
 
 /*
  *  int64_t decode_slip() prototype
@@ -227,6 +243,13 @@ uint16_t parse_ipv4_packet(const uint8_t *packet, Ipv4Header_T *header);
  *  Returns 8 as that is the standard ICMP header size.
  */
 uint8_t parse_icmp_packet(const uint8_t *packet, IcmpHeader_T *header);
+
+/*
+ *  uint8_t parse_tcp_packet() prototype
+ *
+ *  A simple macro-like function to copy the packet data into the TCP header structure.
+ */
+uint16_t parse_tcp_packet(const uint8_t *packet, TcpHeader_T *header);
 
 #ifdef __cplusplus
 }
