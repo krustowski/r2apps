@@ -134,14 +134,7 @@ typedef struct TcpSocket_T {
 	uint8_t used;
 	uint32_t seq_num;
 	uint32_t ack_num;
-} TcpSocket_T;
-
-/*
- *  TcpSocket_T sockets
- *
- *  Static array of processable sockets. Experimental.
- */
-static TcpSocket_T sockets[MAX_SOCKETS];
+} __attribute__((packed)) TcpSocket_T;
 
 /*
  *  void send_tcp_packet() prototype
@@ -158,18 +151,18 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t* data, uint32_t len, uint8
 TcpSocket_T *socket_tcp4();
 
 /*
- *  static TcpSocket_T *alloc_socket() prototype
+ *  TcpSocket_T *alloc_socket() prototype
  *
  *  This function tries to allocate a new socket (unused socket). Returns the socket on success, 0 otherwise.
  */
-static TcpSocket_T *alloc_socket();
+TcpSocket_T *alloc_socket(TcpSocket_T sockets[MAX_SOCKETS]);
 
 /*
- *  static void free_socket() prototype
+ *  void free_socket() prototype
  *
  *  This simple macro-like function sets socket <used> property to 0 and marks the socket as CLOSED.
  */
-static void free_socket(TcpSocket_T *sock);
+void free_socket(TcpSocket_T *sock);
 
 /*
  *  void bind() prototype
@@ -191,7 +184,7 @@ void listen(TcpSocket_T *sock);
  *  This function checks the array of sockets and returns the one marked as used, with the conn state as ESTABLISHED, 
  *  and wuth the <local_port> being the same as the listener's one.
  */
-TcpSocket_T *accept(TcpSocket_T *listener);
+TcpSocket_T *accept(TcpSocket_T *listener, TcpSocket_T sockets[MAX_SOCKETS]);
 
 /*
  *  uint32_t read() prototype
@@ -220,7 +213,7 @@ void close(TcpSocket_T *sock);
  *
  *  This function is to parse a TCP packet and to set according sockets as ESTABLISHED, FIN_WAIT or to free them.
  */
-void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T *tcp_header, const uint8_t *payload, uint32_t len);
+void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T *tcp_header, const uint8_t *payload, uint32_t len, TcpSocket_T sockets[MAX_SOCKETS]);
 
 /*
  *  int64_t decode_slip() prototype

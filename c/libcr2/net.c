@@ -109,14 +109,14 @@ uint16_t parse_tcp_packet(const uint8_t *packet, TcpHeader_T *header)
 	header->dest_port = swap16(header->dest_port);
 	header->ack_num = swap32(header->ack_num);
 	header->seq_num = swap32(header->seq_num);
-	//header->data_offset_reserved_flags = htons(header->data_offset_reserved_flags);
+	header->data_offset_reserved_flags = htons(header->data_offset_reserved_flags);
 
 	return header_len;
 }
 
-TcpSocket_T *socket_tcp4()
+TcpSocket_T *socket_tcp4(TcpSocket_T sockets[MAX_SOCKETS])
 {
-	TcpSocket_T *sock = alloc_socket();
+	TcpSocket_T *sock = alloc_socket(sockets);
 	if (!sock)
 	{
 		return 0;
@@ -137,7 +137,7 @@ void listen(TcpSocket_T *sock)
 	sock->state = SOCKET_LISTENING;
 }
 
-TcpSocket_T *accept(TcpSocket_T *listener)
+TcpSocket_T *accept(TcpSocket_T *listener, TcpSocket_T sockets[MAX_SOCKETS])
 {
 	for (uint8_t i = 0; i < MAX_SOCKETS; i++)
 	{
@@ -180,7 +180,7 @@ void close(TcpSocket_T *sock)
 	sock->state = SOCKET_FIN_WAIT;
 }
 
-void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T *tcp_header, const uint8_t *payload, uint32_t len)
+void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T *tcp_header, const uint8_t *payload, uint32_t len, TcpSocket_T sockets[MAX_SOCKETS])
 {
 	for (uint8_t i = 0; i < MAX_SOCKETS; i++)
 	{
@@ -191,28 +191,27 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
 			continue;
 		}
 
-		if (s->state == SOCKET_LISTENING && ((tcp_header->data_offset_reserved_flags >> 8) & TCP_FLAG_SYN))
+		uint16_t flags = tcp_header->data_offset_reserved_flags & 0x1FF;
+
+		if (s->state == SOCKET_LISTENING && flags & TCP_FLAG_SYN)
 		{
-			TcpSocket_T *new_conn = alloc_socket();
+			TcpSocket_T *new_conn = alloc_socket(sockets);
 
 			if (!new_conn)
 			{
 				return;
 			}
 
-			printf("-> New socket allocated: ID %u\n", i);
-
 			memcpy(new_conn->remote_ip, src_ip, 4);
 			memcpy(new_conn->local_ip, dst_ip, 4);
 
 			new_conn->local_port = tcp_header->dest_port;
 			new_conn->remote_port = tcp_header->source_port;
+
 			new_conn->state = SOCKET_ESTABLISHED;
 
 			new_conn->seq_num = tcp_header->seq_num;
 			new_conn->ack_num = tcp_header->ack_num;
-
-			new_conn->used = 1;
 
 			send_tcp_packet(new_conn, 0, 0, TCP_FLAG_SYN | TCP_FLAG_ACK);
 			return;
@@ -239,7 +238,7 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
 	}
 }
 
-static TcpSocket_T *alloc_socket() 
+TcpSocket_T *alloc_socket(TcpSocket_T sockets[MAX_SOCKETS]) 
 {
 	for (uint8_t i = 0; i < MAX_SOCKETS; i++)
 	{
@@ -255,7 +254,7 @@ static TcpSocket_T *alloc_socket()
 	return 0;
 }
 
-static void free_socket(TcpSocket_T *sock)
+void free_socket(TcpSocket_T *sock)
 {
 	sock->used = 0;
 	sock->state = SOCKET_CLOSED;
@@ -263,8 +262,9 @@ static void free_socket(TcpSocket_T *sock)
 
 void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8_t flags)
 {
-	static uint8_t packet_buf[1500];
-	static uint8_t tcp_packet[1500];
+	uint8_t packet_buf[1500];
+	uint8_t tcp_packet[1500];
+
 	TcpPacketRequest_T request;
 	TcpHeader_T tcp_header;
 	Ipv4Header_T ipv4_header;
@@ -288,7 +288,11 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8
 	request.length = len;
 
 	memcpy(tcp_packet, (uint8_t *) &request, tcp_req_len);
-	memcpy(tcp_packet + tcp_req_len, data, len);
+
+	if (data)
+	{
+		memcpy(tcp_packet + tcp_req_len, data, len);
+	}
 
 	// Create a reply TCP packet
 	if (!new_packet(CRAFT_TCP_PACKET, (uint8_t *) tcp_packet))
@@ -321,6 +325,6 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8
 
 	parse_tcp_packet(tcp_packet, &tcp_header);
 
-	printf("<< TCP: src_port: %u, dest_port: %u, seq %u\n", tcp_header.source_port, tcp_header.dest_port, tcp_header.seq_num);
+	printf("<< TCP: (%x) src_port: %u, dest_port: %u, seq %u\n", tcp_header.data_offset_reserved_flags, tcp_header.source_port, tcp_header.dest_port, tcp_header.seq_num);
 }
 
