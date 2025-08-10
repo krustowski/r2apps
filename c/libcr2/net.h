@@ -148,7 +148,7 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t* data, uint32_t len, uint8
  *
  *  This function tries to allocate a new socket. Returns the socket on success, 0 otherwise.
  */
-TcpSocket_T *socket_tcp4();
+TcpSocket_T *socket_tcp4(TcpSocket_T sockets[MAX_SOCKETS]);
 
 /*
  *  TcpSocket_T *alloc_socket() prototype

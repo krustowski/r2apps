@@ -13,11 +13,6 @@
 extern "C" {
 #endif
 
-typedef enum {
-	false,
-	true
-} bool;
-
 typedef char 	int8_t;
 typedef short 	int16_t;
 typedef int  	int32_t;
