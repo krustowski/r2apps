@@ -8,6 +8,10 @@
 | `icmpresp` | ICMP responder. Sample ICMP Echo service to demonstrate portions of implemented networking. | stable |
 | `r2sh` | Custom userland shell for `r2`. | unstable |
 
+## crt0
+
+There is no C runtime version 0 (crt0) available yet. That's why the linker script is required to link compiled programs into ELF executables and to skip crt0. *This is a technical debt*.
+
 ## libcr2 
 
-`libcr2` is a custom C library dedicated for use with the `r2` kernel.
+`libcr2` is a custom C library dedicated for use with the `r2` kernel. Mainly, it is built on the kernel syscalls implementation to provide basic functions like `sys_print`, etc.
