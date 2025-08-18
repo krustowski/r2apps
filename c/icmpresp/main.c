@@ -33,6 +33,8 @@ int main(int64_t pid, int64_t arg)
 	uint8_t icmp_packet[512];
 	uint8_t icmp_header_len = 0;
 
+	RTC_T rtc_data;
+
 	if (!serial_init())
 	{
 		// Could not init serial port...
@@ -91,6 +93,11 @@ int main(int64_t pid, int64_t arg)
 			continue;
 		}
 
+		if (read_rtc(&rtc_data))
+		{
+			printf("%d:%d:%d %d-%d-%d ", rtc_data.hours, rtc_data.minutes, rtc_data.seconds, rtc_data.year, rtc_data.month, rtc_data.day);
+		}
+
 		print(">> Received an ICMP Echo Request!\n");
 
 		// Create a reply ICMP packet
@@ -113,6 +120,11 @@ int main(int64_t pid, int64_t arg)
 		{
 			print("-> Failed to send the IPv4 packet\n");
 			continue;
+		}
+
+		if (read_rtc(&rtc_data))
+		{
+			printf("%d:%d:%d %d-%d-%d ", rtc_data.hours, rtc_data.minutes, rtc_data.seconds, rtc_data.year, rtc_data.month, rtc_data.day);
 		}
 
 		print("<< Echo Response sent\n");

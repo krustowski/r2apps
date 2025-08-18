@@ -2,9 +2,11 @@ NAME := icmpresp
 
 build:
 	@gcc \
+		-Wall \
 		-m64 \
 		-static \
 		-n \
+		-O \
 		-nostdinc \
 		-nostdlib \
 		-ffreestanding \
