@@ -15,7 +15,7 @@ int main(int64_t pid, int64_t arg)
 {
 	print("\ntheM: the 16bit CPU emulator\n");
 
-	uint8_t memory[1024];
+	uint8_t memory[1 << 20];
 	CPU_T cpu;
 
 	/* Reset CPU's program instruction counter */

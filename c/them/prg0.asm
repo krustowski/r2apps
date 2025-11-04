@@ -1,7 +1,7 @@
 [BITS 16]
 
 section .data
-msg 	db	"TEST LMAO", 0
+msg 	db	"TEST LMAO$", 0
 
 section .text
 _start:
@@ -40,6 +40,12 @@ _start:
 	MOV DL, 0
 	MOV AH, 0
 
+	; Test 21h service 02
+	MOV DL, 0x58
+	MOV AH, 0x02
+	INT 0x21
+
+	; Test 21h service 09
 	MOV DX, msg
 	MOV AH, 0x09
 	INT 0x21
