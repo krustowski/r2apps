@@ -1,7 +1,7 @@
 [BITS 16]
 
 section .data
-msg 	db	"TEST LMAO$"
+msg 	db	"TEST LMAO", 0
 
 section .text
 _start:
@@ -24,8 +24,6 @@ _start:
 	SUB SI, 0x71
 
 	MOV AX, 0x08 
-	MOV DS, AX
-	MOV DS, BX
 	MOV ES, AX
 	MOV ES, BX
 	MOV SS, AX

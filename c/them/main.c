@@ -150,8 +150,34 @@ enum GPR
 
 void dump_cpu(CPU_T* cpu)
 {
+	printf("\n[ CPU Registers: ]\n");
 	printf("[ AX: %x, BX: %x, CX: %x, DX: %x, SP: %x, BP: %x, SI: %x, DI: %x ]\n", cpu->AX, cpu->BX, cpu->CX, cpu->DX, cpu->SP, cpu->BP, cpu->SI, cpu->DI);
 	printf("[ CS: %x, DS: %x, ES: %x, SS: %x, IP: %x ]\n", cpu->CS, cpu->DS, cpu->ES, cpu->SS, cpu->IP);
+}
+
+void int21h(CPU_T* cpu, uint8_t* memory)
+{
+	if (cpu->AX >> 8 == 0x09)
+	{
+		uint8_t offset = cpu->DX & 0xff;
+		uint8_t segment = cpu->DS & 0xff;
+
+		// Linear addr in Real mode
+		uint16_t addr = ((uint16_t)segment << 4) + offset;
+
+		uint8_t *p = &memory[addr];
+
+		printf("=> INT 21H: printing string from addr: %x\n", addr);
+
+		/*while (*p != '$')
+		{
+			print(p);
+			p++;
+		}*/
+
+		print(p);
+		print("\n");
+	}
 }
 
 void switch_opcode(CPU_T* cpu, uint8_t* memory)
@@ -354,6 +380,16 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 			case INT_8:
 				{
 					uint8_t int_code = memory[cpu->IP++];
+
+					switch (int_code)
+					{
+						case 0x21:
+							{
+								int21h(cpu, memory);
+								break;
+							}
+					}
+
 					break;
 				}
 			case HLT:
@@ -646,7 +682,7 @@ int main(int64_t pid, int64_t arg)
 {
 	print("\ntheM: the 16bit CPU emulator\n");
 
-	uint8_t memory[256];
+	uint8_t memory[1024];
 	CPU_T cpu;
 
 	/* Reset CPU's program instruction counter */
