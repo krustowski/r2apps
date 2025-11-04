@@ -11,6 +11,7 @@ build:
 		-ffreestanding \
 		-mno-red-zone \
 		-I ../libcr2 \
+		-I . \
 		-Xlinker "-T../linker.ld" \
 		-o ${NAME}.elf \
 		../libcr2/*.c *.c
