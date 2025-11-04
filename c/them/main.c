@@ -39,14 +39,18 @@ __attribute__((packed)) CPU_T;
 
 enum OP_CODES
 {
-	ADD_16		= 0x81,
-	ADD_8		= 0x83,
+	ADD_16		= 0x81, /* SUB_16 */
+	ADD_8		= 0x83, /* SUB_8 */
 	HLT 		= 0xF4,
 
 	INC_AX 		= 0x40,
 	INC_BX 		= 0x43,
 	INC_CX 		= 0x41,
 	INC_DX 		= 0x42,
+	INC_SP		= 0x44,
+	INC_BP		= 0x45,
+	INC_SI		= 0x46,
+	INC_DI		= 0x47,
 
 	INT_8 		= 0xCD,
 	IRET 		= 0xCF,
@@ -58,6 +62,12 @@ enum OP_CODES
 	MOV_BX 		= 0xBB,
 	MOV_CX 		= 0xB9,
 	MOV_DX 		= 0xBA,
+	MOV_SP		= 0xBC,
+	MOV_BP		= 0xBD,
+	MOV_SI		= 0xBE,
+	MOV_DI		= 0xBF,
+
+	MOV_SR		= 0x8E,
 
 	NOP 		= 0x90
 	
@@ -66,26 +76,56 @@ enum OP_CODES
 /* General-purpose registers */
 enum GPR
 {
-	AH 	= 0x00,
-	BH,
-	CH,
-	DH,
+	ADD_AX 		= 0xC0,
+	ADD_BX		= 0xC3,
+	ADD_CX		= 0xC1,
+	ADD_DX		= 0xC2,
+	ADD_SP		= 0xC4,
+	ADD_BP		= 0xC5,
+	ADD_SI		= 0xC6,
+	ADD_DI		= 0xC7,
 
-	AX_ADD 	= 0xC0,
-	BX_ADD	= 0xC3,
-	CX_ADD	= 0xC1,
-	DX_ADD	= 0xC2,
+	MOV_DS_AX	= 0xD8,
+	MOV_DS_BX	= 0xDB,
+	MOV_DS_CX	= 0xD9,
+	MOV_DS_DX	= 0xDA,
+	MOV_DS_SP	= 0xDC,
+	MOV_DS_BP	= 0xDD,
+	MOV_DS_SI	= 0xDE,
+	MOV_DS_DI	= 0xDF,
 
-	AX_SUB 	= 0xE8,
-	BX_SUB 	= 0xEB,
-	CX_SUB 	= 0xE9,
-	DX_SUB 	= 0xEA,
+	MOV_ES_AX 	= 0xC0,
+	MOV_ES_BX 	= 0xC3,
+	MOV_ES_CX 	= 0xC1,
+	MOV_ES_DX 	= 0xC2,
+	MOV_ES_SP 	= 0xC4,
+	MOV_ES_BP 	= 0xC5,
+	MOV_ES_SI 	= 0xC6,
+	MOV_ES_DI 	= 0xC7,
+
+	MOV_SS_AX	= 0xD0,
+	MOV_SS_BX	= 0xD3,
+	MOV_SS_CX	= 0xD1,
+	MOV_SS_DX	= 0xD2,
+	MOV_SS_SP	= 0xD4,
+	MOV_SS_BP	= 0xD5,
+	MOV_SS_SI	= 0xD6,
+	MOV_SS_DI	= 0xD7,
+
+	SUB_AX	 	= 0xE8,
+	SUB_BX	 	= 0xEB,
+	SUB_CX	 	= 0xE9,
+	SUB_DX	 	= 0xEA,
+	SUB_SP		= 0xEC,
+	SUB_BP		= 0xED,
+	SUB_SI		= 0xEE,
+	SUB_DI		= 0xEF
 };
 
 void dump_cpu(CPU_T* cpu)
 {
-	printf("AX: %x, BX: %x, CX: %x, DX: %x\n", cpu->AX, cpu->BX, cpu->CX, cpu->DX);
-	printf("SP: %x, BP: %x, CS: %x, IP: %x\n", cpu->SP, cpu->BP, cpu->CS, cpu->IP);
+	printf("[ AX: %x, BX: %x, CX: %x, DX: %x, SP: %x, BP: %x, SI: %x, DI: %x ]\n", cpu->AX, cpu->BX, cpu->CX, cpu->DX, cpu->SP, cpu->BP, cpu->SI, cpu->DI);
+	printf("[ CS: %x, DS: %x, ES: %x, SS: %x, IP: %x ]\n", cpu->CS, cpu->DS, cpu->ES, cpu->SS, cpu->IP);
 }
 
 void switch_opcode(CPU_T* cpu, uint8_t* memory)
@@ -98,101 +138,106 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 
 		switch (opcode)
 		{
-			case ADD_8: /* + SUB_8 */
+			case ADD_8:
+			case ADD_16:
 				{
 					enum GPR reg = memory[cpu->IP++];
-					uint16_t value = (uint16_t) memory[cpu->IP++];
+					uint16_t value;
 
-					switch (reg)
+					switch (opcode)
 					{
-						case AX_ADD:
+						case ADD_8:
 							{
-								cpu->AX += value;
+								value = (uint16_t) memory[cpu->IP++];
 								break;
 							}
-						case BX_ADD:
+						case ADD_16:
 							{
-								cpu->BX += value;
-								break;
-							}
-						case CX_ADD:
-							{
-								cpu->CX += value;
-								break;
-							}
-						case DX_ADD:
-							{
-								cpu->DX += value;
-								break;
-							}
-						case AX_SUB:
-							{
-								cpu->AX -= value;
-								break;
-							}
-						case BX_SUB:
-							{
-								cpu->BX -= value;
-								break;
-							}
-						case CX_SUB:
-							{
-								cpu->CX -= value;
-								break;
-							}
-						case DX_SUB:
-							{
-								cpu->DX -= value;
+								value = memory[cpu->IP++] | memory[cpu->IP++] << 8;
 								break;
 							}
 					}
-					break;
-				}
-			case ADD_16: /* + SUB_16 */
-				{
-					enum GPR reg = memory[cpu->IP++];
-					uint16_t value = memory[cpu->IP++] | memory[cpu->IP++] << 8;
 
 					switch (reg)
 					{
-						case AX_ADD:
+						case ADD_AX:
 							{
 								cpu->AX += value;
 								break;
 							}
-						case BX_ADD:
+						case ADD_BX:
 							{
 								cpu->BX += value;
 								break;
 							}
-						case CX_ADD:
+						case ADD_CX:
 							{
 								cpu->CX += value;
 								break;
 							}
-						case DX_ADD:
+						case ADD_DX:
 							{
 								cpu->DX += value;
 								break;
 							}
-						case AX_SUB:
+						case ADD_SP:
+							{
+								cpu->SP += value;
+								break;
+							}
+						case ADD_BP:
+							{
+								cpu->BP += value;
+								break;
+							}
+						case ADD_SI:
+							{
+								cpu->SI += value;
+								break;
+							}
+						case ADD_DI:
+							{
+								cpu->DI += value;
+								break;
+							}
+						case SUB_AX:
 							{
 								cpu->AX -= value;
 								break;
 							}
-						case BX_SUB:
+						case SUB_BX:
 							{
 								cpu->BX -= value;
 								break;
 							}
-						case CX_SUB:
+						case SUB_CX:
 							{
 								cpu->CX -= value;
 								break;
 							}
-						case DX_SUB:
+						case SUB_DX:
 							{
 								cpu->DX -= value;
+								break;
+							}
+						case SUB_SP:
+							{
+								cpu->SP -= value;
+								break;
+							}
+						case SUB_BP:
+							{
+								cpu->BP -= value;
+								break;
+							}
+						case SUB_SI:
+							{
+								cpu->SI -= value;
+								break;
+							}
+						case SUB_DI:
+							{
+								cpu->DI -= value;
 								break;
 							}
 					}
@@ -218,6 +263,26 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					cpu->DX++;
 					break;
 				}
+			case INC_SP:
+				{
+					cpu->SP++;
+					break;
+				}
+			case INC_BP:
+				{
+					cpu->BP++;
+					break;
+				}
+			case INC_SI:
+				{
+					cpu->SI++;
+					break;
+				}
+			case INC_DI:
+				{
+					cpu->DI++;
+					break;
+				}
 			case INT_8:
 				{
 					uint8_t int_code = memory[cpu->IP++];
@@ -232,30 +297,172 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 				}
 			case MOV_AX:
 				{
-					print("=> Moving...\n");
-
 					cpu->AX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
 					break;
 				}
 			case MOV_BX:
 				{
-					print("=> Moving...\n");
-
 					cpu->BX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
 					break;
 				}
 			case MOV_CX:
 				{
-					print("=> Moving...\n");
-
 					cpu->CX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
 					break;
 				}
 			case MOV_DX:
 				{
-					print("=> Moving...\n");
-
 					cpu->DX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			case MOV_SP:
+				{
+					cpu->SP = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			case MOV_BP:
+				{
+					cpu->BP = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			case MOV_SI:
+				{
+					cpu->SI = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			case MOV_DI:
+				{
+					cpu->DI = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			case MOV_SR:
+				{
+					enum GPR reg = memory[cpu->IP++];
+
+					switch (reg)
+					{
+						case MOV_DS_AX:
+							{
+								cpu->DS = cpu->AX;
+								break;
+							}
+						case MOV_DS_BX:
+							{
+								cpu->DS = cpu->BX;
+								break;
+							}
+						case MOV_DS_CX:
+							{
+								cpu->DS = cpu->CX;
+								break;
+							}
+						case MOV_DS_DX:
+							{
+								cpu->DS = cpu->DX;
+								break;
+							}
+						case MOV_DS_SP:
+							{
+								cpu->DS = cpu->SP;
+								break;
+							}
+						case MOV_DS_BP:
+							{
+								cpu->DS = cpu->BP;
+								break;
+							}
+						case MOV_DS_SI:
+							{
+								cpu->DS = cpu->SI;
+								break;
+							}
+						case MOV_DS_DI:
+							{
+								cpu->DS = cpu->DI;
+								break;
+							}
+						case MOV_ES_AX:
+							{
+								cpu->ES = cpu->AX;
+								break;
+							}
+						case MOV_ES_BX:
+							{
+								cpu->ES = cpu->BX;
+								break;
+							}
+						case MOV_ES_CX:
+							{
+								cpu->ES = cpu->CX;
+								break;
+							}
+						case MOV_ES_DX:
+							{
+								cpu->ES = cpu->DX;
+								break;
+							}
+						case MOV_ES_SP:
+							{
+								cpu->ES = cpu->SP;
+								break;
+							}
+						case MOV_ES_BP:
+							{
+								cpu->ES = cpu->BP;
+								break;
+							}
+						case MOV_ES_SI:
+							{
+								cpu->ES = cpu->SI;
+								break;
+							}
+						case MOV_ES_DI:
+							{
+								cpu->ES = cpu->DI;
+								break;
+							}
+						case MOV_SS_AX:
+							{
+								cpu->SS = cpu->AX;
+								break;
+							}
+						case MOV_SS_BX:
+							{
+								cpu->SS = cpu->BX;
+								break;
+							}
+						case MOV_SS_CX:
+							{
+								cpu->SS = cpu->CX;
+								break;
+							}
+						case MOV_SS_DX:
+							{
+								cpu->SS = cpu->DX;
+								break;
+							}
+						case MOV_SS_SP:
+							{
+								cpu->SS = cpu->SP;
+								break;
+							}
+						case MOV_SS_BP:
+							{
+								cpu->SS = cpu->BP;
+								break;
+							}
+						case MOV_SS_SI:
+							{
+								cpu->SS = cpu->SI;
+								break;
+							}
+						case MOV_SS_DI:
+							{
+								cpu->SS = cpu->DI;
+								break;
+							}
+					}
+
 					break;
 				}
 			default: 
