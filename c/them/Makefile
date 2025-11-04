@@ -5,6 +5,7 @@ build:
 		-m64 \
 		-static \
 		-n \
+		-o2 \
 		-nostdinc \
 		-nostdlib \
 		-ffreestanding \

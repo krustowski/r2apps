@@ -1,12 +1,10 @@
 #include "mem.h"
-#include "net.h"
 #include "printf.h"
-#include "string.h"
 
 /*
- *  them
+ *  theM
  *
- *  Simple 16bit CPU emulator.
+ *  Simple 16bit CPU eMulator.
  *
  *  krusty@vxn.dev / Nov 3, 2025
  */
@@ -41,34 +39,47 @@ __attribute__((packed)) CPU_T;
 
 enum OP_CODES
 {
-	ADD_AH_IB = 0x04,
-	ADD_AX_IW = 0x05,
-	AND_AL_IB = 0x24,
-	AND_AX_IW = 0x25,
-	HLT = 0xF4,
-	INC_AX = 0x40,
-	INC_BX = 0x43,
-	INT_IMM8 = 0xCD,
-	IRET = 0xCF,
-	JMP_REL8 = 0xE8,
-	JMP_REL16 = 0xE9,
-	MOV_AX = 0xB8,
-	MOV_BX = 0xBB,
-	NOP = 0x90
+	ADD_16		= 0x81,
+	ADD_8		= 0x83,
+	HLT 		= 0xF4,
+
+	INC_AX 		= 0x40,
+	INC_BX 		= 0x43,
+	INC_CX 		= 0x41,
+	INC_DX 		= 0x42,
+
+	INT_8 		= 0xCD,
+	IRET 		= 0xCF,
+
+	JMP_REL8 	= 0xE8,
+	JMP_REL16 	= 0xE9,
+
+	MOV_AX 		= 0xB8,
+	MOV_BX 		= 0xBB,
+	MOV_CX 		= 0xB9,
+	MOV_DX 		= 0xBA,
+
+	NOP 		= 0x90
 	
 };
 
 /* General-purpose registers */
 enum GPR
 {
-	AH = 0x00,
+	AH 	= 0x00,
 	BH,
 	CH,
 	DH,
-	AX,
-	BX,
-	CX,
-	DX
+
+	AX_ADD 	= 0xC0,
+	BX_ADD	= 0xC3,
+	CX_ADD	= 0xC1,
+	DX_ADD	= 0xC2,
+
+	AX_SUB 	= 0xE8,
+	BX_SUB 	= 0xEB,
+	CX_SUB 	= 0xE9,
+	DX_SUB 	= 0xEA,
 };
 
 void dump_cpu(CPU_T* cpu)
@@ -77,11 +88,189 @@ void dump_cpu(CPU_T* cpu)
 	printf("SP: %x, BP: %x, CS: %x, IP: %x\n", cpu->SP, cpu->BP, cpu->CS, cpu->IP);
 }
 
+void switch_opcode(CPU_T* cpu, uint8_t* memory)
+{
+	uint8_t halt = 0;
+
+	while (!halt)
+	{
+		enum OP_CODES opcode = memory[cpu->IP++];
+
+		switch (opcode)
+		{
+			case ADD_8: /* + SUB_8 */
+				{
+					enum GPR reg = memory[cpu->IP++];
+					uint16_t value = (uint16_t) memory[cpu->IP++];
+
+					switch (reg)
+					{
+						case AX_ADD:
+							{
+								cpu->AX += value;
+								break;
+							}
+						case BX_ADD:
+							{
+								cpu->BX += value;
+								break;
+							}
+						case CX_ADD:
+							{
+								cpu->CX += value;
+								break;
+							}
+						case DX_ADD:
+							{
+								cpu->DX += value;
+								break;
+							}
+						case AX_SUB:
+							{
+								cpu->AX -= value;
+								break;
+							}
+						case BX_SUB:
+							{
+								cpu->BX -= value;
+								break;
+							}
+						case CX_SUB:
+							{
+								cpu->CX -= value;
+								break;
+							}
+						case DX_SUB:
+							{
+								cpu->DX -= value;
+								break;
+							}
+					}
+					break;
+				}
+			case ADD_16: /* + SUB_16 */
+				{
+					enum GPR reg = memory[cpu->IP++];
+					uint16_t value = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+
+					switch (reg)
+					{
+						case AX_ADD:
+							{
+								cpu->AX += value;
+								break;
+							}
+						case BX_ADD:
+							{
+								cpu->BX += value;
+								break;
+							}
+						case CX_ADD:
+							{
+								cpu->CX += value;
+								break;
+							}
+						case DX_ADD:
+							{
+								cpu->DX += value;
+								break;
+							}
+						case AX_SUB:
+							{
+								cpu->AX -= value;
+								break;
+							}
+						case BX_SUB:
+							{
+								cpu->BX -= value;
+								break;
+							}
+						case CX_SUB:
+							{
+								cpu->CX -= value;
+								break;
+							}
+						case DX_SUB:
+							{
+								cpu->DX -= value;
+								break;
+							}
+					}
+					break;
+				}
+			case INC_AX: /* Increment r/m word by 1 */
+				{
+					cpu->AX++;
+					break;
+				}
+			case INC_BX:
+				{
+					cpu->BX++;
+					break;
+				}
+			case INC_CX:
+				{
+					cpu->CX++;
+					break;
+				}
+			case INC_DX:
+				{
+					cpu->DX++;
+					break;
+				}
+			case INT_8:
+				{
+					uint8_t int_code = memory[cpu->IP++];
+					break;
+				}
+			case HLT:
+				{
+					print("=> Program stop (halt)\n");
+
+					halt++;
+					break;
+				}
+			case MOV_AX:
+				{
+					print("=> Moving...\n");
+
+					cpu->AX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			case MOV_BX:
+				{
+					print("=> Moving...\n");
+
+					cpu->BX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			case MOV_CX:
+				{
+					print("=> Moving...\n");
+
+					cpu->CX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			case MOV_DX:
+				{
+					print("=> Moving...\n");
+
+					cpu->DX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			default: 
+				{
+					printf("=> Unknown opcode: %x\n", opcode);
+					break;
+				}
+		}
+	}
+}
+
 int main(int64_t pid, int64_t arg)
 {
-	print("theM: the 16bit CPU emulator\n");
+	print("\ntheM: the 16bit CPU emulator\n");
 
-	uint8_t halt = 0;
 	uint8_t memory[256];
 	CPU_T cpu;
 
@@ -98,51 +287,10 @@ int main(int64_t pid, int64_t arg)
 	/* Print the initial CPU state */
 	dump_cpu(&cpu);
 
-	while (!halt)
-	{
-		uint8_t opcode = memory[cpu.IP++];
+	/* Switch opcode and emulate the operation */
+	switch_opcode(&cpu, memory);
 
-		switch (opcode)
-		{
-			case INC_AX: /* Increment r/m word by 1 */
-				{
-					cpu.AX++;
-					break;
-				}
-			case INC_BX:
-				{
-					cpu.BX++;
-					break;
-				}
-			case HLT:
-				{
-					print("=> Program stop (halt)\n");
-
-					halt++;
-					break;
-				}
-			case MOV_AX:
-				{
-					print("=> Moving...\n");
-
-					cpu.AX = memory[cpu.IP++] | memory[cpu.IP++] << 8;
-					break;
-				}
-			case MOV_BX:
-				{
-					print("=> Moving...\n");
-
-					cpu.BX = memory[cpu.IP++] | memory[cpu.IP++] << 8;
-					break;
-				}
-			default: 
-				{
-					printf("=> Unknown opcode: %x\n", opcode);
-					break;
-				}
-		}
-	}
-
+	/* Print the final CPU state */
 	dump_cpu(&cpu);
 
 	exit(pid, 191);
