@@ -1,10 +1,13 @@
 [BITS 16]
 
+section .data
+msg 	db	"TEST LMAO$"
+
+section .text
 _start:
 	MOV DX, 0x0098
 	MOV DX, 0x1098
 	INC DX
-	INT 0x21
 
 	MOV BX, 0x2345
 
@@ -34,5 +37,13 @@ _start:
 	MOV SS, SI
 	MOV SS, DI
 	MOV SP, 0xffe8
+
+	MOV AL, 0
+	MOV DL, 0
+	MOV AH, 0
+
+	MOV DX, msg
+	MOV AH, 0x09
+	INT 0x21
 
 	HLT

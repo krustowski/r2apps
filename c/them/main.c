@@ -52,11 +52,29 @@ enum OP_CODES
 	INC_SI		= 0x46,
 	INC_DI		= 0x47,
 
+	DEC_AX 		= 0x48,
+	DEC_BX 		= 0x4B,
+	DEC_CX 		= 0x49,
+	DEC_DX 		= 0x4A,
+	DEC_SP		= 0x4C,
+	DEC_BP		= 0x4D,
+	DEC_SI		= 0x4E,
+	DEC_DI		= 0x4F,
+
 	INT_8 		= 0xCD,
 	IRET 		= 0xCF,
 
 	JMP_REL8 	= 0xE8,
 	JMP_REL16 	= 0xE9,
+
+	MOV_AL		= 0xB0,
+	MOV_BL		= 0xB3,
+	MOV_CL		= 0xB1,
+	MOV_DL		= 0xB2,
+	MOV_AH		= 0xB4,
+	MOV_BH		= 0xB7,
+	MOV_CH		= 0xB5,
+	MOV_DH		= 0xB6,
 
 	MOV_AX 		= 0xB8,
 	MOV_BX 		= 0xBB,
@@ -69,8 +87,16 @@ enum OP_CODES
 
 	MOV_SR		= 0x8E,
 
-	NOP 		= 0x90
+	NOP 		= 0x90,
 	
+	PUSH_AX		= 0x50,
+	PUSH_BX		= 0x53,
+	PUSH_CX		= 0x51,
+	PUSH_DX		= 0x52,
+	PUSH_SP		= 0x54,
+	PUSH_BP		= 0x55,
+	PUSH_SI		= 0x56,
+	PUSH_DI		= 0x57,
 };
 
 /* General-purpose registers */
@@ -131,6 +157,8 @@ void dump_cpu(CPU_T* cpu)
 void switch_opcode(CPU_T* cpu, uint8_t* memory)
 {
 	uint8_t halt = 0;
+
+	uint8_t stack[256];
 
 	while (!halt)
 	{
@@ -243,7 +271,7 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					}
 					break;
 				}
-			case INC_AX: /* Increment r/m word by 1 */
+			case INC_AX:
 				{
 					cpu->AX++;
 					break;
@@ -283,6 +311,46 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					cpu->DI++;
 					break;
 				}
+			case DEC_AX:
+				{
+					cpu->AX--;
+					break;
+				}
+			case DEC_BX:
+				{
+					cpu->BX--;
+					break;
+				}
+			case DEC_CX:
+				{
+					cpu->CX--;
+					break;
+				}
+			case DEC_DX:
+				{
+					cpu->DX--;
+					break;
+				}
+			case DEC_SP:
+				{
+					cpu->SP--;
+					break;
+				}
+			case DEC_BP:
+				{
+					cpu->BP--;
+					break;
+				}
+			case DEC_SI:
+				{
+					cpu->SI--;
+					break;
+				}
+			case DEC_DI:
+				{
+					cpu->DI--;
+					break;
+				}
 			case INT_8:
 				{
 					uint8_t int_code = memory[cpu->IP++];
@@ -295,9 +363,49 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					halt++;
 					break;
 				}
+			case MOV_AL: 
+				{
+					uint8_t al = cpu->AX & 0xff;
+					uint8_t ah = cpu->AX >> 8;
+
+					al = memory[cpu->IP++];
+
+					cpu->AX = al | ah << 8;
+					break;
+				}
+			case MOV_AH: 
+				{
+					uint8_t al = cpu->AX & 0xff;
+					uint8_t ah = cpu->AX >> 8;
+
+					ah = memory[cpu->IP++];
+
+					cpu->AX = al | ah << 8;
+					break;
+				}
 			case MOV_AX:
 				{
 					cpu->AX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			case MOV_BL: 
+				{
+					uint8_t bl = cpu->BX & 0xff;
+					uint8_t bh = cpu->BX >> 8;
+
+					bl = memory[cpu->IP++];
+
+					cpu->BX = bl | bh << 8;
+					break;
+				}
+			case MOV_BH: 
+				{
+					uint8_t bl = cpu->BX & 0xff;
+					uint8_t bh = cpu->BX >> 8;
+
+					bh = memory[cpu->IP++];
+
+					cpu->BX = bl | bh << 8;
 					break;
 				}
 			case MOV_BX:
@@ -305,9 +413,49 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					cpu->BX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
 					break;
 				}
+			case MOV_CL: 
+				{
+					uint8_t cl = cpu->CX & 0xff;
+					uint8_t ch = cpu->CX >> 8;
+
+					cl = memory[cpu->IP++];
+
+					cpu->CX = cl | ch << 8;
+					break;
+				}
+			case MOV_CH: 
+				{
+					uint8_t cl = cpu->CX & 0xff;
+					uint8_t ch = cpu->CX >> 8;
+
+					ch = memory[cpu->IP++];
+
+					cpu->CX = cl | ch << 8;
+					break;
+				}
 			case MOV_CX:
 				{
 					cpu->CX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					break;
+				}
+			case MOV_DL: 
+				{
+					uint8_t dl = cpu->DX & 0xff;
+					uint8_t dh = cpu->DX >> 8;
+
+					dl = memory[cpu->IP++];
+
+					cpu->DX = dl | dh << 8;
+					break;
+				}
+			case MOV_DH: 
+				{
+					uint8_t dl = cpu->DX & 0xff;
+					uint8_t dh = cpu->DX >> 8;
+
+					dh = memory[cpu->IP++];
+
+					cpu->DX = dl | dh << 8;
 					break;
 				}
 			case MOV_DX:
@@ -463,6 +611,26 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 							}
 					}
 
+					break;
+				}
+			case PUSH_AX:
+				{
+					stack[cpu->SP--] = cpu->AX >> 8;
+					stack[cpu->SP--] = cpu->AX & 0xff;
+					break;
+				}
+			case PUSH_BX:
+				{
+					stack[cpu->SP--] = cpu->BX >> 8;
+					stack[cpu->SP--] = cpu->BX & 0xff;
+					break;
+				}
+			case PUSH_SP:
+				{
+					uint16_t sp = cpu->SP;
+
+					stack[cpu->SP--] = sp >> 8;
+					stack[cpu->SP--] = sp & 0xff;
 					break;
 				}
 			default: 
