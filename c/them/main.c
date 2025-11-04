@@ -46,12 +46,14 @@ enum OP_CODES
 	AND_AL_IB = 0x24,
 	AND_AX_IW = 0x25,
 	HLT = 0xF4,
-	INC_RM16 = 0xFF,
+	INC_AX = 0x40,
+	INC_BX = 0x43,
 	INT_IMM8 = 0xCD,
 	IRET = 0xCF,
 	JMP_REL8 = 0xE8,
 	JMP_REL16 = 0xE9,
-	MOV_R16_IMM16 = 0xB8,
+	MOV_AX = 0xB8,
+	MOV_BX = 0xBB,
 	NOP = 0x90
 	
 };
@@ -80,11 +82,20 @@ int main(int64_t pid, int64_t arg)
 	print("theM: the 16bit CPU emulator\n");
 
 	uint8_t halt = 0;
-	uint8_t memory[256] = {0xB8, 0x04, 0x98, 0xFF, 0x04, 0xF4};
+	uint8_t memory[256];
 	CPU_T cpu;
 
+	/* Reset CPU's program instruction counter */
 	cpu.IP = 0;
 
+	/* Load the program */
+	read_file((const uint8_t *) "PRG0.BIN", memory);
+	/*{
+		print("=> Cannot read the binary file... Program exit.\n");
+		exit(pid, 161);
+	}*/
+
+	/* Print the initial CPU state */
 	dump_cpu(&cpu);
 
 	while (!halt)
@@ -93,44 +104,35 @@ int main(int64_t pid, int64_t arg)
 
 		switch (opcode)
 		{
-			case INC_RM16: /* Increment r/m word by 1. */
+			case INC_AX: /* Increment r/m word by 1 */
 				{
-					print("=> Incrementing...\n");
-
-					enum GPR reg = memory[cpu.IP++];
-
-					switch (reg)
-					{
-						case AX:
-							{
-								cpu.AX++;
-								break;
-							}
-					}
-
+					cpu.AX++;
+					break;
+				}
+			case INC_BX:
+				{
+					cpu.BX++;
 					break;
 				}
 			case HLT:
 				{
 					print("=> Program stop (halt)\n");
+
 					halt++;
 					break;
 				}
-			case MOV_R16_IMM16:
+			case MOV_AX:
 				{
 					print("=> Moving...\n");
 
-					enum GPR reg = memory[cpu.IP++];
+					cpu.AX = memory[cpu.IP++] | memory[cpu.IP++] << 8;
+					break;
+				}
+			case MOV_BX:
+				{
+					print("=> Moving...\n");
 
-					switch (reg)
-					{
-						case AX:
-							{
-								cpu.AX = memory[cpu.IP++];
-								break;
-							}
-					}
-
+					cpu.BX = memory[cpu.IP++] | memory[cpu.IP++] << 8;
 					break;
 				}
 			default: 

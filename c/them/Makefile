@@ -17,5 +17,8 @@ build:
 		-O binary \
 		${NAME}.elf \
 		${NAME}.bin
+	@nasm -o prg0.bin prg0.asm
 
+dump:
+	@objdump -b binary -Mintel,i8086 -m i386 -D prg0.bin
 
