@@ -2,6 +2,7 @@
 #include "printf.h"
 
 #include "cpu.h"
+#include "mmu.h"
 
 /*
  *  theM
@@ -15,28 +16,36 @@ int main(int64_t pid, int64_t arg)
 {
 	print("\ntheM: the 16bit CPU emulator\n");
 
-	uint8_t memory[1 << 20];
 	CPU_T cpu;
+	Memory_T ram;
 
 	/* Reset CPU's program instruction counter */
-	cpu.IP = 0;
+	cpu.CS = 0x1000;
+	cpu.DS = 0x1000;
+	cpu.IP = 0x0000;
 
 	/* Load the program */
-	read_file((const uint8_t *) "PRG0.BIN", memory);
+	read_file((const uint8_t *) "PRG0.BIN", ram.bytes);
 	/*{
 		print("=> Cannot read the binary file... Program exit.\n");
 		exit(pid, 161);
 	}*/
 
+	for (uint16_t i = 0; i < 0xffff; i++)
+	{
+		ram.bytes[((cpu.CS << 4) + cpu.IP) + i] = ram.bytes[i];
+		ram.bytes[i] = 0x00;
+	}
+
 	/* Print the initial CPU state */
 	dump_registers(&cpu);
 
 	/* Switch opcode and emulate the operation */
-	switch_opcode(&cpu, memory);
+	switch_opcode(&cpu, ram.bytes);
 
 	/* Print the final CPU state */
 	dump_registers(&cpu);
 
-	exit(pid, 191);
+	exit(pid, 0);
 }
 

@@ -12,7 +12,16 @@
  *  krusty@vxn.dev / Nov 3, 2025
  */
 
-void switch_opcode(CPU_T* cpu, uint8_t* memory)
+uint8_t get_next_byte(CPU_T *cpu, uint8_t *memory)
+{
+	uint32_t addr = (cpu->CS << 4) + cpu->IP++;
+
+	/*printf("=> Address: 0x%x\n", addr);*/
+
+	return memory[addr];
+}
+
+void switch_opcode(CPU_T *cpu, uint8_t *memory)
 {
 	uint8_t halt = 0;
 
@@ -20,26 +29,26 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 
 	while (!halt)
 	{
-		enum OP_CODES opcode = memory[cpu->IP++];
+		enum OP_CODES opcode = get_next_byte(cpu, memory);
 
 		switch (opcode)
 		{
 			case ADD_8:
 			case ADD_16:
 				{
-					enum GPR reg = memory[cpu->IP++];
+					enum GPR reg = get_next_byte(cpu, memory);
 					uint16_t value;
 
 					switch (opcode)
 					{
 						case ADD_8:
 							{
-								value = (uint16_t) memory[cpu->IP++];
+								value = (uint16_t) get_next_byte(cpu, memory);
 								break;
 							}
 						case ADD_16:
 							{
-								value = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+								value = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
 								break;
 							}
 					}
@@ -211,7 +220,7 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 				}
 			case INT_8:
 				{
-					uint8_t int_code = memory[cpu->IP++];
+					uint8_t int_code = get_next_byte(cpu, memory);
 
 					switch (int_code)
 					{
@@ -236,7 +245,7 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					uint8_t al = cpu->AX & 0xff;
 					uint8_t ah = cpu->AX >> 8;
 
-					al = memory[cpu->IP++];
+					al = get_next_byte(cpu, memory);
 
 					cpu->AX = al | ah << 8;
 					break;
@@ -246,14 +255,14 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					uint8_t al = cpu->AX & 0xff;
 					uint8_t ah = cpu->AX >> 8;
 
-					ah = memory[cpu->IP++];
+					ah = get_next_byte(cpu, memory);
 
 					cpu->AX = al | ah << 8;
 					break;
 				}
 			case MOV_AX:
 				{
-					cpu->AX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					cpu->AX = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
 					break;
 				}
 			case MOV_BL: 
@@ -261,7 +270,7 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					uint8_t bl = cpu->BX & 0xff;
 					uint8_t bh = cpu->BX >> 8;
 
-					bl = memory[cpu->IP++];
+					bl = get_next_byte(cpu, memory);
 
 					cpu->BX = bl | bh << 8;
 					break;
@@ -271,14 +280,14 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					uint8_t bl = cpu->BX & 0xff;
 					uint8_t bh = cpu->BX >> 8;
 
-					bh = memory[cpu->IP++];
+					bh = get_next_byte(cpu, memory);
 
 					cpu->BX = bl | bh << 8;
 					break;
 				}
 			case MOV_BX:
 				{
-					cpu->BX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					cpu->BX = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
 					break;
 				}
 			case MOV_CL: 
@@ -286,7 +295,7 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					uint8_t cl = cpu->CX & 0xff;
 					uint8_t ch = cpu->CX >> 8;
 
-					cl = memory[cpu->IP++];
+					cl = get_next_byte(cpu, memory);
 
 					cpu->CX = cl | ch << 8;
 					break;
@@ -296,14 +305,14 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					uint8_t cl = cpu->CX & 0xff;
 					uint8_t ch = cpu->CX >> 8;
 
-					ch = memory[cpu->IP++];
+					ch = get_next_byte(cpu, memory);
 
 					cpu->CX = cl | ch << 8;
 					break;
 				}
 			case MOV_CX:
 				{
-					cpu->CX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					cpu->CX = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
 					break;
 				}
 			case MOV_DL: 
@@ -311,7 +320,7 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					uint8_t dl = cpu->DX & 0xff;
 					uint8_t dh = cpu->DX >> 8;
 
-					dl = memory[cpu->IP++];
+					dl = get_next_byte(cpu, memory);
 
 					cpu->DX = dl | dh << 8;
 					break;
@@ -321,39 +330,39 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 					uint8_t dl = cpu->DX & 0xff;
 					uint8_t dh = cpu->DX >> 8;
 
-					dh = memory[cpu->IP++];
+					dh = get_next_byte(cpu, memory);
 
 					cpu->DX = dl | dh << 8;
 					break;
 				}
 			case MOV_DX:
 				{
-					cpu->DX = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					cpu->DX = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
 					break;
 				}
 			case MOV_SP:
 				{
-					cpu->SP = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					cpu->SP = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
 					break;
 				}
 			case MOV_BP:
 				{
-					cpu->BP = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					cpu->BP = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
 					break;
 				}
 			case MOV_SI:
 				{
-					cpu->SI = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					cpu->SI = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
 					break;
 				}
 			case MOV_DI:
 				{
-					cpu->DI = memory[cpu->IP++] | memory[cpu->IP++] << 8;
+					cpu->DI = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
 					break;
 				}
 			case MOV_SR:
 				{
-					enum GPR reg = memory[cpu->IP++];
+					enum GPR reg = get_next_byte(cpu, memory);
 
 					switch (reg)
 					{
@@ -504,6 +513,7 @@ void switch_opcode(CPU_T* cpu, uint8_t* memory)
 			default: 
 				{
 					printf("=> Unknown opcode: %x\n", opcode);
+					return;
 					break;
 				}
 		}
