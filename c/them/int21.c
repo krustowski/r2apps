@@ -106,11 +106,8 @@ void int21h(CPU_T *cpu, uint8_t *memory)
 			 *  returns nothing
 			 */
 			{
-				uint8_t offset = cpu->DX & 0xff;
-				uint8_t segment = cpu->DS & 0xff;
-
 				/* Linear addr in Real mode */
-				uint16_t addr = ((uint16_t)segment << 4) + offset;
+				uint32_t addr = (cpu->DS << 4) + cpu->DX;
 
 				uint8_t *p = &memory[addr];
 
