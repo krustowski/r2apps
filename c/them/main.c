@@ -1,17 +1,19 @@
 #include "cpu.h"
 #include "mmu.h"
 #include "syscall.h"
+#include "printf.h"
 
 /*
  *  theM
  *
- *  Simple 16bit CPU eMulator.
+ *  Simple 16-bit CPU eMulator (x86-16). The emulator also aims to run MS-DOS native
+ *  programs and games.
  *
  *  krusty@vxn.dev / Nov 3, 2025
  */
 
 int main(void) {
-    print((const uint8_t *)"\ntheM: the 16bit CPU emulator\n");
+    printf((const uint8_t *)"\ntheM: the 16bit CPU emulator\n");
 
     CPU_T cpu;
     Memory_T ram;
@@ -43,5 +45,5 @@ int main(void) {
     /* Print the final CPU state */
     dump_registers(&cpu);
 
-    exit(123, 0);
+    return 0;
 }

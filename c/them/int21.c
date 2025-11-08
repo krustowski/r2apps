@@ -101,11 +101,10 @@ void int21h(CPU_T *cpu, uint8_t *memory) {
 
         while (*p != '$') {
             uint8_t pair[2] = {*p, 0};
-            print(pair);
+            printf((const uint8_t *)"%s\n", pair);
             p++;
         }
 
-        printf((const uint8_t *)"\n");
         break;
     }
     case BUFFERED_INPUT: {
