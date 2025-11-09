@@ -29,7 +29,6 @@ compile:
 		-nostdlib \
 		-nostdinc \
 		-ffreestanding \
-		-Xlinker "-T../linker.ld" \
 		-I ${LIBCR2} \
 		-I . \
 		${SOURCE_FILES}
@@ -50,7 +49,8 @@ link:
 build_untested: ensure_build_dir build_crt0 compile link 
 
 clean:
-	@rm -rf ${BUILD_DIR} ./*.{elf,o}
+	@rm -rf ${BUILD_DIR} ./*.{elf,o} && \
+		-Xlinker "-T../linker.ld" 
 
 .PHONY: build
 build:
