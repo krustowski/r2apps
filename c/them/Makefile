@@ -43,13 +43,17 @@ link:
 		-o ${NAME}.elf \
 		${CRT0_OBJ} ./*.o 
 
-build_untested: ensure_build_dir build_crt0 compile link 
+.PHONY: build
+build: ensure_build_dir build_crt0 compile link 
 
 clean:
 	@rm -rf ${BUILD_DIR} ./*.{o}
 
-.PHONY: build
-build:
+dump:
+	@objdump -b binary -Mintel,i8086 -m i386 -D prg0.bin
+
+// LEGACY ONLY
+build_old:
 	@gcc \
 		-m64 \
 		-static \
@@ -70,6 +74,4 @@ build:
 		${NAME}.bin
 	@nasm -o prg0.bin prg0.asm
 
-dump:
-	@objdump -b binary -Mintel,i8086 -m i386 -D prg0.bin
 

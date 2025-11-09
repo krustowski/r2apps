@@ -24,7 +24,7 @@ int main(void) {
     cpu.IP = 0x0000;
 
     /* Load the program */
-    printf("%d", read_file((const uint8_t *)"PRG0.BIN", &ram.bytes[(cpu.CS << 4) + cpu.IP]));
+    read_file((const uint8_t *)"PRG0.BIN", &ram.bytes[(cpu.CS << 4) + cpu.IP]);
     /*{
     print("=> Cannot read the binary file... Program exit.\n");
     exit(pid, 161);
