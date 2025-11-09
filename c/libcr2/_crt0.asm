@@ -15,13 +15,7 @@ _start:
     add rax, rsi      ; rax = argv + (argc+1)
     mov rdx, rax      ; rdx = envp
 
-    ; call main
     call main
-
-    ; syscall exit(rax)
-    ;mov rdi, rax
-    ;mov rax, 60
-    ;syscall
 
     mov rdi, rax
     mov rax, 0
