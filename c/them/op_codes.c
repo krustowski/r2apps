@@ -13,8 +13,6 @@
 uint8_t get_next_byte(CPU_T *cpu, uint8_t *memory) {
     uint32_t addr = (cpu->CS << 4) + cpu->IP++;
 
-    printf((const uint8_t *)"=> Address: 0x%x\n", addr);
-
     return memory[addr];
 }
 
@@ -419,7 +417,11 @@ void switch_opcode(CPU_T *cpu, uint8_t *memory) {
             break;
         }
         default: {
+            uint32_t addr = (cpu->CS << 4) + cpu->IP;
+
             printf((const uint8_t *)"=> Unknown opcode: %x\n", opcode);
+            printf((const uint8_t *)"=> Address: 0x%x\n", --addr);
+
             return;
             break;
         }

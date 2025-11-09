@@ -101,9 +101,11 @@ void int21h(CPU_T *cpu, uint8_t *memory) {
 
         while (*p != '$') {
             uint8_t pair[2] = {*p, 0};
-            printf((const uint8_t *)"%s\n", pair);
+            printf((const uint8_t *)"%s", pair);
             p++;
         }
+
+        printf("\n");
 
         break;
     }

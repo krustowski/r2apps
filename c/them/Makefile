@@ -18,39 +18,35 @@ ensure_build_dir:
 build_crt0:
 	@nasm -f elf64 ${CRT0_ASM} -o ${CRT0_OBJ}
 
+#-pie 
+#-Xlinker "-T../linker.ld" 
+
 compile:
 	@gcc \
 		-c \
-		-n \
-		-mno-red-zone \
-		-pie \
 		-m64 \
 		-static \
 		-nostdlib \
 		-nostdinc \
+		-mno-red-zone \
 		-ffreestanding \
 		-I ${LIBCR2} \
 		-I . \
 		${SOURCE_FILES}
 
 link:
-	@gcc \
-		-nostartfiles \
-		-m64 \
-		-mno-red-zone \
-		-pie \
-		-static \
-		-nostdlib \
-		-nostdinc \
-		-ffreestanding \
-		${CRT0_OBJ} ./*o \
-		-o ${NAME}.elf
+	@ld.lld \
+		--nostdlib \
+		--no-pie \
+		--static \
+		--script ./linker.ld \
+		-o ${NAME}.elf \
+		${CRT0_OBJ} ./*.o 
 
 build_untested: ensure_build_dir build_crt0 compile link 
 
 clean:
-	@rm -rf ${BUILD_DIR} ./*.{elf,o} && \
-		-Xlinker "-T../linker.ld" 
+	@rm -rf ${BUILD_DIR} ./*.{o}
 
 .PHONY: build
 build:

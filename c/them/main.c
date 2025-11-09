@@ -1,7 +1,7 @@
 #include "cpu.h"
 #include "mmu.h"
-#include "syscall.h"
 #include "printf.h"
+#include "syscall.h"
 
 /*
  *  theM
@@ -24,17 +24,11 @@ int main(void) {
     cpu.IP = 0x0000;
 
     /* Load the program */
-    read_file((const uint8_t *)"PRG0.BIN", ram.bytes);
+    printf("%d", read_file((const uint8_t *)"PRG0.BIN", &ram.bytes[(cpu.CS << 4) + cpu.IP]));
     /*{
     print("=> Cannot read the binary file... Program exit.\n");
     exit(pid, 161);
     }*/
-
-    /* Relocate the binary data to CS/DS address */
-    for (uint16_t i = 0; i < 0xffff; i++) {
-        ram.bytes[((cpu.CS << 4) + cpu.IP) + i] = ram.bytes[i];
-        ram.bytes[i] = 0x00;
-    }
 
     /* Print the initial CPU state */
     dump_registers(&cpu);
