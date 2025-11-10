@@ -12,7 +12,7 @@
  *  https://www.stanislavs.org/helppc/int_21.html
  */
 void int21h(CPU_T *cpu, uint8_t *memory) {
-    enum SRV_21H service = cpu->AX >> 8;
+    SRV_21H service = cpu->AX >> 8;
 
     printf((const uint8_t *)"=> Interrupt 21h service %x\n", service);
 
@@ -105,7 +105,7 @@ void int21h(CPU_T *cpu, uint8_t *memory) {
             p++;
         }
 
-        printf("\n");
+        printf((const uint8_t *)"\n");
 
         break;
     }
