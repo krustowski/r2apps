@@ -419,10 +419,9 @@ void switch_opcode(CPU_T *cpu, uint8_t *memory) {
         default: {
             uint32_t addr = (cpu->CS << 4) + cpu->IP;
 
-            printf((const uint8_t *)"=> Unknown opcode: %x\n", opcode);
-            printf((const uint8_t *)"=> Address: 0x%x\n", --addr);
+            // printf((const uint8_t *)"=> Unknown opcode: %x\n=< Address: 0x%x\n", opcode, --addr);
 
-            return;
+            // return;
             break;
         }
         }

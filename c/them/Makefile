@@ -52,7 +52,6 @@ clean:
 dump:
 	@objdump -b binary -Mintel,i8086 -m i386 -D prg0.bin
 
-// LEGACY ONLY
 build_old:
 	@gcc \
 		-m64 \
