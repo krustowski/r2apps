@@ -21,7 +21,7 @@ int main(void) {
     /* Reset CPU's program instruction counter */
     cpu.CS = 0x1000;
     cpu.DS = 0x1000;
-    cpu.IP = 0x000;
+    cpu.IP = 0x0100;
 
     /* Load the program */
     if (read_file((const uint8_t *)"VLAK.COM", &ram.bytes[(cpu.CS << 4) + cpu.IP])) {

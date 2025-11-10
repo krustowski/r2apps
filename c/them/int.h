@@ -17,7 +17,7 @@ extern "C" {
 /* BIOS interrupts */
 typedef enum {
     BOUND_FAIL = 0x05,
-    REAL_TIME_CLOCK = 0x08,
+    REAL_TIME_CLOCK_TICKS = 0x08,
     KEYBOARD_INT = 0x09,
     VIDEO = 0x10,
     EQUIPMENT_LIST,
@@ -252,7 +252,7 @@ void handle_10h(CPU_T *, Memory_T *);
 void handle_11h(CPU_T *, Memory_T *);
 void handle_12h(CPU_T *, Memory_T *);
 void handle_13h(CPU_T *, Memory_T *);
-void handle_h4h(CPU_T *, Memory_T *);
+void handle_14h(CPU_T *, Memory_T *);
 void handle_15h(CPU_T *, Memory_T *);
 void handle_16h(CPU_T *, Memory_T *);
 void handle_17h(CPU_T *, Memory_T *);
@@ -268,6 +268,7 @@ void handle_41h(CPU_T *, Memory_T *);
 void handle_46h(CPU_T *, Memory_T *);
 void handle_4Ah(CPU_T *, Memory_T *);
 
+void handle_20h(CPU_T *, Memory_T *);
 void handle_21h(CPU_T *, Memory_T *);
 
 #ifdef __cplusplus
