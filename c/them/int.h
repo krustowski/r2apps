@@ -7,8 +7,7 @@
  *  krusty@vxn.dev / Nov 4, 2025
  */
 
-#include "cpu.h"
-#include "mmu.h"
+#include "them_types.h"
 
 #ifdef __cplusplus
 extern "C" {

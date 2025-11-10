@@ -519,3 +519,4 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
         }
         }
     }
+}

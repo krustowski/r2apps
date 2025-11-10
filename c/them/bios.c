@@ -1,7 +1,7 @@
-#include "cpu.h"
 #include "int.h"
 #include "mmu.h"
 #include "printf.h"
+#include "them_types.h"
 
 void handle_05h(CPU_T *cpu, Memory_T *memory) {
     /*
@@ -51,9 +51,35 @@ void handle_10h(CPU_T *cpu, Memory_T *memory) {
     case SET_CURSOR_SHAPE: {
         break;
     }
-    default:
+    case SET_CURSOR_POSITION: {
         break;
+    }
+    case GET_LIGHT_PEN_POSITION:
+    case GET_DISPLAY_PAGE:
+    case CLEAR_SCROLL_SCREEN_UP:
+    case CLEAR_SCROLL_SCREEN_DOWN:
+    case READ_CHAR_WITH_ATTR_AT_CURSOR:
+    case WRITE_CHAR_WITH_ATTR_AT_CURSOR:
+    case WRITE_CHAR_AT_CURSOR:
+    case SET_BORDER_COLOR:
+    case WRITE_GRAPHICS_PIXEL:
+    case READ_GRAPHICS_PIXEL:
+    case WRITE_CHAR_IN_TTY_MODE:
+    case GET_VIDEO_MODE:
+    case SET_PALETTE_REGISTERS:
+    case CHAR_GENERATOR:
+    case ALTERNATE_SELECT_FUNC:
+    case WRITE_STRING:
+    case GET_SET_DISPLAY_COMBINATION_CODE:
+    case GET_FUNC_INFO:
+    case SAVE_RESTORE_VIDEO_STATE:
+    case VESA_BIOS_EXT_FUNC:
+    default: {
+        break;
+    }
     }
 
     return;
 }
+
+void handle_11h(CPU_T *cpu, Memory_T *memory) {}

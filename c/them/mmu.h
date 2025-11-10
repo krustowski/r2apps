@@ -13,10 +13,7 @@
 extern "C" {
 #endif
 
-typedef struct {
-    uint8_t bytes[1 << 20];
-    uint16_t start;
-} __attribute__((packed)) Memory_T;
+/* EMPTY */
 
 #ifdef __cplusplus
 }
