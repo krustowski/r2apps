@@ -21,20 +21,19 @@ int main(void) {
     /* Reset CPU's program instruction counter */
     cpu.CS = 0x1000;
     cpu.DS = 0x1000;
-    cpu.IP = 0x0100;
+    cpu.IP = 0x000;
 
     /* Load the program */
-    read_file((const uint8_t *)"VLAK.COM", &ram.bytes[(cpu.CS << 4) + cpu.IP]);
-    /*{
-    print("=> Cannot read the binary file... Program exit.\n");
-    exit(pid, 161);
-    }*/
+    if (read_file((const uint8_t *)"VLAK.COM", &ram.bytes[(cpu.CS << 4) + cpu.IP])) {
+        print((const uint8_t *)"=> Cannot read the binary file... Program exit.\n");
+        return 1;
+    }
 
     /* Print the initial CPU state */
     dump_registers(&cpu);
 
     /* Switch opcode and emulate the operation */
-    switch_opcode(&cpu, ram.bytes);
+    switch_opcode(&cpu, &ram);
 
     /* Print the final CPU state */
     dump_registers(&cpu);

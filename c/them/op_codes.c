@@ -1,5 +1,6 @@
 #include "cpu.h"
 #include "int.h"
+#include "mmu.h"
 #include "printf.h"
 
 /*
@@ -10,13 +11,13 @@
  *  krusty@vxn.dev / Nov 3, 2025
  */
 
-uint8_t get_next_byte(CPU_T *cpu, uint8_t *memory) {
+uint8_t get_next_byte(CPU_T *cpu, Memory_T *memory) {
     uint32_t addr = (cpu->CS << 4) + cpu->IP++;
 
-    return memory[addr];
+    return memory->bytes[addr];
 }
 
-void switch_opcode(CPU_T *cpu, uint8_t *memory) {
+void switch_opcode(CPU_T *cpu, Memory_T *memory) {
     uint8_t halt = 0;
 
     uint8_t stack[256];
@@ -174,13 +175,40 @@ void switch_opcode(CPU_T *cpu, uint8_t *memory) {
             break;
         }
         case INT_8: {
-            uint8_t int_code = get_next_byte(cpu, memory);
+            INT_BIOS int_code = get_next_byte(cpu, memory);
 
             switch (int_code) {
-            case 0x21: {
-                int21h(cpu, memory);
+            case BOUND_FAIL: {
+                handle_08h(cpu, memory);
                 break;
             }
+            case REAL_TIME_CLOCK:
+            case KEYBOARD_INT:
+            case VIDEO:
+            case EQUIPMENT_LIST:
+            case MEMORY_CONVENTIONAL_SIZE:
+            case DISK_SERVICES:
+            case SERIAL_PORT_SERVICES:
+            case MISC_SYSTEM_SERVICES:
+            case KEYBOARD_SERVICES:
+            case PRINTER_SERVICES:
+            case EXEC_CASSETTE_BASIC:
+            case LOAD_OPERATING_SYSTEM:
+            case RTC_AND_PCI_SERVICES:
+            case CTRL_BREAK_HANDLER:
+            case TIMER_TICK_HANDLER:
+            case _POINTER_TO_VPT:
+            case _POINTER_TO_DPT:
+            case _POINTER_TO_VGCT:
+            case DOS_RESERVED:
+            case DOS_SERVICES: {
+                handle_21h(cpu, memory);
+                break;
+            }
+            case ADDRESS_POINTER_FDPT_DRV1:
+            case ADDRESS_POINTER_FDPT_DRV2:
+            case RTC_ALARM:
+                break;
             }
 
             break;

@@ -8,6 +8,7 @@
  */
 
 #include "cpu.h"
+#include "mmu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,6 +35,8 @@ typedef enum {
     _POINTER_TO_VPT,
     _POINTER_TO_DPT,
     _POINTER_TO_VGCT,
+    DOS_RESERVED = 0x20,
+    DOS_SERVICES,
     ADDRESS_POINTER_FDPT_DRV1 = 0x41,
     ADDRESS_POINTER_FDPT_DRV2 = 0x46,
     RTC_ALARM
@@ -242,7 +245,30 @@ typedef enum {
     EXTENDED_OPEN_CREATE,
 } SRV_21H;
 
-void int21h(CPU_T *cpu, uint8_t *memory);
+void handle_05h(CPU_T *, Memory_T *);
+void handle_08h(CPU_T *, Memory_T *);
+void handle_09h(CPU_T *, Memory_T *);
+void handle_10h(CPU_T *, Memory_T *);
+void handle_11h(CPU_T *, Memory_T *);
+void handle_12h(CPU_T *, Memory_T *);
+void handle_13h(CPU_T *, Memory_T *);
+void handle_h4h(CPU_T *, Memory_T *);
+void handle_15h(CPU_T *, Memory_T *);
+void handle_16h(CPU_T *, Memory_T *);
+void handle_17h(CPU_T *, Memory_T *);
+void handle_18h(CPU_T *, Memory_T *);
+void handle_19h(CPU_T *, Memory_T *);
+void handle_1Ah(CPU_T *, Memory_T *);
+void handle_1Bh(CPU_T *, Memory_T *);
+void handle_1Ch(CPU_T *, Memory_T *);
+void handle_1Dh(CPU_T *, Memory_T *);
+void handle_1Eh(CPU_T *, Memory_T *);
+void handle_1Fh(CPU_T *, Memory_T *);
+void handle_41h(CPU_T *, Memory_T *);
+void handle_46h(CPU_T *, Memory_T *);
+void handle_4Ah(CPU_T *, Memory_T *);
+
+void handle_21h(CPU_T *, Memory_T *);
 
 #ifdef __cplusplus
 }

@@ -1,9 +1,10 @@
 #include "cpu.h"
 #include "int.h"
+#include "mmu.h"
 #include "printf.h"
 
 /*
- *  int21h()
+ *  handle_21h()
  *
  *  Interrupt 21h DOS service dispathcer.
  *
@@ -11,10 +12,10 @@
  *
  *  https://www.stanislavs.org/helppc/int_21.html
  */
-void int21h(CPU_T *cpu, uint8_t *memory) {
+void handle_21h(CPU_T *cpu, Memory_T *memory) {
     SRV_21H service = cpu->AX >> 8;
 
-    printf((const uint8_t *)"=> Interrupt 21h service %x\n", service);
+    printf((const uint8_t *)"=> Interrupt 21h service 0x%x\n", service);
 
     switch (service) {
     case PROGRAM_TERMINATE: {
@@ -97,7 +98,7 @@ void int21h(CPU_T *cpu, uint8_t *memory) {
         /* Linear addr in Real mode */
         uint32_t addr = (cpu->DS << 4) + cpu->DX;
 
-        uint8_t *p = &memory[addr];
+        uint8_t *p = &memory->bytes[addr];
 
         while (*p != '$') {
             uint8_t pair[2] = {*p, 0};

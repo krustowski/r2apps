@@ -7,6 +7,7 @@
  *  krusty@vxn.dev / Nov 4, 2025
  */
 
+#include "mmu.h"
 #include "types.h"
 
 #ifdef __cplusplus
@@ -161,7 +162,7 @@ void dump_registers(CPU_T *cpu);
  *  Core function to identify an instruction and its operands to emulate a CPU
  * operation.
  */
-void switch_opcode(CPU_T *cpu, uint8_t *memory);
+void switch_opcode(CPU_T *cpu, Memory_T *memory);
 
 #ifdef __cplusplus
 }
