@@ -7,7 +7,8 @@
  *  krusty@vxn.dev / Nov 4, 2025
  */
 
-#include "them_types.h"
+#include "cpu.h"
+#include "mmu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,7 +39,7 @@ typedef enum {
     DOS_SERVICES,
     ADDRESS_POINTER_FDPT_DRV1 = 0x41,
     ADDRESS_POINTER_FDPT_DRV2 = 0x46,
-    RTC_ALARM
+    RTC_ALARM = 0x4A
 } INT_BIOS;
 
 typedef enum {
@@ -244,6 +245,14 @@ typedef enum {
     EXTENDED_OPEN_CREATE,
 } SRV_21H;
 
+/*
+ *  switch_opcodes()
+ *
+ *  Core function to identify an instruction and its operands to emulate a CPU
+ * operation.
+ */
+void switch_opcode(CPU_T *cpu, Memory_T *memory);
+
 void handle_05h(CPU_T *, Memory_T *);
 void handle_08h(CPU_T *, Memory_T *);
 void handle_09h(CPU_T *, Memory_T *);
@@ -263,12 +272,11 @@ void handle_1Ch(CPU_T *, Memory_T *);
 void handle_1Dh(CPU_T *, Memory_T *);
 void handle_1Eh(CPU_T *, Memory_T *);
 void handle_1Fh(CPU_T *, Memory_T *);
+void handle_20h(CPU_T *, Memory_T *);
+void handle_21h(CPU_T *, Memory_T *);
 void handle_41h(CPU_T *, Memory_T *);
 void handle_46h(CPU_T *, Memory_T *);
 void handle_4Ah(CPU_T *, Memory_T *);
-
-void handle_20h(CPU_T *, Memory_T *);
-void handle_21h(CPU_T *, Memory_T *);
 
 #ifdef __cplusplus
 }

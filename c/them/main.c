@@ -1,5 +1,4 @@
-#include "cpu.h"
-#include "mmu.h"
+#include "int.h"
 #include "printf.h"
 #include "syscall.h"
 

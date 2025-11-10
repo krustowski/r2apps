@@ -1,6 +1,4 @@
-#include "cpu.h"
 #include "int.h"
-#include "mmu.h"
 #include "printf.h"
 
 /*

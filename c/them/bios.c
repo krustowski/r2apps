@@ -1,7 +1,13 @@
 #include "int.h"
-#include "mmu.h"
 #include "printf.h"
-#include "them_types.h"
+
+/*
+ *  theM
+ *
+ *  Simple 16bit CPU eMulator.
+ *
+ *  krusty@vxn.dev / Nov 3, 2025
+ */
 
 void handle_05h(CPU_T *cpu, Memory_T *memory) {
     /*
@@ -83,3 +89,39 @@ void handle_10h(CPU_T *cpu, Memory_T *memory) {
 }
 
 void handle_11h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_12h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_13h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_14h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_15h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_16h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_17h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_18h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_19h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_1Ah(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_1Bh(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_1Ch(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_1Dh(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_1Eh(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_1Fh(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_20h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_41h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_46h(CPU_T *cpu, Memory_T *memory) {}
+
+void handle_4Ah(CPU_T *cpu, Memory_T *memory) {}
