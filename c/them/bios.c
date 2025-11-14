@@ -2,52 +2,59 @@
 #include "printf.h"
 
 /*
- *  theM
+ *  bios.c
  *
- *  Simple 16bit CPU eMulator.
+ *  Implementations of the software interrupts handlers.
  *
  *  krusty@vxn.dev / Nov 3, 2025
  */
 
+/*
+ *  handle_05h()
+ *
+ *  BOUND failure handler
+ *
+ *  no input
+ */
 void handle_05h(CPU_T *cpu, Memory_T *memory) {
-    /*
-     *  BOUND failure
-     *
-     *  no input
-     */
     printf((const uint8_t *)"=> Interrupt 0x05: Out of bounds, address: 0x%x\n", (cpu->DS << 4) + (cpu->IP - 1));
 
     return;
 }
 
+/*
+ *  handle_08h()
+ *
+ *  RTC-related handler
+ *
+ *  no input
+ */
 void handle_08h(CPU_T *cpu, Memory_T *memory) {
-    /*
-     *  RTC
-     *
-     *  no input
-     */
     printf((const uint8_t *)"=> Interrupt 0x08: RTC\n");
 
     return;
 }
 
+/*
+ *  handle_09h()
+ *
+ *  Keyboard: key pressed event
+ *
+ *  no input
+ */
 void handle_09h(CPU_T *cpu, Memory_T *memory) {
-    /*
-     *  Keyboard: key pressed event
-     *
-     *  no input
-     */
     printf((const uint8_t *)"=> Interrupt 0x09: A key pressed");
 
     return;
 }
-
+/*
+ *  handle_10h()
+ *
+ *  Video services
+ *
+ *  input: AH = service
+ */
 void handle_10h(CPU_T *cpu, Memory_T *memory) {
-    /*
-     *  Video services
-     *
-     *  input: AH = service
-     */
     SRV_10H service = cpu->AX >> 8;
 
     switch (service) {

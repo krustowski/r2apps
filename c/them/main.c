@@ -1,5 +1,4 @@
 #include "int.h"
-#include "printf.h"
 #include "syscall.h"
 
 /*
@@ -12,7 +11,7 @@
  */
 
 int main(void) {
-    printf((const uint8_t *)"\ntheM: the 16bit CPU emulator\n");
+    print((const uint8_t *)"\ntheM: the 16bit CPU emulator\n");
 
     CPU_T cpu;
     Memory_T ram;
@@ -23,7 +22,7 @@ int main(void) {
     cpu.IP = 0x0100;
 
     /* Load the program */
-    if (read_file((const uint8_t *)"VLAK.COM", &ram.bytes[(cpu.CS << 4) + cpu.IP])) {
+    if (!read_file((const uint8_t *)"VLAK.COM", &ram.bytes[(cpu.CS << 4) + cpu.IP])) {
         print((const uint8_t *)"=> Cannot read the binary file... Program exit.\n");
         return 1;
     }

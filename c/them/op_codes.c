@@ -175,6 +175,8 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
         case INT_8: {
             INT_BIOS int_code = get_next_byte(cpu, memory);
 
+            printf((const uint8_t *)"=> Interrupt 0x%d\n", int_code);
+
             switch (int_code) {
             case BOUND_FAIL: {
                 handle_05h(cpu, memory);
@@ -270,6 +272,10 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             }
             case RTC_ALARM: {
                 handle_4Ah(cpu, memory);
+                break;
+            }
+            default: {
+                printf((const uint8_t *)"=> Interrupt not implemented\n");
                 break;
             }
 

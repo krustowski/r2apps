@@ -4,11 +4,7 @@
 #include "printf.h"
 
 /*
- *  handle_21h()
- *
  *  Interrupt 21h DOS service dispathcer.
- *
- *  krusty@vxn.dev / Nov 5, 2025
  *
  *  https://www.stanislavs.org/helppc/int_21.html
  */
