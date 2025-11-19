@@ -3,7 +3,7 @@
 /a.out
 /app.elf
 /rust/*/target/*
-/*/a.out
+*/*/a.out
 
 *.o
 *.elf
