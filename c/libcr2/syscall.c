@@ -6,8 +6,9 @@ int64_t syscall(int64_t number, int64_t arg1, int64_t arg2, int64_t arg3)
 	asm volatile (
 			"int $0x7f"
 			: "=a"(ret)
-			: "a"(number), "D"(arg1), "S"(arg2), "d"(arg3)
-			: "rcx", "r11", "memory"
+			/* RDX, RDI, RSI, RCX */
+			: "d"(number), "D"(arg1), "S"(arg2), "c"(arg3)
+			: "r11", "memory"
 		     );
 	return ret;
 }

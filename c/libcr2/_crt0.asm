@@ -15,13 +15,14 @@ _start:
     add rax, rsi      ; rax = argv + (argc+1)
     mov rdx, rax      ; rdx = envp
 
+    ; call main
     call main
 
-    mov rdi, rax
-    mov rax, 0
+    ; syscall exit(rax)
+    mov rsi, rax
+    mov rdi, 0x00
+    mov rdx, 0x00
     int 0x7f
 
     hlt
 
-end:
-	jmp end
