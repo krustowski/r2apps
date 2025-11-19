@@ -1,4 +1,3 @@
-/* Linker script for a basic C project memory layout */
 ENTRY(_start)
 
 PHDRS {
@@ -33,7 +32,6 @@ SECTIONS
     _ebss = .;
   } :data
 
-  /* Stack and heap can be defined here if needed */
   _end = .;
 
   /*.stack : 
