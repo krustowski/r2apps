@@ -1,5 +1,4 @@
-/* Linker script for a basic C project memory layout */
-ENTRY(main)
+ENTRY(_start)
 
 PHDRS {
   text PT_LOAD FLAGS(5); /* R+X */
@@ -35,12 +34,4 @@ SECTIONS
 
   /* Stack and heap can be defined here if needed */
   _end = .;
-
-  .stack : 
-  {
-    . = ALIGN(16);
-    stack_bottom = .;
-    . += 0x10000; /* 64 KiB stack */
-    stack_top = .;
-  } :data
 }
