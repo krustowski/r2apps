@@ -19,10 +19,10 @@ int main(void) {
     /* Reset CPU's program instruction counter */
     cpu.CS = 0x1000;
     cpu.DS = 0x1000;
-    cpu.IP = 0x0100;
+    cpu.IP = 0x0000;
 
     /* Load the program */
-    if (!read_file((const uint8_t *)"VLAK.COM", &ram.bytes[(cpu.CS << 4) + cpu.IP])) {
+    if (!read_file((const uint8_t *)"PRG0.BIN", &ram.bytes[(cpu.CS << 4) + cpu.IP])) {
         print((const uint8_t *)"=> Cannot read the binary file... Program exit.\n");
         return 1;
     }

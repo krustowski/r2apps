@@ -253,6 +253,8 @@ typedef enum {
  */
 void switch_opcode(CPU_T *cpu, Memory_T *memory);
 
+void int_bios(CPU_T *cpu, Memory_T *memory);
+
 void handle_05h(CPU_T *, Memory_T *);
 void handle_08h(CPU_T *, Memory_T *);
 void handle_09h(CPU_T *, Memory_T *);

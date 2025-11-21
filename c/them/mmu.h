@@ -18,6 +18,9 @@ typedef struct {
     uint16_t start;
 } __attribute__((packed)) Memory_T;
 
+uint8_t mmu_read(Memory_T *mem, uint32_t addr);
+uint8_t mmu_write(Memory_T *mem, uint32_t addr, uint8_t value);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,4 +1,5 @@
 #include "int.h"
+#include "mmu.h"
 #include "printf.h"
 
 /*
@@ -12,16 +13,18 @@
 uint8_t get_next_byte(CPU_T *cpu, Memory_T *memory) {
     uint32_t addr = (cpu->CS << 4) + cpu->IP++;
 
-    return memory->bytes[addr];
+    return mmu_read(memory, addr);
 }
+
+uint8_t get_stack_addr(CPU_T *cpu) { return (cpu->SS << 4) + cpu->SP; }
 
 void switch_opcode(CPU_T *cpu, Memory_T *memory) {
     uint8_t halt = 0;
 
-    uint8_t stack[256];
-
     while (!halt) {
         enum OP_CODES opcode = get_next_byte(cpu, memory);
+
+        uint32_t stack = get_stack_addr(cpu);
 
         switch (opcode) {
         case ADD_8:
@@ -173,114 +176,9 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             break;
         }
         case INT_8: {
-            INT_BIOS int_code = get_next_byte(cpu, memory);
-
-            printf((const uint8_t *)"=> Interrupt 0x%d\n", int_code);
-
-            switch (int_code) {
-            case BOUND_FAIL: {
-                handle_05h(cpu, memory);
-                break;
-            }
-            case REAL_TIME_CLOCK_TICKS: {
-                handle_08h(cpu, memory);
-                break;
-            }
-            case KEYBOARD_INT: {
-                handle_09h(cpu, memory);
-                break;
-            }
-            case VIDEO: {
-                handle_10h(cpu, memory);
-                break;
-            }
-            case EQUIPMENT_LIST: {
-                handle_11h(cpu, memory);
-                break;
-            }
-            case MEMORY_CONVENTIONAL_SIZE: {
-                handle_12h(cpu, memory);
-                break;
-            }
-            case DISK_SERVICES: {
-                handle_13h(cpu, memory);
-                break;
-            }
-            case SERIAL_PORT_SERVICES: {
-                handle_14h(cpu, memory);
-                break;
-            }
-            case MISC_SYSTEM_SERVICES: {
-                handle_15h(cpu, memory);
-                break;
-            }
-            case KEYBOARD_SERVICES: {
-                handle_16h(cpu, memory);
-                break;
-            }
-            case PRINTER_SERVICES: {
-                handle_17h(cpu, memory);
-                break;
-            }
-            case EXEC_CASSETTE_BASIC: {
-                handle_18h(cpu, memory);
-                break;
-            }
-            case LOAD_OPERATING_SYSTEM: {
-                handle_19h(cpu, memory);
-                break;
-            }
-            case RTC_AND_PCI_SERVICES: {
-                handle_1Ah(cpu, memory);
-                break;
-            }
-            case CTRL_BREAK_HANDLER: {
-                handle_1Bh(cpu, memory);
-                break;
-            }
-            case TIMER_TICK_HANDLER: {
-                handle_1Ch(cpu, memory);
-                break;
-            }
-            case _POINTER_TO_VPT: {
-                handle_1Dh(cpu, memory);
-                break;
-            }
-            case _POINTER_TO_DPT: {
-                handle_1Eh(cpu, memory);
-                break;
-            }
-            case _POINTER_TO_VGCT: {
-                handle_1Fh(cpu, memory);
-                break;
-            }
-            case DOS_RESERVED: {
-                handle_20h(cpu, memory);
-                break;
-            }
-            case DOS_SERVICES: {
-                handle_21h(cpu, memory);
-                break;
-            }
-            case ADDRESS_POINTER_FDPT_DRV1: {
-                handle_41h(cpu, memory);
-                break;
-            }
-            case ADDRESS_POINTER_FDPT_DRV2: {
-                handle_46h(cpu, memory);
-                break;
-            }
-            case RTC_ALARM: {
-                handle_4Ah(cpu, memory);
-                break;
-            }
-            default: {
-                printf((const uint8_t *)"=> Interrupt not implemented\n");
-                break;
-            }
-
+            int_bios(cpu, memory);
             break;
-            }
+        }
         case HLT: {
             printf((const uint8_t *)"=> Program stop (halt)\n");
 
@@ -496,30 +394,31 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             break;
         }
         case PUSH_AX: {
-            stack[cpu->SP--] = cpu->AX >> 8;
-            stack[cpu->SP--] = cpu->AX & 0xff;
+            mmu_write(memory, --stack, cpu->AX >> 8);
+            mmu_write(memory, --stack, cpu->AX & 0xff);
+            cpu->SP -= 4;
             break;
         }
         case PUSH_BX: {
-            stack[cpu->SP--] = cpu->BX >> 8;
-            stack[cpu->SP--] = cpu->BX & 0xff;
+            mmu_write(memory, --stack, cpu->BX >> 8);
+            mmu_write(memory, --stack, cpu->BX & 0xff);
+            cpu->SP -= 4;
             break;
         }
         case PUSH_SP: {
             uint16_t sp = cpu->SP;
 
-            stack[cpu->SP--] = sp >> 8;
-            stack[cpu->SP--] = sp & 0xff;
+            mmu_write(memory, --stack, sp >> 8);
+            mmu_write(memory, --stack, sp & 0xff);
+            cpu->SP -= 4;
             break;
         }
         default: {
-            uint32_t addr = (cpu->CS << 4) + cpu->IP;
+            /*uint32_t addr = (cpu->CS << 4) + cpu->IP;
 
-            // printf((const uint8_t *)"=> Unknown opcode: %x\n=< Address: 0x%x\n", opcode, --addr);
-
-            // return;
+            printf((const uint8_t *)"=> Unknown opcode: %x\n=< Address: 0x%x\n", opcode, --addr);
+            return;*/
             break;
-        }
         }
         }
     }

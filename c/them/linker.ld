@@ -12,7 +12,7 @@ SECTIONS
   .text :
   {
     KEEP(*(.text.main))
-    *(.text.)
+    *(.text.*)
     *(.rodata*)
     _etext = .;
   } :text
