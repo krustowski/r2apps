@@ -13,12 +13,12 @@ SECTIONS
   .text :
   {
     KEEP(*(.text.main))
-    *(.text.*)
+    *(.text*)
     *(.rodata*)
     _etext = .;
   } :text
 
-  .data : AT (ADDR(.text) + SIZEOF(.text))
+  .data :
   {
     _sdata = .;
     *(.data*)

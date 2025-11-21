@@ -1,7 +1,8 @@
 section .text
-global _start
+
 extern main
 
+global _start
 _start:
     ; rdi = argc
     mov rdi, [rsp]
