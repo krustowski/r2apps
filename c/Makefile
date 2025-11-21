@@ -5,7 +5,7 @@ all:
 
 .PHONY: libcr2
 libcr2:
-	@rm -f libcr2.so*
+	@rm -f libcr2.a libcr2.so*
 	@nasm -g -DPIC -f elf64 -o ./libcr2/_crt0.o ./libcr2/_crt0.asm
 	@gcc \
 		-c \
