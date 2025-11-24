@@ -249,7 +249,7 @@ typedef enum {
  *  switch_opcodes()
  *
  *  Core function to identify an instruction and its operands to emulate a CPU
- * operation.
+ *  operation.
  */
 void switch_opcode(CPU_T *cpu, Memory_T *memory);
 

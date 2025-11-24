@@ -40,6 +40,12 @@ _start:
 	MOV DL, 0
 	MOV AH, 0
 
+    MOV AX, 0xB800
+    MOV ES, AX
+
+    MOV word [ES:0x0000], 0x2F4F   ; 'O'
+    MOV word [ES:0x0002], 0x2F59   ; 'Y'
+
 	; Test 21h service 02
 	MOV DL, 0x58
 	MOV AH, 0x02

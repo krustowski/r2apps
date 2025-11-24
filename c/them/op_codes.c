@@ -1,3 +1,4 @@
+#include "cpu.h"
 #include "int.h"
 #include "mmu.h"
 #include "printf.h"
@@ -393,6 +394,20 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
 
             break;
         }
+        case MOV_PTR: {
+            if (get_next_byte(cpu, memory) != 0xc7) {
+                break;
+            }
+
+            switch (get_next_byte(cpu, memory)) {
+            case 0x06: {
+                uint16_t offset = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
+                uint16_t ch = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
+
+                mmu_write(memory, (cpu->ES << 4) + offset, ch & 0xff);
+            }
+            }
+        }
         case PUSH_AX: {
             mmu_write(memory, --stack, cpu->AX >> 8);
             mmu_write(memory, --stack, cpu->AX & 0xff);
@@ -414,12 +429,13 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             break;
         }
         default: {
-            /*uint32_t addr = (cpu->CS << 4) + cpu->IP;
+            uint32_t addr = (cpu->CS << 4) + cpu->IP - 1;
 
-            printf((const uint8_t *)"=> Unknown opcode: %x\n=< Address: 0x%x\n", opcode, --addr);
-            return;*/
+            /*printf((const uint8_t *)"=> Unknown opcode: %x\n=< Address: 0x%x\n", opcode, addr);*/
             break;
         }
         }
     }
+
+    return;
 }

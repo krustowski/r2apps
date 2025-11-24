@@ -87,6 +87,7 @@ enum OP_CODES {
     MOV_DI = 0xBF,
 
     MOV_SR = 0x8E,
+    MOV_PTR = 0x26,
 
     NOP = 0x90,
 
