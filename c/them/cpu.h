@@ -39,10 +39,30 @@ typedef struct {
     uint16_t IP;
 } __attribute__((packed)) CPU_T;
 
-enum OP_CODES {
+typedef enum {
+    AAA = 0x37,
+
+    AAD_IMM8 = 0xD5,
+    AAM_IMM8 = 0xD4,
+    AAS = 0x3F,
+
+    ADC_AL_IMM8 = 0x14,
+    ADC_AX_IMM16 = 0x15,
+
+    /*D4_PREFIX = 0xD4,
+    D5_PREFIX = 0xD5,*/
+
     ADD_16 = 0x81, /* SUB_16 */
     ADD_8 = 0x83,  /* SUB_8 */
-    HLT = 0xF4,
+
+    AND_AL_IMM8 = 0x24,
+    AND_AX_IMM16 = 0x25,
+
+    CALL_REL16 = 0xE8,
+    CALL_PTR16 = 0x9A,
+
+    CMP_AL_IMM8 = 0x3C,
+    CMP_AX_IMM16 = 0x3D,
 
     INC_AX = 0x40,
     INC_BX = 0x43,
@@ -62,11 +82,59 @@ enum OP_CODES {
     DEC_SI = 0x4E,
     DEC_DI = 0x4F,
 
+    HLT = 0xF4,
+
     INT_8 = 0xCD,
     IRET = 0xCF,
 
-    JMP_REL8 = 0xE8,
+    JMP_REL8 = 0xEB,
     JMP_REL16 = 0xE9,
+    JMP_RM16 = 0xFF,
+    JMP_PTR16 = 0xEA,
+
+    JA_REL8 = 0x77,
+    JAE_REL8 = 0x73,
+    JB_REL8 = 0x72,
+    JBE_REL8 = 0x76,
+    JC_REL8 = 0x72,
+    JCXZ_REL8 = 0xE3,
+    JE_REL8 = 0x74,
+    JG_REL8 = 0x7F,
+    JGE_REL8 = 0x7D,
+    JL_REL8 = 0x7C,
+    JLE_REL8 = 0x7E,
+    JNA_REL8 = 0x76,
+    JNAE_REL8 = 0x72,
+    JNB_REL8 = 0x73,
+    JNBE_REL8 = 0x77,
+    JNC_REL8 = 0x73,
+    JNE_REL8 = 0x75,
+    JNG_REL8 = 0x7E,
+    JNGE_REL8 = 0x7C,
+    JNL_REL8 = 0x7D,
+    JNLE_REL8 = 0x7F,
+    JNO_REL8 = 0x71,
+    JNP_REL8 = 0x7B,
+    JNS_REL8 = 0x79,
+    JNZ_REL8 = 0x75,
+    JO_REL8 = 0x70,
+    JP_REL8 = 0x7A,
+    JPE_REL8 = 0x7A,
+    JPO_REL8 = 0x7B,
+    JS_REL8 = 0x78,
+    JZ_REL8 = 0x74,
+
+    JUMP_REL16 = 0x0F,
+
+    LDS_RM16 = 0xC5,
+    LES_RM16 = 0xC4,
+    LEA_RM16 = 0x8D,
+    LEAVE = 0xC9,
+    LODS_M8 = 0xAC,
+    LODS_M16 = 0xAD,
+    LOOP_REL8 = 0xE2,
+    LOOPE_REL8 = 0xE1,
+    LOOPNE_REL8 = 0xE0,
 
     MOV_AL = 0xB0,
     MOV_BL = 0xB3,
@@ -91,6 +159,29 @@ enum OP_CODES {
 
     NOP = 0x90,
 
+    POPA = 0x61,
+    PUSHA = 0x60,
+
+    POPF = 0x9D,
+    PUSHF = 0x9C,
+
+    POP_RM16 = 0x8F,
+    POP_R16 = 0x58,
+
+    POP_DS = 0x1F,
+    POP_ES = 0x07,
+    POP_SS = 0x17,
+
+    PUSH_RM16 = 0xFF,
+    PUSH_R16 = 0x50,
+    PUSH_IMM8 = 0x6A,
+    PUSH_IMM16 = 0x68,
+
+    PUSH_CS = 0x0E,
+    PUSH_SS = 0x16,
+    PUSH_DS = 0x1E,
+    PUSH_ES = 0x06,
+
     PUSH_AX = 0x50,
     PUSH_BX = 0x53,
     PUSH_CX = 0x51,
@@ -99,10 +190,61 @@ enum OP_CODES {
     PUSH_BP = 0x55,
     PUSH_SI = 0x56,
     PUSH_DI = 0x57,
-};
+
+    XOR_AL_IMM8 = 0x34,
+    XOR_AX_IMM16 = 0x35,
+} OP_CODES;
+
+typedef enum {
+    JA_REL16 = 0x87,
+    JAE_REL16 = 0x83,
+    JB_REL16 = 0x82,
+    JBE_REL16 = 0x86,
+    JC_REL16 = 0x82,
+    JE_REL16 = 0x84,
+    JZ_REL16 = 0x84,
+    JG_REL16 = 0x8F,
+    JGE_REL16 = 0x8D,
+    JL_REL16 = 0x8C,
+    JLE_REL16 = 0x8E,
+    JNA_REL16 = 0x86,
+    JNAE_REL16 = 0x82,
+    JNB_REL16 = 0x83,
+    JNBE_REL16 = 0x87,
+    JNC_REL16 = 0x83,
+    JNE_REL16 = 0x85,
+    JNG_REL16 = 0x8E,
+    JNGE_REL16 = 0x8C,
+    JNL_REL16 = 0x8D,
+    JNLE_REL16 = 0x8F,
+    JNO_REL16 = 0x81,
+    JNP_REL16 = 0x8B,
+    JNS_REL16 = 0x89,
+    JNZ_REL16 = 0x85,
+    JO_REL16 = 0x80,
+    JP_REL16 = 0x8A,
+    JPE_REL16 = 0x8A,
+    JPO_REL16 = 0x8A,
+    JS_REL16 = 0x88,
+
+    LSS_RM16 = 0xB2,
+    LFS_RM16 = 0xB4,
+    LGS_RM16 = 0xB5,
+    LSL_RM16 = 0x03,
+    LTR_RM16 = 0x00,
+} JUMP_REL16_SUBTYPE;
+
+typedef enum {
+    AAM = 0x0A,
+} D4_PREFIX_SUBTYPE;
+
+typedef enum {
+    AAD = 0x0A,
+
+} D5_PREFIX_SUBTYPE;
 
 /* General-purpose registers */
-enum GPR {
+typedef enum {
     ADD_AX = 0xC0,
     ADD_BX = 0xC3,
     ADD_CX = 0xC1,
@@ -147,7 +289,7 @@ enum GPR {
     SUB_BP = 0xED,
     SUB_SI = 0xEE,
     SUB_DI = 0xEF
-};
+} GPR;
 
 /*
  *  dump_registers()

@@ -23,14 +23,14 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
     uint8_t halt = 0;
 
     while (!halt) {
-        enum OP_CODES opcode = get_next_byte(cpu, memory);
+        OP_CODES opcode = get_next_byte(cpu, memory);
 
         uint32_t stack = get_stack_addr(cpu);
 
         switch (opcode) {
         case ADD_8:
         case ADD_16: {
-            enum GPR reg = get_next_byte(cpu, memory);
+            GPR reg = get_next_byte(cpu, memory);
             uint16_t value;
 
             switch (opcode) {
@@ -291,7 +291,7 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             break;
         }
         case MOV_SR: {
-            enum GPR reg = get_next_byte(cpu, memory);
+            GPR reg = get_next_byte(cpu, memory);
 
             switch (reg) {
             case MOV_DS_AX: {
