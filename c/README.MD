@@ -2,7 +2,7 @@
 
 | Project name | Purpose | State |
 | ------------ | ------- | ----- |
-| `garn` | Sample HTTP server implementation. | unsable |
+| `garn` | Sample HTTP server implementation. | unstable |
 | `hello-fs` | Example with filesystem-related operations. | stable |
 | `hello-world` | Example to show minimal C program crafted for use with the `r2` kernel. | stable |
 | `icmpresp` | ICMP responder. Sample ICMP Echo service to demonstrate portions of implemented networking. | stable |
@@ -15,7 +15,7 @@
 
 C runtime version 0 (crt0) is now available to modify in `libcr2/_crt0.asm`.
 
-## libcr2 
+## libcr2 (cr2)
 
 `libcr2` is a custom C library dedicated for use with the `r2` kernel. Mainly, it is built on the kernel syscalls implementation to provide basic functions like `sys_print`, etc.
 
