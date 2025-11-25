@@ -207,6 +207,33 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             halt++;
             break;
         }
+        case LOOP_REL8: {
+            uint8_t addr = get_next_byte(cpu, memory);
+
+            if (cpu->CX) {
+                jump_short(cpu, addr);
+                cpu->CX--;
+            }
+            break;
+        }
+        case LOOPE_REL8: {
+            uint8_t addr = get_next_byte(cpu, memory);
+
+            if (cpu->CX && get_flag(cpu, ZF)) {
+                jump_short(cpu, addr);
+                cpu->CX--;
+            }
+            break;
+        }
+        case LOOPNE_REL8: {
+            uint8_t addr = get_next_byte(cpu, memory);
+
+            if (cpu->CX && !get_flag(cpu, ZF)) {
+                jump_short(cpu, addr);
+                cpu->CX--;
+            }
+            break;
+        }
         case MOV_AL: {
             uint8_t al = cpu->AX & 0xff;
             uint8_t ah = cpu->AX >> 8;

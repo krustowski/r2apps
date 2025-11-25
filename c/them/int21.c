@@ -3,6 +3,13 @@
 #include "mmu.h"
 #include "printf.h"
 
+void handle_20h(CPU_T *cpu, Memory_T *memory) {
+    dump_registers(cpu);
+
+    exit(0, 20);
+    return;
+}
+
 /*
  *  Interrupt 21h DOS service dispathcer.
  *
