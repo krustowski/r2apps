@@ -15,6 +15,7 @@ extern "C" {
 
 typedef struct {
     uint8_t bytes[1 << 20];
+    uint8_t render_lock;
     uint16_t start;
 } __attribute__((packed)) Memory_T;
 

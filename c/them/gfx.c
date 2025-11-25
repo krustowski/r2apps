@@ -4,11 +4,13 @@
 #include "syscall.h"
 
 const uint32_t TEXT_MODE_BASE = 0xB8000;
-const uint8_t TEXT_MODE_ROWS = 24;
+const uint8_t TEXT_MODE_ROWS = 25;
 const uint8_t TEXT_MODE_COLS = 80;
 
 void render_text_mode(Memory_T *mem) {
     clear_screen();
+
+    uint8_t screen[TEXT_MODE_ROWS * TEXT_MODE_COLS];
 
     for (uint8_t row = 0; row < TEXT_MODE_ROWS; row++) {
         for (uint8_t col = 0; col < TEXT_MODE_COLS; col++) {
@@ -20,11 +22,19 @@ void render_text_mode(Memory_T *mem) {
             uint8_t fg = attr & 0x0f;
             uint8_t bg = (attr >> 4) & 0x07;
 
-            uint8_t pair[2] = {ch, 0x00};
+            screen[row * TEXT_MODE_COLS + col] = ch;
 
-            printf((const uint8_t *)"%s", pair);
+            if (!ch) {
+                mem->render_lock = 1;
+                mmu_write(mem, offset, ' ');
+                mmu_write(mem, offset + 1, ' ');
+                screen[row * TEXT_MODE_COLS + col] = ' ';
+                mem->render_lock = 0;
+            }
         }
     }
+
+    printf((const uint8_t *)"%s", screen);
 
     return;
 }

@@ -240,7 +240,6 @@ typedef enum {
 
 typedef enum {
     AAD = 0x0A,
-
 } D5_PREFIX_SUBTYPE;
 
 /* General-purpose registers */
@@ -291,12 +290,30 @@ typedef enum {
     SUB_DI = 0xEF
 } GPR;
 
+typedef enum {
+    CF = 0x0001,
+    PF = 0x0004,
+    AF = 0x0010,
+    ZF = 0x0040,
+    SF = 0x0080,
+    TF = 0x0100,
+    IF = 0x0200,
+    DF = 0x0400,
+    OF = 0x0800,
+    IOPL = 0x3000,
+} FLAGS_MASK;
+
 /*
  *  dump_registers()
  *
  *  Helper function to dump "all" CPU registers.
  */
-void dump_registers(CPU_T *cpu);
+void dump_registers(CPU_T *);
+
+uint8_t get_flag(CPU_T *, FLAGS_MASK);
+uint8_t set_flag(CPU_T *, FLAGS_MASK, uint8_t);
+
+uint8_t jump_short(CPU_T *, uint8_t);
 
 #ifdef __cplusplus
 }

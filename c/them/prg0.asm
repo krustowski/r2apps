@@ -36,15 +36,19 @@ _start:
 	MOV SS, DI
 	MOV SP, 0xffe8
 
+lmao:
 	MOV AL, 0
 	MOV DL, 0
 	MOV AH, 0
 
+    CMP AL, 0
+    JE lmao
+
     MOV AX, 0xB800
     MOV ES, AX
 
-    MOV word [ES:0x0000], 0x2F4F   ; 'O'
-    MOV word [ES:0x0002], 0x2F59   ; 'Y'
+    MOV word [ES:0x0ef0], 0x2F4F   ; 'O'
+    MOV word [ES:0x0ef4], 0x2F59   ; 'Y'
 
 	; Test 21h service 02
 	MOV DL, 0x58

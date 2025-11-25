@@ -112,6 +112,15 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             }
             break;
         }
+        case CMP_AL_IMM8: {
+            uint8_t al = cpu->AX & 0xff;
+            uint8_t to_cmp = get_next_byte(cpu, memory);
+
+            if (al == to_cmp) {
+                set_flag(cpu, ZF, 1);
+            }
+            break;
+        }
         case INC_AX: {
             cpu->AX++;
             break;
@@ -178,6 +187,18 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
         }
         case INT_8: {
             int_bios(cpu, memory);
+            break;
+        }
+        case JA_REL8: {
+            if (!get_flag(cpu, CF) && !get_flag(cpu, ZF)) {
+                jump_short(cpu, get_next_byte(cpu, memory));
+            }
+            break;
+        }
+        case JE_REL8: {
+            if (get_flag(cpu, ZF)) {
+                jump_short(cpu, get_next_byte(cpu, memory));
+            }
             break;
         }
         case HLT: {
