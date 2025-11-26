@@ -17,7 +17,7 @@ uint8_t get_next_byte(CPU_T *cpu, Memory_T *memory) {
     return mmu_read(memory, addr);
 }
 
-uint8_t get_stack_addr(CPU_T *cpu) { return (cpu->SS << 4) + cpu->SP; }
+uint32_t get_stack_addr(CPU_T *cpu) { return (cpu->SS << 4) + cpu->SP; }
 
 void switch_opcode(CPU_T *cpu, Memory_T *memory) {
     uint8_t halt = 0;
@@ -201,10 +201,44 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             }
             break;
         }
+        case JMP_REL16: {
+            uint8_t bl = get_next_byte(cpu, memory);
+            uint8_t bh = get_next_byte(cpu, memory);
+
+            cpu->IP = bh << 8 | bl;
+            break;
+        }
         case HLT: {
             printf((const uint8_t *)"=> Program stop (halt)\n");
 
             halt++;
+            break;
+        }
+        case LEAVE: {
+            cpu->SP = cpu->BP;
+
+            printf((const uint8_t *)"=> LEAVE\n");
+
+            /* pop BP */
+            uint8_t bph = mmu_read(memory, --stack) << 8;
+            uint8_t bpl = mmu_read(memory, --stack);
+
+            cpu->BP = bph | bpl;
+            cpu->SP += 4;
+            break;
+        }
+        case LODS_M8: {
+            uint8_t al = mmu_read(memory, (cpu->DS << 4) + cpu->SI);
+            uint8_t ah = cpu->AX >> 8;
+
+            cpu->AX = ah << 8 | al;
+            break;
+        }
+        case LODS_M16: {
+            uint8_t al = mmu_read(memory, (cpu->DS << 4) + cpu->SI);
+            uint8_t ah = mmu_read(memory, (cpu->DS << 4) + cpu->SI + 1);
+
+            cpu->AX = ah << 8 | al;
             break;
         }
         case LOOP_REL8: {
@@ -456,30 +490,90 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             }
             }
         }
+        case PREFIX_80: {
+            PREFIX_80_SUBTYPE sub = get_next_byte(cpu, memory);
+
+            switch (sub) {
+            case CMP_BL: {
+                uint8_t to_cmp = get_next_byte(cpu, memory);
+                uint8_t bl = cpu->BX & 0xff;
+
+                if (bl == to_cmp) {
+                    set_flag(cpu, ZF, 1);
+                }
+                break;
+            }
+            }
+
+            break;
+        }
         case PUSH_AX: {
-            mmu_write(memory, --stack, cpu->AX >> 8);
-            mmu_write(memory, --stack, cpu->AX & 0xff);
-            cpu->SP -= 4;
+            push_reg(cpu, memory, AX);
             break;
         }
         case PUSH_BX: {
-            mmu_write(memory, --stack, cpu->BX >> 8);
-            mmu_write(memory, --stack, cpu->BX & 0xff);
-            cpu->SP -= 4;
+            push_reg(cpu, memory, BX);
+            break;
+        }
+        case PUSH_CX: {
+            push_reg(cpu, memory, CX);
+            break;
+        }
+        case PUSH_DX: {
+            push_reg(cpu, memory, DX);
+            break;
+        }
+        case PUSH_CS: {
+            push_reg(cpu, memory, CS);
+            break;
+        }
+        case PUSH_DS: {
+            push_reg(cpu, memory, DS);
+            break;
+        }
+        case PUSH_ES: {
+            push_reg(cpu, memory, ES);
+            break;
+        }
+        case PUSH_SS: {
+            push_reg(cpu, memory, DX);
             break;
         }
         case PUSH_SP: {
-            uint16_t sp = cpu->SP;
-
-            mmu_write(memory, --stack, sp >> 8);
-            mmu_write(memory, --stack, sp & 0xff);
-            cpu->SP -= 4;
+            push_reg(cpu, memory, SP);
+            break;
+        }
+        case PUSH_BP: {
+            push_reg(cpu, memory, BP);
+            break;
+        }
+        case PUSH_SI: {
+            push_reg(cpu, memory, SI);
+            break;
+        }
+        case PUSH_DI: {
+            push_reg(cpu, memory, DI);
+            break;
+        }
+        case PUSHF: {
+            push_reg(cpu, memory, FLAGS);
+            break;
+        }
+        case PUSHA: {
+            push_reg(cpu, memory, AX);
+            push_reg(cpu, memory, CX);
+            push_reg(cpu, memory, DX);
+            push_reg(cpu, memory, BX);
+            push_reg(cpu, memory, SP);
+            push_reg(cpu, memory, BP);
+            push_reg(cpu, memory, SI);
+            push_reg(cpu, memory, DI);
             break;
         }
         default: {
-            uint32_t addr = (cpu->CS << 4) + cpu->IP - 1;
+            /*uint32_t addr = (cpu->CS << 4) + cpu->IP - 1;
 
-            /*printf((const uint8_t *)"=> Unknown opcode: %x\n=< Address: 0x%x\n", opcode, addr);*/
+            printf((const uint8_t *)"=> Unknown opcode: %x\n=> Address: 0x%x\n\n", opcode, addr);*/
             break;
         }
         }

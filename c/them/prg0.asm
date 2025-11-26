@@ -38,8 +38,10 @@ _start:
 
 lmao:
 	MOV AL, 0
-	MOV DL, 0
+	MOV BL, 0
 	MOV AH, 0
+
+    CMP BL, 1
 
     CMP AL, 0
     JE lmao

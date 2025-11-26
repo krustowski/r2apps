@@ -81,7 +81,24 @@ void handle_10h(CPU_T *cpu, Memory_T *memory) {
     case GET_VIDEO_MODE:
     case SET_PALETTE_REGISTERS:
     case CHAR_GENERATOR:
-    case ALTERNATE_SELECT_FUNC:
+    case VIDEO_SUBSYSTEM_CONFIGURATION: {
+        /*
+         *  AH = 12
+         *
+         */
+        uint8_t bh = cpu->BX >> 8;
+        uint8_t bl = cpu->BX & 0xff;
+
+        switch (bl) {
+        case 0x10: {
+            cpu->BX = 0x0000;
+
+            break;
+        }
+        }
+
+        break;
+    }
     case WRITE_STRING:
     case GET_SET_DISPLAY_COMBINATION_CODE:
     case GET_FUNC_INFO:
@@ -124,8 +141,6 @@ void handle_1Dh(CPU_T *cpu, Memory_T *memory) {}
 void handle_1Eh(CPU_T *cpu, Memory_T *memory) {}
 
 void handle_1Fh(CPU_T *cpu, Memory_T *memory) {}
-
-void handle_20h(CPU_T *cpu, Memory_T *memory) {}
 
 void handle_41h(CPU_T *cpu, Memory_T *memory) {}
 

@@ -7,6 +7,7 @@
  *  krusty@vxn.dev / Nov 4, 2025
  */
 
+#include "mmu.h"
 #include "types.h"
 
 #ifdef __cplusplus
@@ -172,6 +173,8 @@ typedef enum {
     POP_ES = 0x07,
     POP_SS = 0x17,
 
+    PREFIX_80 = 0x80,
+
     PUSH_RM16 = 0xFF,
     PUSH_R16 = 0x50,
     PUSH_IMM8 = 0x6A,
@@ -236,11 +239,15 @@ typedef enum {
 
 typedef enum {
     AAM = 0x0A,
-} D4_PREFIX_SUBTYPE;
+} PREFIX_D4_SUBTYPE;
 
 typedef enum {
     AAD = 0x0A,
-} D5_PREFIX_SUBTYPE;
+} PREFIX_D5_SUBTYPE;
+
+typedef enum {
+    CMP_BL = 0xfb,
+} PREFIX_80_SUBTYPE;
 
 /* General-purpose registers */
 typedef enum {
@@ -290,6 +297,8 @@ typedef enum {
     SUB_DI = 0xEF
 } GPR;
 
+typedef enum { AX, BX, CX, DX, CS, DS, ES, SS, SP, BP, SI, DI, IP, FLAGS } REGISTER_T;
+
 typedef enum {
     CF = 0x0001,
     PF = 0x0004,
@@ -314,6 +323,9 @@ uint8_t get_flag(CPU_T *, FLAGS_MASK);
 uint8_t set_flag(CPU_T *, FLAGS_MASK, uint8_t);
 
 uint8_t jump_short(CPU_T *, uint8_t);
+
+uint8_t pop_reg(CPU_T *, Memory_T *, REGISTER_T);
+uint8_t push_reg(CPU_T *, Memory_T *, REGISTER_T);
 
 #ifdef __cplusplus
 }
