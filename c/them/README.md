@@ -7,7 +7,7 @@ A 16-bit CPU emulator to be (MS-)DOS-friendly eventually.
 ![them-baby-steps](img/them-baby-steps.png)
 
 *^ Emulator's baby steps: Simple 16-bit x86 assembly program execution ---
---- emulated as a whole.*
+emulated as a whole.*
 
 ## Usage
 
@@ -25,10 +25,10 @@ can be added to the app collection on some floppy medium/image then.
 
 Sample program `PRG0` demonstrates the functionality of some opcodes
 and instructions implementations already done. It is very easy
-ti assemble using NASM:
+to assemble using NASM:
 
 ```shell
-nasm -o prog.bin prg0.asm 
+nasm -f bin -o prg0.bin prg0.asm 
 ```
 
 Then put those two files onto a floppy using the `mtools` for example.
