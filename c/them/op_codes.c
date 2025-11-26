@@ -490,6 +490,63 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             }
             }
         }
+        case POP_AX: {
+            pop_reg(cpu, memory, AX);
+            break;
+        }
+        case POP_BX: {
+            pop_reg(cpu, memory, BX);
+            break;
+        }
+        case POP_CX: {
+            pop_reg(cpu, memory, CX);
+            break;
+        }
+        case POP_DX: {
+            pop_reg(cpu, memory, DX);
+            break;
+        }
+        case POP_SP: {
+            pop_reg(cpu, memory, SP);
+            break;
+        }
+        case POP_BP: {
+            pop_reg(cpu, memory, BP);
+            break;
+        }
+        case POP_SI: {
+            pop_reg(cpu, memory, SI);
+            break;
+        }
+        case POP_DI: {
+            pop_reg(cpu, memory, DI);
+            break;
+        }
+        case POP_DS: {
+            pop_reg(cpu, memory, DS);
+            break;
+        }
+        case POP_ES: {
+            pop_reg(cpu, memory, ES);
+            break;
+        }
+        case POP_SS: {
+            pop_reg(cpu, memory, SS);
+            break;
+        }
+        case POPA: {
+            pop_reg(cpu, memory, DI);
+            pop_reg(cpu, memory, SI);
+            pop_reg(cpu, memory, BP);
+            /* Skip next 2 bytes of stack: preserve SP; https://shell-storm.org/x86doc/POPA_POPAD.html */
+            cpu->SP += 2;
+
+            pop_reg(cpu, memory, BX);
+            pop_reg(cpu, memory, DX);
+            pop_reg(cpu, memory, CX);
+            pop_reg(cpu, memory, AX);
+            break;
+        }
         case PREFIX_80: {
             PREFIX_80_SUBTYPE sub = get_next_byte(cpu, memory);
 

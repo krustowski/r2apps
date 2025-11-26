@@ -125,8 +125,6 @@ typedef enum {
     JS_REL8 = 0x78,
     JZ_REL8 = 0x74,
 
-    JUMP_REL16 = 0x0F,
-
     LDS_RM16 = 0xC5,
     LES_RM16 = 0xC4,
     LEA_RM16 = 0x8D,
@@ -173,7 +171,18 @@ typedef enum {
     POP_ES = 0x07,
     POP_SS = 0x17,
 
+    POP_AX = 0x58,
+    POP_BX = 0x5B,
+    POP_CX = 0x59,
+    POP_DX = 0x5A,
+    POP_SP = 0x5C,
+    POP_BP = 0x5D,
+    POP_SI = 0x5E,
+    POP_DI = 0x5F,
+
+    PREFIX_0F = 0x0F,
     PREFIX_80 = 0x80,
+    PREFIX_8F = 0x8F,
 
     PUSH_RM16 = 0xFF,
     PUSH_R16 = 0x50,
@@ -181,9 +190,9 @@ typedef enum {
     PUSH_IMM16 = 0x68,
 
     PUSH_CS = 0x0E,
-    PUSH_SS = 0x16,
     PUSH_DS = 0x1E,
     PUSH_ES = 0x06,
+    PUSH_SS = 0x16,
 
     PUSH_AX = 0x50,
     PUSH_BX = 0x53,
@@ -235,7 +244,10 @@ typedef enum {
     LGS_RM16 = 0xB5,
     LSL_RM16 = 0x03,
     LTR_RM16 = 0x00,
-} JUMP_REL16_SUBTYPE;
+
+    POP_FS = 0xA1,
+    POP_GS = 0xA9,
+} PREFIX_0F_SUBTYPE;
 
 typedef enum {
     AAM = 0x0A,
