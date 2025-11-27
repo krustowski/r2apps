@@ -8,7 +8,7 @@ LIBCR2		?= ../libcr2
 
 CRT0_ASM	?= ${LIBCR2}/_crt0.asm
 
-SOURCE_FILES	?= *.c
+SOURCE_FILES	?= ../*.c
 
 export
 
@@ -19,7 +19,7 @@ build_crt0:
 	@nasm -f elf64 ${CRT0_ASM} -o ${CRT0_OBJ}
 
 compile:
-	@gcc \
+	@cd ${BUILD_DIR} && gcc \
 		-c \
 		-m64 \
 		-static \
@@ -27,8 +27,8 @@ compile:
 		-nostdinc \
 		-mno-red-zone \
 		-ffreestanding \
-		-I . \
-		-I ../libcr2/ \
+		-I .. \
+		-I ../../libcr2/ \
 		${SOURCE_FILES}
 
 link:
@@ -36,7 +36,7 @@ link:
 		-nostdinc \
 		-nostdlib \
 		-nostartfiles \
-		${CRT0_OBJ} ./*.o \
+		${BUILD_DIR}/*.o \
 		-L .. \
 		-lcr2 \
 		-static \
