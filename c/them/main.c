@@ -11,15 +11,16 @@
  */
 
 int main(void) {
-    print((const uint8_t *)"\ntheM: the 16bit CPU emulator\n");
+    print((const uint8_t *)"\ntheM: the 16bit CPU eMulator\n");
 
     CPU_T cpu;
     Memory_T ram;
 
-    /* Reset CPU's program instruction counter */
     cpu.CS = 0x1000;
     cpu.DS = 0x1000;
-    cpu.IP = 0x0000;
+    cpu.SS = 0x0000;
+    cpu.SP = 0xffff;
+    cpu.IP = 0x0100;
 
     ram.start = 0x0000;
 

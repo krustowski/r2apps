@@ -1,9 +1,12 @@
-[BITS 16]
+BITS 16
 
-section .data
+ORG 0x100
+
+SECTION .data
 msg 	db	"TEST LMAO$", 0
 
-section .text
+SECTION .text
+
 _start:
 	MOV DX, 0x0098
 	MOV DX, 0x1098
@@ -36,16 +39,20 @@ _start:
 	MOV SS, DI
 	MOV SP, 0xffe8
 
+	MOV BL, 0
+
 lmao:
 	MOV AL, 0
-	MOV BL, 0
 	MOV AH, 0
 
     CMP BL, 1
+    JE kek
+    INC BL
 
     CMP AL, 0
     JE lmao
 
+kek:
     MOV AX, 0xB800
     MOV ES, AX
 
@@ -61,5 +68,12 @@ lmao:
 	MOV DX, msg
 	MOV AH, 0x09
 	INT 0x21
+
+    PUSHA
+    POPA
+
+    BOUND DI, DS:0xdfe2
+    BOUND SI, DS:0xdfe2
+    BOUND SI, ES:0xdfe2
 
 	HLT

@@ -14,6 +14,8 @@
 uint8_t get_next_byte(CPU_T *cpu, Memory_T *memory) {
     uint32_t addr = (cpu->CS << 4) + cpu->IP++;
 
+    /*printf((const uint8_t *)"=> Address: 0x%x\n", addr);*/
+
     return mmu_read(memory, addr);
 }
 
@@ -33,15 +35,10 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             GPR reg = get_next_byte(cpu, memory);
             uint16_t value;
 
-            switch (opcode) {
-            case ADD_8: {
+            if (opcode == ADD_8) {
                 value = (uint16_t)get_next_byte(cpu, memory);
-                break;
-            }
-            case ADD_16: {
+            } else {
                 value = get_next_byte(cpu, memory) | get_next_byte(cpu, memory) << 8;
-                break;
-            }
             }
 
             switch (reg) {
@@ -110,6 +107,72 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
                 break;
             }
             }
+            break;
+        }
+        case BOUND_R16: {
+            uint8_t dst = get_next_byte(cpu, memory);
+            uint8_t bl = get_next_byte(cpu, memory);
+            uint8_t bh = get_next_byte(cpu, memory);
+            uint16_t offset = bh << 8 | bl;
+
+            int16_t idx = 0;
+
+            switch (dst) {
+            case 0x36: {
+                /* SI, DS:addr */
+                idx = (int16_t)cpu->SI;
+                break;
+            }
+            case 0x3E: {
+                /* DI, DS:addr */
+                idx = (int16_t)cpu->DI;
+                break;
+            }
+            }
+
+            uint8_t lower_bound_l = mmu_read(memory, (cpu->DS << 4) + offset);
+            uint8_t lower_bound_h = mmu_read(memory, (cpu->DS << 4) + offset + 1);
+            uint8_t upper_bound_l = mmu_read(memory, (cpu->DS << 4) + offset + 2);
+            uint8_t upper_bound_h = mmu_read(memory, (cpu->DS << 4) + offset + 3);
+
+            int16_t lower_bound = (int16_t)(lower_bound_h << 8 | lower_bound_l);
+            int16_t upper_bound = (int16_t)(upper_bound_h << 8 | upper_bound_l);
+
+            if (lower_bound > (1 << 15) - 1) {
+                lower_bound -= (1 << 15) + 1;
+            }
+
+            if (upper_bound > (1 << 15) - 1) {
+                upper_bound -= (1 << 15) + 1;
+            }
+
+            if (idx > (1 << 15) - 1) {
+                idx -= (1 << 15) + 1;
+            }
+
+            if (idx < lower_bound || idx > upper_bound + 16) {
+                /* Bound range exceeded exception */
+                printf((const uint8_t *)"=> #BR: BOUND: lower: 0x%x, idx: 0x%x, upper: 0x%x\n", lower_bound, idx, upper_bound);
+
+                dump_registers(cpu);
+                exit(0, 255);
+            }
+
+            break;
+        }
+        case CALL_REL16: {
+            uint8_t bl = get_next_byte(cpu, memory);
+            uint8_t bh = get_next_byte(cpu, memory);
+
+            uint8_t ripl = cpu->IP & 0xff;
+            uint8_t riph = cpu->IP >> 8;
+
+            /* Push the return address to the stack */
+            mmu_write(memory, --stack, ripl);
+            mmu_write(memory, --stack, riph);
+            cpu->SP -= 2;
+
+            cpu->IP = bh << 8 | bl;
             break;
         }
         case CMP_AL_IMM8: {
@@ -220,10 +283,10 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             printf((const uint8_t *)"=> LEAVE\n");
 
             /* pop BP */
-            uint8_t bph = mmu_read(memory, --stack) << 8;
+            uint8_t bph = mmu_read(memory, --stack);
             uint8_t bpl = mmu_read(memory, --stack);
 
-            cpu->BP = bph | bpl;
+            cpu->BP = bph << 8 | bpl;
             cpu->SP += 4;
             break;
         }
@@ -245,8 +308,8 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             uint8_t addr = get_next_byte(cpu, memory);
 
             if (cpu->CX) {
-                jump_short(cpu, addr);
                 cpu->CX--;
+                cpu->IP += ((int8_t)addr - 128);
             }
             break;
         }
@@ -254,8 +317,8 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             uint8_t addr = get_next_byte(cpu, memory);
 
             if (cpu->CX && get_flag(cpu, ZF)) {
-                jump_short(cpu, addr);
                 cpu->CX--;
+                cpu->IP += ((int8_t)addr - 128);
             }
             break;
         }
@@ -263,8 +326,8 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             uint8_t addr = get_next_byte(cpu, memory);
 
             if (cpu->CX && !get_flag(cpu, ZF)) {
-                jump_short(cpu, addr);
                 cpu->CX--;
+                cpu->IP += ((int8_t)addr - 128);
             }
             break;
         }
@@ -564,6 +627,23 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
 
             break;
         }
+        case PREFIX_FE: {
+            PREFIX_FE_SUBTYPE sub = get_next_byte(cpu, memory);
+
+            switch (sub) {
+            case INC_BL: {
+                uint8_t bh = cpu->BX >> 8;
+                uint8_t bl = cpu->BX & 0xff;
+
+                bl++;
+
+                cpu->BX = bh << 8 | bl;
+                break;
+            }
+            }
+
+            break;
+        }
         case PUSH_AX: {
             push_reg(cpu, memory, AX);
             break;
@@ -625,6 +705,21 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             push_reg(cpu, memory, BP);
             push_reg(cpu, memory, SI);
             push_reg(cpu, memory, DI);
+            break;
+        }
+        case RET_IMM16_NEAR: {
+            uint8_t bl = get_next_byte(cpu, memory);
+            uint8_t bh = get_next_byte(cpu, memory);
+
+            /* Pop the return IP from top of the stack */
+            uint8_t riph = mmu_read(memory, stack++);
+            uint8_t ripl = mmu_read(memory, stack++);
+            cpu->SP += 2;
+
+            cpu->IP = riph << 8 | ripl;
+
+            /* Pop imm16 bytes from stack */
+            cpu->SP += bh << 8 | bl;
             break;
         }
         default: {
