@@ -53,3 +53,5 @@ clean:
 dump:
 	@objdump -b binary -Mintel,i8086 -m i386 -D prg0.bin
 
+prg0:
+	@nasm -t -f bin -o prg0.bin prg0.asm
