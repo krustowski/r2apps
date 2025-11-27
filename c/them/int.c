@@ -6,7 +6,7 @@
 void int_bios(CPU_T *cpu, Memory_T *memory) {
     INT_BIOS int_code = mmu_read(memory, (cpu->CS << 4) + cpu->IP++);
 
-    printf((const uint8_t *)"=> Interrupt 0x%x\n", int_code);
+    /*printf((const uint8_t *)"=> Interrupt 0x%x\n", int_code);*/
 
     switch (int_code) {
     case BOUND_FAIL: {

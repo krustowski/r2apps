@@ -1,5 +1,6 @@
 #include "int.h"
 #include "printf.h"
+#include "syscall.h"
 
 /*
  *  bios.c
@@ -57,6 +58,8 @@ void handle_09h(CPU_T *cpu, Memory_T *memory) {
 void handle_10h(CPU_T *cpu, Memory_T *memory) {
     SRV_10H service = cpu->AX >> 8;
 
+    /*printf((const uint8_t *)"=> Service 0x%x\n", service);*/
+
     switch (service) {
     case SET_VIDEO_MODE: {
         break;
@@ -73,7 +76,21 @@ void handle_10h(CPU_T *cpu, Memory_T *memory) {
     case CLEAR_SCROLL_SCREEN_DOWN:
     case READ_CHAR_WITH_ATTR_AT_CURSOR:
     case WRITE_CHAR_WITH_ATTR_AT_CURSOR:
-    case WRITE_CHAR_AT_CURSOR:
+    case WRITE_CHAR_AT_CURSOR: {
+        uint8_t ch = cpu->AX & 0xff;
+        uint8_t bg = cpu->BX >> 8;
+        uint8_t fg = cpu->BX & 0xff;
+        uint16_t count = cpu->CX;
+
+        if (!count) {
+            break;
+        }
+
+        write_pixel((200) << 16 | 100, cpu->BX);
+        cpu->CX--;
+
+        break;
+    }
     case SET_BORDER_COLOR:
     case WRITE_GRAPHICS_PIXEL:
     case READ_GRAPHICS_PIXEL:
@@ -91,7 +108,7 @@ void handle_10h(CPU_T *cpu, Memory_T *memory) {
 
         switch (bl) {
         case 0x10: {
-            cpu->BX = 0x0000;
+            cpu->BX = 0x0100;
 
             break;
         }

@@ -25,9 +25,15 @@ uint8_t set_flag(CPU_T *cpu, FLAGS_MASK flag, uint8_t value) {
 }
 
 uint8_t jump_short(CPU_T *cpu, uint8_t addr) {
-    cpu->IP = 0;
-    cpu->IP = (uint16_t)addr;
+    if (addr > (1 << 7) - 1) {
+        addr -= (1 << 7);
+        addr++;
 
+        cpu->IP -= addr;
+        return 0;
+    }
+
+    cpu->IP += addr;
     return 0;
 }
 
@@ -184,8 +190,8 @@ uint8_t push_reg(CPU_T *cpu, Memory_T *memory, REGISTER_T reg) {
     }
     }
 
-    mmu_write(memory, --stack_addr, hb);
     mmu_write(memory, --stack_addr, lb);
+    mmu_write(memory, --stack_addr, hb);
     cpu->SP -= 2;
 
     return 0;

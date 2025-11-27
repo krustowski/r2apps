@@ -50,14 +50,13 @@ typedef enum {
     ADC_AL_IMM8 = 0x14,
     ADC_AX_IMM16 = 0x15,
 
-    /*D4_PREFIX = 0xD4,
-    D5_PREFIX = 0xD5,*/
-
     ADD_16 = 0x81, /* SUB_16 */
     ADD_8 = 0x83,  /* SUB_8 */
 
     AND_AL_IMM8 = 0x24,
     AND_AX_IMM16 = 0x25,
+
+    BOUND_R16 = 0x62,
 
     CALL_REL16 = 0xE8,
     CALL_PTR16 = 0x9A,
@@ -183,6 +182,9 @@ typedef enum {
     PREFIX_0F = 0x0F,
     PREFIX_80 = 0x80,
     PREFIX_8F = 0x8F,
+    PREFIX_D4 = 0xD4,
+    PREFIX_D5 = 0xD5,
+    PREFIX_FE = 0xFE,
 
     PUSH_RM16 = 0xFF,
     PUSH_R16 = 0x50,
@@ -202,6 +204,9 @@ typedef enum {
     PUSH_BP = 0x55,
     PUSH_SI = 0x56,
     PUSH_DI = 0x57,
+
+    RET_IMM16_NEAR = 0xC2,
+    RET_IMM16_FAR = 0xCA,
 
     XOR_AL_IMM8 = 0x34,
     XOR_AX_IMM16 = 0x35,
@@ -258,8 +263,12 @@ typedef enum {
 } PREFIX_D5_SUBTYPE;
 
 typedef enum {
-    CMP_BL = 0xfb,
+    CMP_BL = 0xFB,
 } PREFIX_80_SUBTYPE;
+
+typedef enum {
+    INC_BL = 0xC3,
+} PREFIX_FE_SUBTYPE;
 
 /* General-purpose registers */
 typedef enum {
