@@ -108,7 +108,7 @@ void handle_10h(CPU_T *cpu, Memory_T *memory) {
 
         switch (bl) {
         case 0x10: {
-            cpu->BX = 0x0100;
+            cpu->BX = 0x0003;
 
             break;
         }

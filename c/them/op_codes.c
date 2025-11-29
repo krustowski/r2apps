@@ -15,6 +15,7 @@ uint8_t get_next_byte(CPU_T *cpu, Memory_T *memory) {
     uint32_t addr = (cpu->CS << 4) + cpu->IP++;
 
     /*printf((const uint8_t *)"=> Address: 0x%x\n", addr);*/
+    /*dump_registers(cpu);*/
 
     return mmu_read(memory, addr);
 }
@@ -172,7 +173,7 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             mmu_write(memory, --stack, riph);
             cpu->SP -= 2;
 
-            cpu->IP = bh << 8 | bl;
+            cpu->IP += (bh << 8 | bl);
             break;
         }
         case CMP_AL_IMM8: {
@@ -258,6 +259,12 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             }
             break;
         }
+        case JBE_REL8: {
+            if (get_flag(cpu, CF) && get_flag(cpu, ZF)) {
+                jump_short(cpu, get_next_byte(cpu, memory));
+            }
+            break;
+        }
         case JE_REL8: {
             if (get_flag(cpu, ZF)) {
                 jump_short(cpu, get_next_byte(cpu, memory));
@@ -282,7 +289,7 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
 
             printf((const uint8_t *)"=> LEAVE\n");
 
-            /* pop BP */
+            /* Pop BP */
             uint8_t bph = mmu_read(memory, --stack);
             uint8_t bpl = mmu_read(memory, --stack);
 
@@ -309,7 +316,7 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
 
             if (cpu->CX) {
                 cpu->CX--;
-                cpu->IP += ((int8_t)addr - 128);
+                jump_short(cpu, addr);
             }
             break;
         }
@@ -318,7 +325,7 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
 
             if (cpu->CX && get_flag(cpu, ZF)) {
                 cpu->CX--;
-                cpu->IP += ((int8_t)addr - 128);
+                jump_short(cpu, addr);
             }
             break;
         }
@@ -327,7 +334,7 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
 
             if (cpu->CX && !get_flag(cpu, ZF)) {
                 cpu->CX--;
-                cpu->IP += ((int8_t)addr - 128);
+                jump_short(cpu, addr);
             }
             break;
         }
@@ -614,12 +621,27 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             PREFIX_80_SUBTYPE sub = get_next_byte(cpu, memory);
 
             switch (sub) {
+            case CMP_BH: {
+                uint8_t to_cmp = get_next_byte(cpu, memory);
+                uint8_t bh = cpu->BX >> 8;
+
+                if (bh == to_cmp) {
+                    set_flag(cpu, ZF, 1);
+                } else {
+                    set_flag(cpu, ZF, 0);
+                    set_flag(cpu, CF, 1);
+                }
+                break;
+            }
             case CMP_BL: {
                 uint8_t to_cmp = get_next_byte(cpu, memory);
                 uint8_t bl = cpu->BX & 0xff;
 
                 if (bl == to_cmp) {
                     set_flag(cpu, ZF, 1);
+                } else {
+                    set_flag(cpu, ZF, 0);
+                    set_flag(cpu, CF, 1);
                 }
                 break;
             }
@@ -720,6 +742,15 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
 
             /* Pop imm16 bytes from stack */
             cpu->SP += bh << 8 | bl;
+            break;
+        }
+        case RET_NEAR: {
+            /* Pop the return IP from top of the stack */
+            uint8_t riph = mmu_read(memory, stack++);
+            uint8_t ripl = mmu_read(memory, stack++);
+            cpu->SP += 2;
+
+            cpu->IP = riph << 8 | ripl;
             break;
         }
         default: {

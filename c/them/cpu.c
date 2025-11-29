@@ -27,9 +27,9 @@ uint8_t set_flag(CPU_T *cpu, FLAGS_MASK flag, uint8_t value) {
 uint8_t jump_short(CPU_T *cpu, uint8_t addr) {
     if (addr > (1 << 7) - 1) {
         addr -= (1 << 7);
-        addr++;
 
-        cpu->IP -= addr;
+        cpu->IP -= (1 << 7);
+        cpu->IP += addr;
         return 0;
     }
 

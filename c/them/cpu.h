@@ -206,6 +206,7 @@ typedef enum {
     PUSH_DI = 0x57,
 
     RET_IMM16_NEAR = 0xC2,
+    RET_NEAR = 0xC3,
     RET_IMM16_FAR = 0xCA,
 
     XOR_AL_IMM8 = 0x34,
@@ -263,6 +264,7 @@ typedef enum {
 } PREFIX_D5_SUBTYPE;
 
 typedef enum {
+    CMP_BH = 0xFF,
     CMP_BL = 0xFB,
 } PREFIX_80_SUBTYPE;
 
