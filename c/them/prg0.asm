@@ -59,10 +59,7 @@ kek:
     MOV word [ES:0x0ef0], 0x2F4F   ; 'O'
     MOV word [ES:0x0ef4], 0x2F59   ; 'Y'
 
-	; Test 21h service 02
-	MOV DL, 0x58
-	MOV AH, 0x02
-	INT 0x21
+    CALL wow
 
 	; Test 21h service 09
 	MOV DX, msg
@@ -74,6 +71,14 @@ kek:
 
     BOUND DI, DS:0xdfe2
     BOUND SI, DS:0xdfe2
-    BOUND SI, ES:0xdfe2
+    ;BOUND SI, ES:0xdfe2
 
 	HLT
+
+wow:
+	; Test 21h service 02 ('X')
+	MOV DL, 0x58
+	MOV AH, 0x02
+	INT 0x21
+
+    RET
