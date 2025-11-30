@@ -140,15 +140,15 @@ void switch_opcode(CPU_T *cpu, Memory_T *memory) {
             int16_t upper_bound = (int16_t)(upper_bound_h << 8 | upper_bound_l);
 
             if (lower_bound > (1 << 15) - 1) {
-                lower_bound -= (1 << 15) + 1;
+                lower_bound -= (1 << 16) + 1;
             }
 
             if (upper_bound > (1 << 15) - 1) {
-                upper_bound -= (1 << 15) + 1;
+                upper_bound -= (1 << 16) + 1;
             }
 
             if (idx > (1 << 15) - 1) {
-                idx -= (1 << 15) + 1;
+                idx -= (1 << 16) + 1;
             }
 
             if (idx < lower_bound || idx > upper_bound + 16) {
