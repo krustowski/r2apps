@@ -1,4 +1,5 @@
 #include "int.h"
+#include "sound.h"
 #include "syscall.h"
 
 /*
@@ -12,6 +13,7 @@
 
 int main(void) {
     print((const uint8_t *)"\ntheM: the 16bit CPU eMulator\n");
+    play_melody();
 
     CPU_T cpu;
     Memory_T ram;
