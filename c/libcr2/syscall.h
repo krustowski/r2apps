@@ -75,7 +75,7 @@ typedef struct {
  *  This enum suits as a helper for a syscall caller not to use hardcoded integers (as those may
  *  change in the future --- a syscall is reassigned to the different value).
  */
-enum SyscallNumber : int64_t {
+typedef enum SyscallNumber : int64_t {
     ScExit = 0x00,
     // System + Memory Management
     ScSysInfo = 0x01,
@@ -105,7 +105,7 @@ enum SyscallNumber : int64_t {
     ScSerialPort = 0x32,
     ScNewPacket = 0x33,
     ScSendPacket = 0x34
-};
+} SyscallNo_T;
 
 /*
  *  int64_t syscall() prototype
@@ -115,7 +115,7 @@ enum SyscallNumber : int64_t {
  *  The implemented function prototype is to wrap a raw interrupt settings provided via
  *  inline x86 assembly.
  */
-int64_t syscall(int64_t number, int64_t arg1, int64_t arg2, int64_t arg3);
+int64_t syscall(SyscallNo_T number, int64_t arg1, int64_t arg2, int64_t arg3);
 
 /*
  *  void exit() prototype

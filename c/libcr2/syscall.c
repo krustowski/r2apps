@@ -1,6 +1,6 @@
 #include "syscall.h"
 
-int64_t syscall(int64_t number, int64_t arg1, int64_t arg2, int64_t arg3) {
+int64_t syscall(SyscallNo_T number, int64_t arg1, int64_t arg2, int64_t arg3) {
     int64_t ret;
     asm volatile("int $0x7f"
                  : "=a"(ret)
