@@ -17,42 +17,42 @@ extern "C" {
 #include "types.h"
 
 /* Software CPU interrupt number to access the ABI.  */
-#define ABI_INTERRUPT 	0x7f
+#define ABI_INTERRUPT 0x7f
 
 /*
  *  type SysInfo_T structure
  *
- *  This structure is used when invoking the syscall with ScSysinfo and value of `0x01` in the 
+ *  This structure is used when invoking the syscall with ScSysinfo and value of `0x01` in the
  *  first argument, whereas the second argument is for a pointer to SysInfo_T instance.
  */
 typedef struct {
-	uint8_t system_name[32];
-	uint8_t system_user[32];
-	uint8_t system_path[32];
-	uint8_t system_version[8];
-	uint32_t  system_uptime;
+    uint8_t system_name[32];
+    uint8_t system_user[32];
+    uint8_t system_path[32];
+    uint8_t system_version[8];
+    uint32_t system_uptime;
 } __attribute__((packed)) SysInfo_T;
 
 /*
  *  type Entry_T structure
  *
- *  This structure is to contain all attributes and info about a directory entry. Related 
+ *  This structure is to contain all attributes and info about a directory entry. Related
  *  syscalls can be found in the Filesystem section of the ABI specification doc: 0x20--0x2f
  */
 typedef struct {
-	uint8_t name[8];
-	uint8_t ext[3];
-	uint8_t attr;
-	uint8_t reserved;
-	uint8_t tenths;
-	uint16_t create_time;
-	uint16_t create_date;
-	uint16_t last_access_time;
-	uint16_t high_cluster;
-	uint16_t write_time;
-	uint16_t write_date;
-	uint16_t start_cluster;
-	uint32_t file_size;
+    uint8_t name[8];
+    uint8_t ext[3];
+    uint8_t attr;
+    uint8_t reserved;
+    uint8_t tenths;
+    uint16_t create_time;
+    uint16_t create_date;
+    uint16_t last_access_time;
+    uint16_t high_cluster;
+    uint16_t write_time;
+    uint16_t write_date;
+    uint16_t start_cluster;
+    uint32_t file_size;
 } __attribute__((packed)) Entry_T;
 
 /*
@@ -61,12 +61,12 @@ typedef struct {
  *  This structure is to hold all important fields needed to read time from the RTC hardware chip.
  */
 typedef struct {
-	uint8_t seconds;
-	uint8_t minutes;
-	uint8_t hours;
-	uint8_t day;
-	uint8_t month;
-	uint16_t year;
+    uint8_t seconds;
+    uint8_t minutes;
+    uint8_t hours;
+    uint8_t day;
+    uint8_t month;
+    uint16_t year;
 } __attribute__((packed)) RTC_T;
 
 /*
@@ -75,35 +75,36 @@ typedef struct {
  *  This enum suits as a helper for a syscall caller not to use hardcoded integers (as those may
  *  change in the future --- a syscall is reassigned to the different value).
  */
-enum SyscallNumber: int64_t {
-	ScExit			= 0x00,
-	// System + Memory Management
-	ScSysInfo		= 0x01,
-	ScRTC			= 0x02,
-	ScPipeSubscribe		= 0x03,
-	ScMalloc 		= 0x0a,
-	ScRealloc 		= 0x0b,
-	ScFree 			= 0x0f,
-	// Video + Audio Operations
-	ScPrintString 		= 0x10,
-	ScClearScreen		= 0x11,
-	ScPlayFreq 		= 0x1a,
-	ScPlayFile 		= 0x1b,
-	ScPlayStop 		= 0x1f,
-	// Filesystem IO Operations
-	ScReadFile 		= 0x20,
-	ScWriteFile 		= 0x21,
-	ScRenameFile 		= 0x22,
-	ScDeleteFile 		= 0x23,
-	ScWriteSubdir 		= 0x27,
-	ScListDir 		= 0x28,
-	ScRunELF 		= 0x2a,
-	// Port IO + Networking Operations
-	ScWritePort 		= 0x30,
-	ScReadPort 		= 0x31,
-	ScSerialPort		= 0x32,
-	ScNewPacket 		= 0x33,
-	ScSendPacket		= 0x34
+enum SyscallNumber : int64_t {
+    ScExit = 0x00,
+    // System + Memory Management
+    ScSysInfo = 0x01,
+    ScRTC = 0x02,
+    ScPipeSubscribe = 0x03,
+    ScMalloc = 0x0a,
+    ScRealloc = 0x0b,
+    ScFree = 0x0f,
+    // Video + Audio Operations
+    ScPrintString = 0x10,
+    ScClearScreen = 0x11,
+    ScWritePixel = 0x12,
+    ScPlayFreq = 0x1a,
+    ScPlayFile = 0x1b,
+    ScPlayStop = 0x1f,
+    // Filesystem IO Operations
+    ScReadFile = 0x20,
+    ScWriteFile = 0x21,
+    ScRenameFile = 0x22,
+    ScDeleteFile = 0x23,
+    ScWriteSubdir = 0x27,
+    ScListDir = 0x28,
+    ScRunELF = 0x2a,
+    // Port IO + Networking Operations
+    ScWritePort = 0x30,
+    ScReadPort = 0x31,
+    ScSerialPort = 0x32,
+    ScNewPacket = 0x33,
+    ScSendPacket = 0x34
 };
 
 /*
@@ -111,7 +112,7 @@ enum SyscallNumber: int64_t {
  *
  *  Takes up to three valid arguments plus a <syscall_number> to call. All variables involved
  *  have to be 64bit (8 bytes long).
- *  The implemented function prototype is to wrap a raw interrupt settings provided via 
+ *  The implemented function prototype is to wrap a raw interrupt settings provided via
  *  inline x86 assembly.
  */
 int64_t syscall(int64_t number, int64_t arg1, int64_t arg2, int64_t arg3);
@@ -178,6 +179,13 @@ int64_t print(const uint8_t *str);
  *  Implementation of syscall 0x11.
  */
 int64_t clear_screen();
+
+/*
+ *  int64_t write_pixel() prototype
+ *
+ *  Implementation of syscall 0x12.
+ */
+int64_t write_pixel(uint32_t position, uint16_t color);
 
 /*
  *  int64_t play_freq() prototype
