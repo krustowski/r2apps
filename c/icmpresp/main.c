@@ -22,7 +22,7 @@ int main(void) {
 
     uint8_t temp_buf[2048];
     uint8_t packet_buf[2048];
-    uint8_t temp_len = 0;
+    uint32_t temp_len = 0;
     int64_t decoded_len = 0;
 
     Ipv4Header_T ipv4_header;
