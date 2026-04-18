@@ -1,4 +1,6 @@
 #include "printf.h"
+#include "syscall.h"
+#include "types.h"
 
 int main(void) {
     const uint8_t *filename = "CTEST.TXT";
@@ -15,6 +17,8 @@ int main(void) {
     print("*** Hello from C\n");
 
     printf((const uint8_t *)"Hello %s %d %x %c %%!\n", "world", 123, 0xAB, 'A');
+
+    send_data(0x03, (uint8_t *)wbuffer);
 
     /* Test System Information gathering and handling (syscall 0x01) */
     if (read_sysinfo(&sysinfo)) {

@@ -1,26 +1,55 @@
-NAME := hellofs
+NAME 		:= hellofs
 
-build:
-	@gcc \
+BUILD_DIR	?= ./build
+
+CRT0_OBJ	?= ${BUILD_DIR}/_crt0.o
+PRG_OBJ		?= ${BUILD_DIR}/${NAME}.o
+LIBCR2		?= ../libcr2
+
+CRT0_ASM	?= ${LIBCR2}/_crt0.asm
+
+SOURCE_FILES	?= ../*.c
+
+export
+
+ensure_build_dir:
+	@mkdir -p ${BUILD_DIR}
+
+build_crt0:
+	@nasm -f elf64 ${CRT0_ASM} -o ${CRT0_OBJ}
+
+compile:
+	@cd ${BUILD_DIR} && gcc \
 		-c \
+		-O \
 		-m64 \
 		-static \
-		-n \
+		-fno-pie \
+		-no-pie \
+		-nostdlib \
+		-nostdinc \
+		-mno-red-zone \
+		-ffreestanding \
+		-I .. \
+		-I ../../libcr2/ \
+		${SOURCE_FILES}
+
+link:
+	@gcc \
 		-nostdinc \
 		-nostdlib \
-		-ffreestanding \
-		-I ../libcr2 \
-		../libcr2/{printf,syscall}.c *.c
-	@nasm -f elf64 -o ../libcr2/_crt0.o ../libcr2/_crt0.asm 
-	@ld.lld \
-		--nostdlib \
-		--no-pie \
-		--static \
-		--script ./linker.ld \
+		-nostartfiles \
+		${BUILD_DIR}/*.o \
+		-L .. \
+		-lcr2 \
+		-static \
+		-Xlinker "-T../linker.ld" \
+		-Wl,-v \
 		-o ${NAME}.elf \
-		../libcr2/_crt0.o ./*.o 
-	@llvm-objcopy \
-		-O binary \
-		${NAME}.elf \
-		${NAME}.bin
+
+.PHONY: build
+build: ensure_build_dir build_crt0 compile link 
+
+clean:
+	@rm -rf ${BUILD_DIR} ./*.o
 

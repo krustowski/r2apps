@@ -1,0 +1,9 @@
+# Source - https://stackoverflow.com/a
+# Posted by Aincvy, modified by community. See post 'Timeline' for change history
+# Retrieved 2025-11-06, License - CC BY-SA 4.0
+
+CompileFlags: # Tweak the parse settings, example directory given to show format
+  Add:
+    - "-I../libcr2"
+    - "-I."
+
