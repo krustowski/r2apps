@@ -157,7 +157,7 @@ TcpSocket_T *accept(TcpSocket_T *listener, TcpSocket_T sockets[MAX_SOCKETS])
 
 uint32_t read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen)
 {
-	uint32_t n = (sock->rx_len < maxlen) ? sock->tx_len : maxlen;
+	uint32_t n = (sock->rx_len < maxlen) ? sock->rx_len : maxlen;
 
 	for (uint32_t i = 0; i < n; i++)
 	{
@@ -191,9 +191,11 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
 			continue;
 		}
 
-		uint16_t flags = tcp_header->data_offset_reserved_flags & 0x1FF;
+		/* After parse_tcp_packet's htons swap: low byte = flags, bits 15-12 = data-offset */
+		uint8_t flags = tcp_header->data_offset_reserved_flags & 0xFF;
+		uint16_t tcp_hdr_len = ((tcp_header->data_offset_reserved_flags >> 12) & 0xF) * 4;
 
-		if (s->state == SOCKET_LISTENING && flags & TCP_FLAG_SYN)
+		if (s->state == SOCKET_LISTENING && (flags & TCP_FLAG_SYN))
 		{
 			TcpSocket_T *new_conn = alloc_socket(sockets);
 
@@ -210,26 +212,31 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
 
 			new_conn->state = SOCKET_ESTABLISHED;
 
-			new_conn->seq_num = tcp_header->seq_num;
-			new_conn->ack_num = tcp_header->ack_num;
+			new_conn->seq_num = 0;
+			new_conn->ack_num = tcp_header->seq_num + 1;
 
 			send_tcp_packet(new_conn, 0, 0, TCP_FLAG_SYN | TCP_FLAG_ACK);
+			new_conn->seq_num = 1;
 			return;
 		}
 
 		if (s->state == SOCKET_ESTABLISHED && memcmp(s->remote_ip, src_ip, 4) == 0 && s->remote_port == tcp_header->source_port)
 		{
-			if (len > 0)
+			uint32_t data_len = (len > tcp_hdr_len) ? len - tcp_hdr_len : 0;
+
+			if (data_len > 0)
 			{
-				for (uint32_t j = 0; j < len && j < RX_BUFFER_SIZE; j++)
+				const uint8_t *data = payload + tcp_hdr_len;
+				for (uint32_t j = 0; j < data_len && j < RX_BUFFER_SIZE; j++)
 				{
-					s->rx_buffer[j] = payload[j];
+					s->rx_buffer[j] = data[j];
 				}
 
-				s->rx_len = len;
+				s->rx_len = data_len;
+				s->ack_num = tcp_header->seq_num + data_len;
 			}
 
-			if ((tcp_header->data_offset_reserved_flags >> 8) & TCP_FLAG_FIN)
+			if (flags & TCP_FLAG_FIN)
 			{
 				send_tcp_packet(s, 0, 0, TCP_FLAG_ACK);
 				free_socket(s);
@@ -297,11 +304,12 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8
 	// Create a reply TCP packet
 	if (!new_packet(CRAFT_TCP_PACKET, (uint8_t *) tcp_packet))
 	{
-		print("-> TCP packet creation failed\n");
+		print((const uint8_t *)"-> TCP packet creation failed\n");
 		return;
 	}
 
 	// Compose a dummy IPv4 header
+	ipv4_header.version = 0x45; // version=4, IHL=5 (20 bytes) — kernel uses this to find payload offset
 	memcpy(ipv4_header.source_addr, sock->remote_ip, 4);
 	memcpy(ipv4_header.destination_addr, sock->local_ip, 4);
 	ipv4_header.protocol = 6;
@@ -313,18 +321,20 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8
 
 	if (!new_packet(CRAFT_IPV4_PACKET, (uint8_t *) packet_buf))
 	{
-		print("-> IPv4 packet creation failed\n");
+		print((const uint8_t *)"-> IPv4 packet creation failed\n");
 		return;
 	}
 
 	if (!send_packet(0x01, (uint8_t *) packet_buf))
 	{
-		print("-> Failed to send the IPv4 packet\n");
+		print((const uint8_t *)"-> Failed to send the IPv4 packet\n");
 		return;
 	}
 
+	sock->seq_num += len;
+
 	parse_tcp_packet(tcp_packet, &tcp_header);
 
-	printf("<< TCP: (%x) src_port: %u, dest_port: %u, seq %u\n", tcp_header.data_offset_reserved_flags, tcp_header.source_port, tcp_header.dest_port, tcp_header.seq_num);
+	printf((const uint8_t *)"<< TCP: (%x) src_port: %u, dest_port: %u, seq %u\n", tcp_header.data_offset_reserved_flags, tcp_header.source_port, tcp_header.dest_port, tcp_header.seq_num);
 }
 

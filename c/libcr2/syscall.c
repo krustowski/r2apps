@@ -280,3 +280,19 @@ int64_t send_packet(uint8_t type, uint8_t *buffer) {
 
     return 1;
 }
+
+int64_t receive_data(uint8_t type, uint8_t *buffer) {
+    if (syscall(ScReceivePort, (int64_t)type, (int64_t)buffer, 0)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+int64_t send_data(uint8_t type, uint8_t *buffer) {
+    if (syscall(ScSendPort, (int64_t)type, (int64_t)buffer, 0)) {
+        return 0;
+    }
+
+    return 1;
+}

@@ -104,7 +104,9 @@ typedef enum SyscallNumber : int64_t {
     ScReadPort = 0x31,
     ScSerialPort = 0x32,
     ScNewPacket = 0x33,
-    ScSendPacket = 0x34
+    ScSendPacket = 0x34,
+    ScReceivePort = 0x35,
+    ScSendPort = 0x36
 } SyscallNo_T;
 
 /*
@@ -305,6 +307,20 @@ int64_t new_packet(uint8_t type, uint8_t *buffer);
  *  Implementation of syscall 0x34. The buffer should contain a full packet header!
  */
 int64_t send_packet(uint8_t type, uint8_t *buffer);
+
+/*
+ *  int64_t receive_data() prototype
+ *
+ *  Implementation of syscall 0x35.
+ */
+int64_t receive_data(uint8_t type, uint8_t *buffer);
+
+/*
+ *  int64_t send_data() prototype
+ *
+ *  Implementation of syscall 0x36.
+ */
+int64_t send_data(uint8_t type, uint8_t *buffer);
 
 #ifdef __cplusplus
 }
