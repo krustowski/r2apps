@@ -177,7 +177,7 @@ uint32_t write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len)
 void close(TcpSocket_T *sock)
 {
 	send_tcp_packet(sock, 0, 0, TCP_FLAG_FIN | TCP_FLAG_ACK);
-	sock->state = SOCKET_FIN_WAIT;
+	free_socket(sock);
 }
 
 void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T *tcp_header, const uint8_t *payload, uint32_t len, TcpSocket_T sockets[MAX_SOCKETS])
