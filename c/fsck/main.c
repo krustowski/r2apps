@@ -12,19 +12,12 @@
  *  krusty@vxn.dev / Apr 19, 2026
  */
 
-typedef struct {
-    uint64_t errors;
-    uint64_t orphan_clusters;
-    uint64_t cross_linked;
-    uint64_t invalid_entries;
-} FsckReport_T;
-
 int main(void) {
     FsckReport_T report;
 
     print((const uint8_t *)"fsck: checking FAT12 filesystem...\n");
 
-    syscall(0x2B, 0, (int64_t)&report, 0);
+    run_fs_check(&report);
 
     printf((const uint8_t *)"  errors:          %u\n", (uint32_t)report.errors);
     printf((const uint8_t *)"  orphan clusters: %u\n", (uint32_t)report.orphan_clusters);

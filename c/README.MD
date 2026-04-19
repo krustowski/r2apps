@@ -2,7 +2,8 @@
 
 | Project name | Purpose | State |
 | ------------ | ------- | ----- |
-| `garn` | Sample HTTP server implementation. | unstable |
+| `fsck` | FAT12 filesystem check report parser. | stable |
+| `garn` | Sample HTTP server implementation. | stable |
 | `hello-fs` | Example with filesystem-related operations. | stable |
 | `hello-world` | Example to show minimal C program crafted for use with the `r2` kernel. | stable |
 | `icmpresp` | ICMP responder. Sample ICMP Echo service to demonstrate portions of implemented networking. | stable |

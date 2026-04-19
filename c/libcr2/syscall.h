@@ -56,6 +56,18 @@ typedef struct {
 } __attribute__((packed)) Entry_T;
 
 /*
+ *  type FsckReport_T structure
+ *
+ *  This structure hold the filesystem check report variables.
+ */
+typedef struct {
+    uint64_t errors;
+    uint64_t orphan_clusters;
+    uint64_t cross_linked;
+    uint64_t invalid_entries;
+} __attribute__((packed)) FsckReport_T;
+
+/*
  *  type RTC_T structure
  *
  *  This structure is to hold all important fields needed to read time from the RTC hardware chip.
@@ -99,6 +111,7 @@ typedef enum SyscallNumber : int64_t {
     ScWriteSubdir = 0x27,
     ScListDir = 0x28,
     ScRunELF = 0x2a,
+    ScRunFsCheck = 0x2b,
     // Port IO + Networking Operations
     ScWritePort = 0x30,
     ScReadPort = 0x31,
@@ -258,6 +271,13 @@ int64_t list_dir(int64_t cluster, Entry_T entries[32]);
  *  Implementation of syscall 0x2A.
  */
 int64_t run_elf(const uint8_t *name, uint8_t *pid);
+
+/*
+ *  int64_t run_fs_check() prototype
+ *
+ *  Implementation of syscall 0x2B.
+ */
+int64_t run_fs_check(FsckReport_T *report);
 
 /*
  *  int64_t read_port() prototype

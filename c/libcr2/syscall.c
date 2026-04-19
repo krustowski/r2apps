@@ -225,6 +225,14 @@ int64_t run_elf(const uint8_t *name, uint8_t *pid) {
     return 1;
 }
 
+int64_t run_fs_check(FsckReport_T *report) {
+    if (syscall(ScRunFsCheck, 0, (int64_t)report, 0)) {
+        return 0;
+    }
+
+    return 1;
+}
+
 int64_t read_port(uint8_t port, uint64_t *value) {
     if (syscall(ScReadPort, (int64_t)port, (int64_t)value, 0)) {
         return 0;
