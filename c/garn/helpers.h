@@ -2,7 +2,7 @@
 #define _GARN_HELPERS_INCLUDED_
 
 /*
- *  args.h
+ *  helpers.h
  *
  *  krusty@vxn.dev / Apr 20, 2026
  */

@@ -2,7 +2,7 @@
 #define _GARN_PARSER_INCLUDED_
 
 /*
- *  args.h
+ *  parser.h
  *
  *  krusty@vxn.dev / Apt 20, 2026
  */

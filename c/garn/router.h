@@ -2,7 +2,7 @@
 #define _GARN_ROUTER_INCLUDED_
 
 /*
- *  args.h
+ *  router.h
  *
  *  krusty@vxn.dev / Apr 20, 2026
  */
