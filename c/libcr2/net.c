@@ -9,7 +9,7 @@ int64_t decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, u
 	uint32_t out_pos = 0;
 	uint8_t escape = 0;
 
-	for (uint8_t i = 0; i < input_len; ++i)
+	for (uint32_t i = 0; i < input_len; ++i)
 	{
 		uint8_t b = input[i];
 
@@ -145,7 +145,7 @@ TcpSocket_T *accept(TcpSocket_T *listener, TcpSocket_T sockets[MAX_SOCKETS])
 
 		if (s->used && s->state == SOCKET_ESTABLISHED && s->local_port == listener->local_port)
 		{
-			if (s != listener)
+			if (s != listener && s->rx_len > 0)
 			{
 				return s;
 			}
@@ -315,9 +315,15 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8
 	ipv4_header.protocol = 6;
 	ipv4_header.total_length = htons(ipv4_header_len + tcp_header_len + len);
 
-	// Compose a dummy IP packet
+	// Compose the IP packet: IPv4 header, then TCP header, then payload data.
+	// After new_packet(CRAFT_TCP_PACKET) the kernel writes the computed TCP checksum back
+	// into tcp_packet[0..tcp_header_len-1], so we take the TCP header from there.
+	// We copy `data` directly rather than from tcp_packet+tcp_req_len to avoid the
+	// 10-byte TcpPacketRequest_T padding that would otherwise truncate the payload.
 	memcpy(packet_buf, (const uint8_t *) &ipv4_header, ipv4_header_len);
-	memcpy(packet_buf + ipv4_header_len, (const uint8_t *) tcp_packet, tcp_header_len + len);
+	memcpy(packet_buf + ipv4_header_len, (const uint8_t *) tcp_packet, tcp_header_len);
+	if (data && len > 0)
+		memcpy(packet_buf + ipv4_header_len + tcp_header_len, data, len);
 
 	if (!new_packet(CRAFT_IPV4_PACKET, (uint8_t *) packet_buf))
 	{
