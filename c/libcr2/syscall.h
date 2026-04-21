@@ -119,7 +119,8 @@ typedef enum SyscallNumber : int64_t {
     ScNewPacket = 0x33,
     ScSendPacket = 0x34,
     ScReceivePort = 0x35,
-    ScSendPort = 0x36
+    ScSendPort = 0x36,
+    ScNetRegister = 0x37
 } SyscallNo_T;
 
 /*
@@ -341,6 +342,23 @@ int64_t receive_data(uint8_t type, uint8_t *buffer);
  *  Implementation of syscall 0x36.
  */
 int64_t send_data(uint8_t type, uint8_t *buffer);
+
+/*
+ *  int64_t net_register() prototype
+ *
+ *  Implementation of syscall 0x37. Registers the calling process as the userland
+ *  Ethernet driver. The kernel will deliver raw Ethernet frames to this process
+ *  via receive_data() and initialise the RTL8139 NIC.
+ */
+int64_t net_register(void);
+
+/*
+ *  int64_t send_eth_frame() prototype
+ *
+ *  Send a raw Ethernet frame of exactly <len> bytes via the RTL8139.
+ *  Uses ScSendPacket (0x34) with type 0x04; arg3 carries the frame length.
+ */
+int64_t send_eth_frame(const uint8_t *frame, uint32_t len);
 
 #ifdef __cplusplus
 }

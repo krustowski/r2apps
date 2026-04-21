@@ -12,6 +12,7 @@ SECTIONS
 
   .text :
   {
+    *(.note.gnu.build-id)
     KEEP(*(.text.main))
     *(.text*)
     *(.rodata*)

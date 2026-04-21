@@ -292,11 +292,8 @@ int64_t send_packet(uint8_t type, uint8_t *buffer) {
 }
 
 int64_t receive_data(uint8_t type, uint8_t *buffer) {
-    if (syscall(ScReceivePort, (int64_t)type, (int64_t)buffer, 0)) {
-        return 0;
-    }
-
-    return 1;
+    /* Returns the Ethernet frame length on success, 0 while blocked. */
+    return syscall(ScReceivePort, (int64_t)type, (int64_t)buffer, 0);
 }
 
 int64_t send_data(uint8_t type, uint8_t *buffer) {
@@ -305,4 +302,13 @@ int64_t send_data(uint8_t type, uint8_t *buffer) {
     }
 
     return 1;
+}
+
+int64_t net_register(void) {
+    return syscall(ScNetRegister, 0, 0, 0);
+}
+
+int64_t send_eth_frame(const uint8_t *frame, uint32_t len) {
+    (void)len;
+    return syscall(ScSendPacket, 0x04, (int64_t)frame, 0);
 }
