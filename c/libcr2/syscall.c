@@ -71,7 +71,9 @@ int64_t print(const uint8_t *str) {
         ++len;
 
     if (len > 0) {
-        if (syscall(ScPrintString, (int64_t)str, len, 0)) {
+        /* Pass len+1 so the kernel slice includes the null terminator;
+         * the kernel's b=='\0' guard then fires correctly at the boundary. */
+        if (syscall(ScPrintString, (int64_t)str, len + 1, 0)) {
             return 0;
         }
     }

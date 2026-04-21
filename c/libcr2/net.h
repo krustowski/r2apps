@@ -110,6 +110,7 @@ typedef struct {
 typedef enum {
 	SOCKET_CLOSED,
 	SOCKET_LISTENING,
+	SOCKET_SYN_SENT,
 	SOCKET_ESTABLISHED,
 	SOCKET_FIN_WAIT
 } SocketState;
@@ -135,6 +136,15 @@ typedef struct TcpSocket_T {
 	uint32_t seq_num;
 	uint32_t ack_num;
 } __attribute__((packed)) TcpSocket_T;
+
+/*
+ *  TcpSocket_T *tcp_connect() prototype
+ *
+ *  Allocates a socket and sends a TCP SYN to initiate a connection.
+ *  The socket transitions from SOCKET_SYN_SENT to SOCKET_ESTABLISHED
+ *  once on_tcp_packet() processes the incoming SYN-ACK.
+ */
+TcpSocket_T *tcp_connect(TcpSocket_T sockets[MAX_SOCKETS], const uint8_t remote_ip[4], uint16_t remote_port, uint16_t local_port, const uint8_t local_ip[4]);
 
 /*
  *  void send_tcp_packet() prototype

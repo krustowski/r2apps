@@ -220,6 +220,18 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
 			return;
 		}
 
+		if (s->state == SOCKET_SYN_SENT &&
+			(flags & TCP_FLAG_SYN) && (flags & TCP_FLAG_ACK) &&
+			memcmp(s->remote_ip, src_ip, 4) == 0 &&
+			s->remote_port == tcp_header->source_port)
+		{
+			memcpy(s->local_ip, dst_ip, 4);
+			s->ack_num = tcp_header->seq_num + 1;
+			s->state   = SOCKET_ESTABLISHED;
+			send_tcp_packet(s, 0, 0, TCP_FLAG_ACK);
+			return;
+		}
+
 		if (s->state == SOCKET_ESTABLISHED && memcmp(s->remote_ip, src_ip, 4) == 0 && s->remote_port == tcp_header->source_port)
 		{
 			uint32_t data_len = (len > tcp_hdr_len) ? len - tcp_hdr_len : 0;
@@ -259,6 +271,26 @@ TcpSocket_T *alloc_socket(TcpSocket_T sockets[MAX_SOCKETS])
 	}
 
 	return 0;
+}
+
+TcpSocket_T *tcp_connect(TcpSocket_T sockets[MAX_SOCKETS], const uint8_t remote_ip[4], uint16_t remote_port, uint16_t local_port, const uint8_t local_ip[4])
+{
+	TcpSocket_T *sock = alloc_socket(sockets);
+	if (!sock)
+		return 0;
+
+	memcpy(sock->remote_ip, remote_ip, 4);
+	memcpy(sock->local_ip,  local_ip,  4);
+	sock->remote_port = remote_port;
+	sock->local_port  = local_port;
+	sock->seq_num     = 0;
+	sock->ack_num     = 0;
+	sock->state       = SOCKET_SYN_SENT;
+
+	send_tcp_packet(sock, 0, 0, TCP_FLAG_SYN);
+	sock->seq_num = 1;
+
+	return sock;
 }
 
 void free_socket(TcpSocket_T *sock)
