@@ -41,6 +41,7 @@ link:
 		-lcr2 \
 		-static \
 		-Xlinker "-T../linker.ld" \
+		-Wl,--build-id=none \
 		-Wl,-v \
 		-o ${NAME}.elf \
 

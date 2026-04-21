@@ -14,7 +14,7 @@
  *    server:  nc -l -p 9000        (then r2 connects in client mode)
  *    client:  nc 10.3.3.2 9000     (r2 listens in server mode)
  *
- *  krusty@vxn.dev / Apr, 20 2026
+ *  krusty@vxn.dev / Apr 20, 2026
  */
 
 #define CHAT_PORT 9000
@@ -44,25 +44,29 @@ static const uint8_t sc_shift[0x3a] = {
 };
 
 static void reprint_prompt(const uint8_t *line, uint8_t llen) {
-    print((const uint8_t *)"chat> ");
-    for (uint8_t i = 0; i < llen; i++) {
-        uint8_t ch[2] = {line[i], '\0'};
-        print(ch);
-    }
+    static uint8_t buf[LINE_CAP + 7];
+    uint8_t i = 0;
+    const uint8_t *pfx = (const uint8_t *)"chat> ";
+    while (*pfx) buf[i++] = *pfx++;
+    for (uint8_t j = 0; j < llen; j++) buf[i++] = line[j];
+    buf[i] = '\0';
+    print(buf);
 }
 
 /* Print a received message above the current input line. */
 static void show_received(const uint8_t *data, uint32_t len, const uint8_t *line, uint8_t llen) {
-    print((const uint8_t *)"\r\n[>] ");
-    for (uint32_t i = 0; i < len; i++) {
-        if (data[i] == '\r')
-            continue;
-        if (data[i] == '\n')
-            break;
-        uint8_t ch[2] = {data[i], '\0'};
-        print(ch);
+    static uint8_t buf[1024 + 8];
+    uint32_t i = 0;
+    const uint8_t *pfx = (const uint8_t *)"\r\n[>] ";
+    while (*pfx) buf[i++] = *pfx++;
+    for (uint32_t j = 0; j < len && i < sizeof(buf) - 2; j++) {
+        if (data[j] == '\r') continue;
+        if (data[j] == '\n') break;
+        buf[i++] = data[j];
     }
-    print((const uint8_t *)"\n");
+    buf[i++] = '\n';
+    buf[i] = '\0';
+    print(buf);
     reprint_prompt(line, llen);
 }
 
@@ -151,12 +155,14 @@ int main(void) {
                 /* Enter — send line */
                 print((const uint8_t *)"\n");
                 if (chat_sock && chat_sock->state == SOCKET_ESTABLISHED && llen > 0) {
-                    print((const uint8_t *)"[me] ");
-                    for (uint8_t i = 0; i < llen; i++) {
-                        uint8_t ch[2] = {line[i], '\0'};
-                        print(ch);
-                    }
-                    print((const uint8_t *)"\n");
+                    uint8_t me_buf[LINE_CAP + 8];
+                    uint8_t mi = 0;
+                    const uint8_t *mpfx = (const uint8_t *)"[me] ";
+                    while (*mpfx) me_buf[mi++] = *mpfx++;
+                    for (uint8_t i = 0; i < llen; i++) me_buf[mi++] = line[i];
+                    me_buf[mi++] = '\n';
+                    me_buf[mi] = '\0';
+                    print(me_buf);
                     line[llen++] = '\n';
                     write(chat_sock, line, llen);
                 }
