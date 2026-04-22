@@ -50,6 +50,8 @@ typedef struct {
 #define ETH_HDR_LEN sizeof(EthHdr_T)
 #define ARP_PKT_LEN sizeof(ArpPkt_T)
 
+uint8_t debug = 0;
+
 /* Helpers */
 static void print_mac(const uint8_t mac[6]) { printf((const uint8_t *)"%x:%x:%x:%x:%x:%x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]); }
 
@@ -93,9 +95,11 @@ static void arp_reply(const ArpPkt_T *req, const uint8_t src_mac[6]) {
 
     eth_send(frame, (uint32_t)(ETH_HDR_LEN + ARP_PKT_LEN));
 
-    print((const uint8_t *)"<< ARP reply sent to ");
-    print_mac(req->sha);
-    print((const uint8_t *)"\n");
+    if (debug) {
+        print((const uint8_t *)"<< ARP reply sent to ");
+        print_mac(req->sha);
+        print((const uint8_t *)"\n");
+    }
 }
 
 /* Dispatch one Ethernet frame */
@@ -117,11 +121,13 @@ static void on_eth_frame(const uint8_t *buf, uint32_t len) {
         if (!ip_eq(arp->tpa, MY_IP))
             return; /* not for us */
 
-        print((const uint8_t *)">> ARP who-has ");
-        print_ip(arp->tpa);
-        print((const uint8_t *)" tell ");
-        print_ip(arp->spa);
-        print((const uint8_t *)"\n");
+        if (debug) {
+            print((const uint8_t *)">> ARP who-has ");
+            print_ip(arp->tpa);
+            print((const uint8_t *)" tell ");
+            print_ip(arp->spa);
+            print((const uint8_t *)"\n");
+        }
 
         arp_reply(arp, eth->src);
 
@@ -147,7 +153,9 @@ static void on_eth_frame(const uint8_t *buf, uint32_t len) {
             if (icmp_pkt[0] != 8 || icmp_pkt[1] != 0)
                 return; /* not an echo request */
 
-            print((const uint8_t *)">> ICMP echo request — sending reply\n");
+            if (debug) {
+                print((const uint8_t *)">> ICMP echo request — sending reply\n");
+            }
 
             /* Build Ethernet + IPv4 + ICMP echo reply entirely in userland */
             uint32_t frame_len = (uint32_t)ETH_HDR_LEN + ip_total;
@@ -187,17 +195,33 @@ static void on_eth_frame(const uint8_t *buf, uint32_t len) {
     }
 }
 
-int main(void) {
-    print((const uint8_t *)"-> eth driver start  MAC: ");
-    print_mac(MY_MAC);
-    print((const uint8_t *)"  IP: ");
-    print_ip(MY_IP);
-    print((const uint8_t *)"\n");
+int main(int argc, char **argv) {
+    if (argc > 1) {
+        printf((const uint8_t *)"eth: started with args:");
+        for (int i = 1; i < argc; i++) {
+            printf((const uint8_t *)" %s", (uint8_t *)argv[i]);
+
+            if (memcmp((uint8_t *)argv[i], (uint8_t *)"debug", 5) == 0) {
+                debug = 1;
+            }
+        }
+        print((const uint8_t *)"\n");
+    }
+
+    if (debug) {
+        print((const uint8_t *)"-> eth driver start  MAC: ");
+        print_mac(MY_MAC);
+        print((const uint8_t *)"  IP: ");
+        print_ip(MY_IP);
+        print((const uint8_t *)"\n");
+    }
 
     /* Register with the kernel as the Ethernet driver.
      * This stores our PID in netdrv and initialises the RTL8139 NIC. */
     int64_t reg = net_register();
-    printf((const uint8_t *)"-> net_register() = %d\n", (int32_t)reg);
+    if (debug) {
+        printf((const uint8_t *)"-> net_register() = %d\n", (int32_t)reg);
+    }
 
     /* Max standard Ethernet frame */
     uint8_t frame_buf[1514];
@@ -209,7 +233,10 @@ int main(void) {
             continue;
 
         rx_count++;
-        printf((const uint8_t *)"RX[%d]: %d bytes  etype=0x%x\n", rx_count, (int32_t)n, (uint32_t)htons(((EthHdr_T *)frame_buf)->ethertype));
+
+        if (debug) {
+            printf((const uint8_t *)"RX[%d]: %d bytes  etype=0x%x\n", rx_count, (int32_t)n, (uint32_t)htons(((EthHdr_T *)frame_buf)->ethertype));
+        }
 
         on_eth_frame(frame_buf, (uint32_t)n);
     }

@@ -139,12 +139,19 @@ static int dispatch(uint8_t *line, uint8_t len) {
     return 0;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     uint8_t pipe[PIPE_CAP];
     uint8_t line[LINE_CAP];
     uint8_t llen = 0;
     uint8_t shift = 0;
     uint8_t halt = 0;
+
+    if (argc > 1) {
+        printf((const uint8_t *)"r2sh: started with args:");
+        for (int i = 1; i < argc; i++)
+            printf((const uint8_t *)" %s", (uint8_t *)argv[i]);
+        print((const uint8_t *)"\n");
+    }
 
     for (uint8_t i = 0; i < PIPE_CAP; i++)
         pipe[i] = 0;
