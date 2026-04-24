@@ -100,6 +100,9 @@ typedef enum SyscallNumber : int64_t {
     ScPrintString = 0x10,
     ScClearScreen = 0x11,
     ScWritePixel = 0x12,
+    ScWriteVGA = 0x13,
+    ScMapVram = 0x14,
+    ScSetVideoMode = 0x15,
     ScPlayFreq = 0x1a,
     ScPlayFile = 0x1b,
     ScPlayStop = 0x1f,
@@ -204,6 +207,38 @@ int64_t clear_screen();
 int64_t write_pixel(uint32_t position, uint16_t color);
 
 /*
+ *  int64_t write_vga() prototype
+ *
+ *  Implementation of syscall 0x13.
+ *  Renders a 320×200 VGA mode-13h palette-indexed buffer to the kernel framebuffer.
+ *  palette: pointer to 768 bytes (256×RGB), or NULL to use the default VGA palette.
+ */
+int64_t write_vga(const uint8_t *vga_buf, const uint8_t *palette);
+
+/*
+ *  uint64_t map_vram() prototype
+ *
+ *  Implementation of syscall 0x14.
+ *  Maps physical VGA graphics RAM (0xA0000–0xAFFFF) into the calling
+ *  process at virtual 0xA00_000 with USER+WRITE.
+ *  Returns the virtual base address on success, 0 on failure. Idempotent.
+ */
+uint64_t map_vram(void);
+
+/*
+ *  int64_t set_video_mode() prototype
+ *
+ *  Implementation of syscall 0x15.
+ *  Programs VGA hardware registers for the given mode:
+ *    0x03 — 80×25 color text  (restores kernel shell)
+ *    0x0D — 320×200 16-color planar  (EGA-style, 4 planes at VRAM)
+ *    0x12 — 640×480 16-color planar
+ *    0x13 — 320×200 256-color unchained (classic mode 13h)
+ *  Returns 0 on success, non-zero for an unrecognised mode.
+ */
+int64_t set_video_mode(uint8_t mode);
+
+/*
  *  int64_t play_freq() prototype
  *
  *  Implementation of syscall 0x1a.
@@ -281,18 +316,20 @@ int64_t run_elf(const uint8_t *name, uint8_t *pid);
 int64_t run_fs_check(FsckReport_T *report);
 
 /*
- *  int64_t read_port() prototype
- *
- *  Implementation of syscall 0x30!
- */
-int64_t read_port(uint8_t port, uint64_t *value);
-
-/*
  *  int64_t write_port() prototype
  *
- *  Implementation of syscall 0x31!
+ *  Implementation of syscall 0x30.
+ *  Kernel ABI: arg1=&port (u16), arg2=&value (u32).  Supports full 16-bit
+ *  port space (0x0000–0xFFFF), e.g. VGA registers at 0x3C0–0x3DF.
  */
-int64_t write_port(uint8_t port, const uint64_t value);
+int64_t write_port(uint16_t port, uint32_t value);
+
+/*
+ *  int64_t read_port() prototype
+ *
+ *  Implementation of syscall 0x31.
+ */
+int64_t read_port(uint16_t port, uint32_t *value);
 
 /*
  *  int64_t serial_init() prototype

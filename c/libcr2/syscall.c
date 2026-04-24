@@ -97,6 +97,19 @@ int64_t write_pixel(uint32_t position, uint16_t color) {
     return 1;
 }
 
+int64_t write_vga(const uint8_t *vga_buf, const uint8_t *palette) {
+    syscall(ScWriteVGA, (int64_t)vga_buf, (int64_t)palette, 0);
+    return 1;
+}
+
+uint64_t map_vram(void) {
+    uint64_t base = 0;
+    syscall(ScMapVram, 0, (int64_t)&base, 0);
+    return base;
+}
+
+int64_t set_video_mode(uint8_t mode) { return syscall(ScSetVideoMode, (int64_t)mode, 0, 0); }
+
 int64_t play_freq(uint16_t freq, uint16_t duration) {
     if (syscall(ScPlayFreq, (int64_t)freq, (int64_t)duration, 0)) {
         return 0;
@@ -235,21 +248,11 @@ int64_t run_fs_check(FsckReport_T *report) {
     return 1;
 }
 
-int64_t read_port(uint8_t port, uint64_t *value) {
-    if (syscall(ScReadPort, (int64_t)port, (int64_t)value, 0)) {
-        return 0;
-    }
+/* Kernel PORT_WRITE (0x30) ABI: arg1=&port (u16 ptr), arg2=&value (u32 ptr). */
+int64_t write_port(uint16_t port, uint32_t value) { return syscall(ScWritePort, (int64_t)&port, (int64_t)&value, 0); }
 
-    return 1;
-}
-
-int64_t write_port(uint8_t port, const uint64_t value) {
-    if (syscall(ScWritePort, (int64_t)port, (int64_t)value, 0)) {
-        return 0;
-    }
-
-    return 1;
-}
+/* Kernel PORT_READ (0x31) ABI: arg1=&port (u16 ptr), arg2=value ptr (u32). */
+int64_t read_port(uint16_t port, uint32_t *value) { return syscall(ScReadPort, (int64_t)&port, (int64_t)value, 0); }
 
 int64_t serial_init() {
     if (syscall(ScSerialPort, 0x01, 0x00, 0)) {
@@ -304,9 +307,7 @@ int64_t send_data(uint8_t type, uint8_t *buffer) {
     return 1;
 }
 
-int64_t net_register(void) {
-    return syscall(ScNetRegister, 0, 0, 0);
-}
+int64_t net_register(void) { return syscall(ScNetRegister, 0, 0, 0); }
 
 int64_t send_eth_frame(const uint8_t *frame, uint32_t len) {
     (void)len;
