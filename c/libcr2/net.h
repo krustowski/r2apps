@@ -36,11 +36,73 @@ extern "C" {
 
 #define TCP_FLAG_FIN	0x01
 #define TCP_FLAG_SYN	0x02
+#define TCP_FLAG_RST	0x04
 #define TCP_FLAG_ACK	0x10
 
 #define CRAFT_IPV4_PACKET 	0x01
 #define CRAFT_ICMP_PACKET 	0x02
 #define CRAFT_TCP_PACKET 	0x03
+
+/* Raw Ethernet frame type code for receive_data() / send_eth_frame() */
+#define RECV_ETH   0x04
+
+/* Ethertype constants */
+#define ETYPE_IPV4 0x0800
+#define ETYPE_ARP  0x0806
+
+/*
+ *  type EthHdr_T structure
+ *
+ *  Standard 14-byte Ethernet II frame header.
+ */
+typedef struct {
+    uint8_t  dst[6];
+    uint8_t  src[6];
+    uint16_t ethertype; /* big-endian */
+} __attribute__((packed)) EthHdr_T;
+
+/*
+ *  type ArpPkt_T structure
+ *
+ *  ARP packet layout for IPv4-over-Ethernet (28 bytes).
+ */
+typedef struct {
+    uint16_t htype; /* 1 = Ethernet */
+    uint16_t ptype; /* 0x0800 = IPv4 */
+    uint8_t  hlen;  /* 6 */
+    uint8_t  plen;  /* 4 */
+    uint16_t oper;  /* 1 = request, 2 = reply */
+    uint8_t  sha[6];
+    uint8_t  spa[4];
+    uint8_t  tha[6];
+    uint8_t  tpa[4];
+} __attribute__((packed)) ArpPkt_T;
+
+#define ETH_HDR_LEN ((uint32_t)sizeof(EthHdr_T))
+#define ARP_PKT_LEN ((uint32_t)sizeof(ArpPkt_T))
+
+/*
+ *  type NetDriver_T structure
+ *
+ *  Abstracts the underlying network transport so that networking servers
+ *  (garn, icmpresp, …) can switch between SLIP and Ethernet-over-IPC at
+ *  startup without touching the TCP/IP logic.
+ */
+typedef struct {
+    int  (*recv)(uint8_t *buf, uint32_t maxlen);
+    void (*send_ip)(const uint8_t *ip_pkt, uint32_t len);
+} NetDriver_T;
+
+extern NetDriver_T net_drv;
+
+/*
+ *  int net_driver_select() prototype
+ *
+ *  Initialises net_drv with the requested driver ("slip" or "eth").
+ *  For SLIP, also calls serial_init().
+ *  Returns 0 on success, -1 if initialisation failed.
+ */
+int net_driver_select(const uint8_t *name);
 
 /*
  *  type Ipv4Header_T structure
@@ -242,6 +304,14 @@ int64_t decode_slip(const uint8_t *input, uint32_t input_len, uint8_t *output, u
  *  header structure of declared size. Function returns the header size.
  */
 uint16_t parse_ipv4_packet(const uint8_t *packet, Ipv4Header_T *header);
+
+/*
+ *  void icmp_make_reply() prototype
+ *
+ *  Converts an ICMP echo request (type 8) into an echo reply (type 0) in-place
+ *  and recomputes the checksum. `len` must be the actual ICMP packet length.
+ */
+void icmp_make_reply(uint8_t *packet, uint32_t len);
 
 /*
  *  uint8_t parse_icmp_packet() prototype
