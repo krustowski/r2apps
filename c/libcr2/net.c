@@ -332,6 +332,31 @@ int net_driver_select(const uint8_t *name) {
     return 0;
 }
 
+int net_driver_bind_port(const uint8_t *name, uint16_t port) {
+    if (name && name[0] == 'e') {
+        static const uint8_t my_mac[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
+        static const uint8_t my_ip[4] = {10, 3, 4, 2};
+
+        memcpy(eth_my_mac, my_mac, 6);
+        memcpy(eth_my_ip, my_ip, 4);
+
+        net_bind_port(port);
+        net_drv.recv = eth_drv_recv;
+        net_drv.send_ip = eth_drv_send;
+
+        return 0;
+    }
+
+    /* SLIP: no port-level demux — behaves the same as net_driver_select */
+    net_drv.recv = slip_recv;
+    net_drv.send_ip = slip_send;
+
+    if (!serial_init())
+        return -1;
+
+    return 0;
+}
+
 /*
  *  SLIP decoder
  */

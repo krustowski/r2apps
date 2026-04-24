@@ -30,6 +30,7 @@ typedef struct {
     uint8_t system_user[32];
     uint8_t system_path[32];
     uint8_t system_version[8];
+    uint32_t system_path_cluster;
     uint32_t system_uptime;
 } __attribute__((packed)) SysInfo_T;
 
@@ -383,11 +384,20 @@ int64_t send_data(uint8_t type, uint8_t *buffer);
 /*
  *  int64_t net_register() prototype
  *
- *  Implementation of syscall 0x37. Registers the calling process as the userland
- *  Ethernet driver. The kernel will deliver raw Ethernet frames to this process
- *  via receive_data() and initialise the RTL8139 NIC.
+ *  Implementation of syscall 0x37 (arg1 = 0). Registers the calling process as the
+ *  global userland Ethernet driver. The kernel will deliver all Ethernet frames that
+ *  are not claimed by a port-specific binding to this process, and initialise the RTL8139.
  */
 int64_t net_register(void);
+
+/*
+ *  int64_t net_bind_port() prototype
+ *
+ *  Implementation of syscall 0x37 (arg1 = port). Registers the calling process to
+ *  receive only TCP frames whose destination port matches <port>. The global Ethernet
+ *  driver (net_register) must already be running to handle ARP and ICMP.
+ */
+int64_t net_bind_port(uint16_t port);
 
 /*
  *  int64_t send_eth_frame() prototype

@@ -99,10 +99,23 @@ extern NetDriver_T net_drv;
  *  int net_driver_select() prototype
  *
  *  Initialises net_drv with the requested driver ("slip" or "eth").
- *  For SLIP, also calls serial_init().
+ *  For ETH, calls net_register() — registers this process as the global Ethernet driver
+ *  (receives all frames). For SLIP, also calls serial_init().
  *  Returns 0 on success, -1 if initialisation failed.
  */
 int net_driver_select(const uint8_t *name);
+
+/*
+ *  int net_driver_bind_port() prototype
+ *
+ *  Like net_driver_select() but for ETH calls net_bind_port(port) instead of net_register().
+ *  Use this for application services (e.g. HTTP on 80, TELNET on 23) so the kernel routes
+ *  only frames for that TCP destination port to this process. The global ETH driver must
+ *  already be running (e.g. eth.elf) to handle ARP and ICMP.
+ *  For SLIP, behaves identically to net_driver_select().
+ *  Returns 0 on success, -1 if initialisation failed.
+ */
+int net_driver_bind_port(const uint8_t *name, uint16_t port);
 
 /*
  *  type Ipv4Header_T structure

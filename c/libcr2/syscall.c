@@ -309,6 +309,8 @@ int64_t send_data(uint8_t type, uint8_t *buffer) {
 
 int64_t net_register(void) { return syscall(ScNetRegister, 0, 0, 0); }
 
+int64_t net_bind_port(uint16_t port) { return syscall(ScNetRegister, (int64_t)port, 0, 0); }
+
 int64_t send_eth_frame(const uint8_t *frame, uint32_t len) {
     (void)len;
     return syscall(ScSendPacket, 0x04, (int64_t)frame, 0);
