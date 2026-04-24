@@ -19,37 +19,6 @@
 static const uint8_t MY_MAC[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
 static const uint8_t MY_IP[4] = {10, 3, 4, 2};
 
-/* Kernel data-port type for raw Ethernet frames */
-#define RECV_ETH 0x04
-#define SEND_ETH 0x04
-
-/* Ethertype constants */
-#define ETYPE_IPV4 0x0800
-#define ETYPE_ARP 0x0806
-
-/* Ethernet header */
-typedef struct {
-    uint8_t dst[6];
-    uint8_t src[6];
-    uint16_t ethertype; /* big-endian */
-} __attribute__((packed)) EthHdr_T;
-
-/* ARP packet (IPv4 over Ethernet) */
-typedef struct {
-    uint16_t htype; /* 1 = Ethernet */
-    uint16_t ptype; /* 0x0800 = IPv4 */
-    uint8_t hlen;   /* 6 */
-    uint8_t plen;   /* 4 */
-    uint16_t oper;  /* 1 = request, 2 = reply */
-    uint8_t sha[6]; /* sender MAC */
-    uint8_t spa[4]; /* sender IP */
-    uint8_t tha[6]; /* target MAC */
-    uint8_t tpa[4]; /* target IP */
-} __attribute__((packed)) ArpPkt_T;
-
-#define ETH_HDR_LEN sizeof(EthHdr_T)
-#define ARP_PKT_LEN sizeof(ArpPkt_T)
-
 uint8_t debug = 0;
 
 /* Helpers */
@@ -59,19 +28,37 @@ static void print_ip(const uint8_t ip[4]) { printf((const uint8_t *)"%d.%d.%d.%d
 
 static uint8_t ip_eq(const uint8_t a[4], const uint8_t b[4]) { return (a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3]); }
 
-static uint16_t inet_cksum(const uint8_t *data, uint32_t len) {
-    uint32_t sum = 0;
-    for (uint32_t i = 0; i + 1 < len; i += 2)
-        sum += (uint32_t)(((uint32_t)data[i] << 8) | data[i + 1]);
-    if (len & 1)
-        sum += (uint32_t)((uint32_t)data[len - 1] << 8);
-    while (sum >> 16)
-        sum = (sum & 0xffff) + (sum >> 16);
-    return (uint16_t)~sum;
-}
-
 /* Send a raw Ethernet frame */
 static void eth_send(uint8_t *frame, uint32_t len) { send_eth_frame(frame, len); }
+
+/* ARP cache — maps IPv4 → MAC, populated from incoming ARP requests */
+#define ARP_CACHE_SIZE 8
+
+typedef struct {
+    uint8_t ip[4];
+    uint8_t mac[6];
+    uint8_t valid;
+} ArpEntry_T;
+
+static ArpEntry_T arp_cache[ARP_CACHE_SIZE];
+
+static void arp_cache_update(const uint8_t ip[4], const uint8_t mac[6])
+{
+    for (int i = 0; i < ARP_CACHE_SIZE; i++) {
+        if (!arp_cache[i].valid || ip_eq(arp_cache[i].ip, ip)) {
+            memcpy(arp_cache[i].ip, ip, 4);
+            memcpy(arp_cache[i].mac, mac, 6);
+            arp_cache[i].valid = 1;
+            return;
+        }
+    }
+    /* Cache full — overwrite slot 0 */
+    memcpy(arp_cache[0].ip, ip, 4);
+    memcpy(arp_cache[0].mac, mac, 6);
+    arp_cache[0].valid = 1;
+}
+
+
 
 /* Handle ARP request: craft and send a reply */
 static void arp_reply(const ArpPkt_T *req, const uint8_t src_mac[6]) {
@@ -120,6 +107,8 @@ static void on_eth_frame(const uint8_t *buf, uint32_t len) {
             return; /* only handle requests */
         if (!ip_eq(arp->tpa, MY_IP))
             return; /* not for us */
+
+        arp_cache_update(arp->spa, eth->src);
 
         if (debug) {
             print((const uint8_t *)">> ARP who-has ");
@@ -229,16 +218,13 @@ int main(int argc, char **argv) {
 
     for (;;) {
         int64_t n = receive_data(RECV_ETH, frame_buf);
-        if (n <= 0)
-            continue;
-
-        rx_count++;
-
-        if (debug) {
-            printf((const uint8_t *)"RX[%d]: %d bytes  etype=0x%x\n", rx_count, (int32_t)n, (uint32_t)htons(((EthHdr_T *)frame_buf)->ethertype));
+        if (n > 0) {
+            rx_count++;
+            if (debug) {
+                printf((const uint8_t *)"RX[%d]: %d bytes  etype=0x%x\n", rx_count, (int32_t)n, (uint32_t)htons(((EthHdr_T *)frame_buf)->ethertype));
+            }
+            on_eth_frame(frame_buf, (uint32_t)n);
         }
-
-        on_eth_frame(frame_buf, (uint32_t)n);
     }
 
     return 0;
