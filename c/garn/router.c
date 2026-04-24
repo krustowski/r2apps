@@ -51,9 +51,10 @@ void route_file(TcpSocket_T *client, const uint8_t *name, uint8_t *buf, uint32_t
 /* Route: GET /events — open an SSE stream.
  * Sends headers only; the main loop pushes events and never calls close(). */
 void route_events(TcpSocket_T *client) {
-    const uint8_t hdr[] = "HTTP/1.0 200 OK\r\n"
+    const uint8_t hdr[] = "HTTP/1.1 200 OK\r\n"
                           "Content-Type: text/event-stream\r\n"
                           "Cache-Control: no-cache\r\n"
+                          "Connection: keep-alive\r\n"
                           "\r\n";
     write(client, hdr, sizeof(hdr) - 1);
 }
@@ -83,12 +84,17 @@ void route_root(TcpSocket_T *client) {
 void route_info(TcpSocket_T *client) {
     uint8_t body[256];
     uint8_t num[12];
+    uint8_t cluster[12];
     uint32_t n = 0;
-    SysInfo_T info;
+    SysInfo_T info = {0};
 
     n = str_append(body, n, (const uint8_t *)"<html><body><pre>");
 
     if (read_sysinfo(&info)) {
+        info.system_name[31] = '\0';
+        info.system_user[31] = '\0';
+        info.system_path[31] = '\0';
+        info.system_version[7] = '\0';
         n = str_append(body, n, (const uint8_t *)"System:  ");
         n = str_append(body, n, info.system_name);
         body[n++] = '\n';
@@ -98,6 +104,12 @@ void route_info(TcpSocket_T *client) {
         n = str_append(body, n, (const uint8_t *)"Version: ");
         n = str_append(body, n, info.system_version);
         body[n++] = '\n';
+        n = str_append(body, n, (const uint8_t *)"System path: ");
+        n = str_append(body, n, info.system_path);
+        n = str_append(body, n, (const uint8_t *)" (cluster: ");
+        u32_to_str(info.system_path_cluster, cluster);
+        n = str_append(body, n, cluster);
+        n = str_append(body, n, (const uint8_t *)")\n");
         n = str_append(body, n, (const uint8_t *)"Uptime:  ");
         u32_to_str(info.system_uptime, num);
         n = str_append(body, n, num);
