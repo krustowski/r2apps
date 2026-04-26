@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     uint8_t packet_buf[2048];
     uint8_t tcp_packet[1500];
     uint8_t req_buf[1024];
-    TcpSocket_T sockets[MAX_SOCKETS];
+    static TcpSocket_T sockets[MAX_SOCKETS];
 
     Ipv4Header_T ipv4_header;
     uint16_t ipv4_header_len = 0;
@@ -64,7 +64,6 @@ int main(int argc, char **argv) {
     TcpSocket_T *sse_client = 0;
     uint16_t sse_remote_port = 0; /* discriminator: ephemeral port changes on reconnect */
     uint8_t sse_last_sec = 0xff;  /* last RTC second we processed; 0xff = none yet */
-    uint32_t hb_iter = 0;         /* heartbeat counter — keeps recv from blocking indefinitely */
 
     print((const uint8_t *)"-> garn HTTP/1.0 service starting on port 80\n");
 
@@ -78,13 +77,7 @@ int main(int argc, char **argv) {
         if (sse_client) {
             if (sse_client->state != SOCKET_ESTABLISHED || sse_client->remote_port != sse_remote_port) {
                 sse_client = 0;
-                hb_iter = 0;
             } else {
-                /* receive_data blocks until a packet arrives; the only way to ensure it
-                 * returns in time for the next 5-second event is to generate incoming traffic
-                 * ourselves.  Send a tiny SSE comment every ~64 iterations so the browser ACKs
-                 * it, which unblocks recv within one round-trip (~1 ms on a local link). */
-                uint8_t do_hb = 0;
                 RTC_T rtc;
                 if (read_rtc(&rtc) && rtc.seconds != sse_last_sec) {
                     sse_last_sec = rtc.seconds;
@@ -104,16 +97,10 @@ int main(int argc, char **argv) {
                         evt[en++] = '\n';
                         evt[en++] = '\n';
                         write(sse_client, evt, en);
-                        hb_iter = 0;
                     } else {
-                        do_hb = 1; /* non-event second — heartbeat wakes up recv */
+                        static const uint8_t hb[] = ": \n";
+                        write(sse_client, hb, sizeof(hb) - 1);
                     }
-                } else if ((++hb_iter & 0x3F) == 0) {
-                    do_hb = 1; /* throttled keepalive between second changes */
-                }
-                if (do_hb) {
-                    static const uint8_t hb[] = ": \n";
-                    write(sse_client, hb, sizeof(hb) - 1);
                 }
             }
         }
@@ -182,16 +169,15 @@ int main(int argc, char **argv) {
 
         uint8_t do_close = 1;
 
-        /* Silently drop non-request TCP segments (e.g. HTTP header continuations).
-         * Real HTTP methods are pure uppercase letters; header names always contain ':'. */
+        /* Drop non-request segments: valid HTTP methods are non-empty uppercase
+         * ASCII letters only (GET, POST, …).  Header names (Host:, X-Forwarded-For:)
+         * contain hyphens, digits or lowercase — all rejected by this check. */
         {
-            uint8_t has_colon = 0;
-            for (uint8_t i = 0; i < sizeof(method) && method[i]; i++)
-                if (method[i] == ':') {
-                    has_colon = 1;
-                    break;
-                }
-            if (method[0] == '\0' || has_colon)
+            uint8_t valid = (method[0] != '\0');
+            for (uint8_t i = 0; valid && method[i]; i++)
+                if (method[i] < 'A' || method[i] > 'Z')
+                    valid = 0;
+            if (!valid)
                 continue;
         }
 
@@ -212,7 +198,6 @@ int main(int argc, char **argv) {
             sse_client = client;
             sse_remote_port = client->remote_port;
             sse_last_sec = 0xff;
-            hb_iter = 0;
             do_close = 0;
 
         } else if (rpath[0] == '/' && rpath[1] != '\0') {

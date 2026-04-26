@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
             }
 
             if (b == '\n') {
-                int quit = shell_dispatch(client, sess->line, sess->llen);
+                int quit = shell_dispatch(client, sockets, sess->line, sess->llen);
                 sess->llen = 0;
                 if (quit) {
                     close(client);
