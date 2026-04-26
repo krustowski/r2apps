@@ -208,13 +208,13 @@ int64_t delete_file(const uint8_t *name) {
     return 0;
 }
 
-int64_t write_subdir(uint16_t cluster, const uint8_t *name) {
+int64_t write_subdir(const uint8_t *parent_path, const uint8_t *name) {
     uint8_t len = 0;
     while (name[len])
         ++len;
 
     if (len > 0) {
-        if (syscall(ScWriteSubdir, (int64_t)cluster, (int64_t)name, 0)) {
+        if (syscall(ScWriteSubdir, (int64_t)parent_path, (int64_t)name, 0)) {
             return 0;
         }
 
@@ -222,6 +222,10 @@ int64_t write_subdir(uint16_t cluster, const uint8_t *name) {
     }
 
     return 0;
+}
+
+int64_t chdir(const uint8_t *path) {
+    return syscall(ScChdir, (int64_t)path, 0, 0);
 }
 
 int64_t list_dir(int64_t cluster, Entry_T entries[32]) {
@@ -246,6 +250,14 @@ int64_t run_fs_check(FsckReport_T *report) {
     }
 
     return 1;
+}
+
+int64_t list_mounts(MountInfo_T *buf) {
+    return syscall(ScListMounts, 0, (int64_t)buf, 0);
+}
+
+int64_t list_dir_path(const uint8_t *path, VfsDirEntry_T buf[32]) {
+    return syscall(ScListDirPath, (int64_t)path, (int64_t)buf, 0);
 }
 
 /* Kernel PORT_WRITE (0x30) ABI: arg1=&port (u16 ptr), arg2=&value (u32 ptr). */

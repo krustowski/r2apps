@@ -69,6 +69,31 @@ typedef struct {
 } __attribute__((packed)) FsckReport_T;
 
 /*
+ *  type MountInfo_T structure
+ *
+ *  Describes one VFS mount point as returned by syscall 0x2C (ScListMounts).
+ *  fs_type: 0=none, 1=rootfs, 2=fat12, 3=iso9660
+ */
+typedef struct {
+    uint8_t path[32];
+    uint8_t path_len;
+    uint8_t fs_type;
+} __attribute__((packed)) MountInfo_T;
+
+/*
+ *  type VfsDirEntry_T structure
+ *
+ *  A unified directory entry returned by syscall 0x2D (ScListDirPath).
+ *  Works for both FAT12 and ISO9660.  name is NOT NUL-terminated; use name_len.
+ */
+typedef struct {
+    uint8_t  name[32];
+    uint8_t  name_len;
+    uint8_t  is_dir;
+    uint32_t size;
+} __attribute__((packed)) VfsDirEntry_T;
+
+/*
  *  type RTC_T structure
  *
  *  This structure is to hold all important fields needed to read time from the RTC hardware chip.
@@ -116,6 +141,9 @@ typedef enum SyscallNumber : int64_t {
     ScListDir = 0x28,
     ScRunELF = 0x2a,
     ScRunFsCheck = 0x2b,
+    ScListMounts = 0x2c,
+    ScListDirPath = 0x2d,
+    ScChdir = 0x2e,
     // Port IO + Networking Operations
     ScWritePort = 0x30,
     ScReadPort = 0x31,
@@ -292,8 +320,18 @@ int64_t delete_file(const uint8_t *name);
  *  int64_t write_subdir() prototype
  *
  *  Implementation of syscall 0x27.
+ *  Creates a subdirectory named <name> inside <parent_path> (absolute VFS path).
  */
-int64_t write_subdir(uint16_t cluster, const uint8_t *name);
+int64_t write_subdir(const uint8_t *parent_path, const uint8_t *name);
+
+/*
+ *  int64_t chdir() prototype
+ *
+ *  Implementation of syscall 0x2E.
+ *  Changes the kernel SYSTEM_CONFIG working directory to <path> (absolute VFS path).
+ *  Returns 0 on success, non-zero on error.
+ */
+int64_t chdir(const uint8_t *path);
 
 /*
  *  int64_t list_dir() prototype
@@ -315,6 +353,24 @@ int64_t run_elf(const uint8_t *name, uint8_t *pid);
  *  Implementation of syscall 0x2B.
  */
 int64_t run_fs_check(FsckReport_T *report);
+
+/*
+ *  int64_t list_mounts() prototype
+ *
+ *  Implementation of syscall 0x2C.
+ *  Fills buf with up to 8 MountInfo_T entries; returns the count of mounts.
+ */
+int64_t list_mounts(MountInfo_T *buf);
+
+/*
+ *  int64_t list_dir_path() prototype
+ *
+ *  Implementation of syscall 0x2D.
+ *  Lists the directory at the given absolute VFS path (FAT12 or ISO9660).
+ *  Fills buf with up to 32 VfsDirEntry_T entries (38 bytes each).
+ *  Returns the number of entries written, or a negative error code.
+ */
+int64_t list_dir_path(const uint8_t *path, VfsDirEntry_T buf[32]);
 
 /*
  *  int64_t write_port() prototype

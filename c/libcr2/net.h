@@ -118,6 +118,15 @@ int net_driver_select(const uint8_t *name);
 int net_driver_bind_port(const uint8_t *name, uint16_t port);
 
 /*
+ *  void net_get_local_ip() / net_get_local_mac() prototypes
+ *
+ *  Copy the local IPv4 address / Ethernet MAC into the caller-supplied buffer.
+ *  Only valid after net_driver_select() or net_driver_bind_port() has been called.
+ */
+void net_get_local_ip(uint8_t ip[4]);
+void net_get_local_mac(uint8_t mac[6]);
+
+/*
  *  type Ipv4Header_T structure
  *
  *  This structure specifies the property list of an IPv4 header.

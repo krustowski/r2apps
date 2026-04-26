@@ -42,6 +42,9 @@ static void slip_send(const uint8_t *pkt, uint32_t len) {
 static uint8_t eth_my_mac[6];
 static uint8_t eth_my_ip[4];
 
+void net_get_local_ip(uint8_t ip[4])  { memcpy(ip,  eth_my_ip,  4); }
+void net_get_local_mac(uint8_t mac[6]) { memcpy(mac, eth_my_mac, 6); }
+
 #define ETH_ARP_CACHE_SIZE 8
 
 typedef struct {
