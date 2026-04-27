@@ -119,9 +119,11 @@ typedef enum SyscallNumber : int64_t {
     ScSysInfo = 0x01,
     ScRTC = 0x02,
     ScPipeSubscribe = 0x03,
-    ScMalloc = 0x0a,
+    ScGetTicks = 0x04,
+    ScSleep = 0x05,
+    ScMalloc  = 0x0a,
     ScRealloc = 0x0b,
-    ScFree = 0x0f,
+    ScFree    = 0x0f,
     // Video + Audio Operations
     ScPrintString = 0x10,
     ScClearScreen = 0x11,
@@ -193,6 +195,23 @@ int64_t write_sysinfo(const SysInfo_T *sysinfo);
  *  Implementation of syscall 0x02 (arg1 0x01).
  */
 int64_t read_rtc(RTC_T *rtc_data);
+
+/*
+ *  uint64_t get_ticks() prototype
+ *
+ *  Implementation of syscall 0x04.
+ *  Returns milliseconds elapsed since boot (10 ms resolution, PIT at 100 Hz).
+ */
+uint64_t get_ticks(void);
+
+/*
+ *  void sleep_ms() prototype
+ *
+ *  Implementation of syscall 0x05.
+ *  Blocks the calling process for at least <ms> milliseconds (rounded up to
+ *  the next 10 ms PIT tick).  Returns when the kernel has woken the process.
+ */
+void sleep_ms(uint64_t ms);
 
 /*
  *  int64_t pipe_subscribe() prototype
@@ -288,6 +307,32 @@ int64_t play_midi_file(const uint8_t *name);
  *  Implementation of syscall 0x1f.
  */
 int64_t stop_speaker();
+
+/*
+ *  void *malloc() prototype
+ *
+ *  Implementation of syscall 0x0A.
+ *  Allocates <size> bytes from the userland heap (0xC00_000–0xFFF_FFF).
+ *  Returns a pointer to zeroed memory, or NULL on failure.
+ */
+void *malloc(uint64_t size);
+
+/*
+ *  void *realloc() prototype
+ *
+ *  Implementation of syscall 0x0B.
+ *  Resizes the block at <ptr> to <size> bytes.  ptr==NULL behaves like malloc.
+ *  size==0 frees the block and returns NULL.
+ */
+void *realloc(void *ptr, uint64_t size);
+
+/*
+ *  void free() prototype
+ *
+ *  Implementation of syscall 0x0F.
+ *  Frees a block previously returned by malloc or realloc.
+ */
+void free(void *ptr);
 
 /*
  *  int64_t read_file() prototype

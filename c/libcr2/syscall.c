@@ -41,6 +41,14 @@ int64_t read_rtc(RTC_T *rtc_data) {
     return 1;
 }
 
+uint64_t get_ticks(void) {
+    return (uint64_t)syscall(ScGetTicks, 0, 0, 0);
+}
+
+void sleep_ms(uint64_t ms) {
+    syscall(ScSleep, (int64_t)ms, 0, 0);
+}
+
 int64_t pipe_subscribe(const uint8_t *buffer) {
     if (syscall(ScPipeSubscribe, 0x01, (int64_t)buffer, 0)) {
         return 0;
@@ -141,6 +149,14 @@ int64_t stop_speaker() {
 
     return 1;
 }
+
+void *malloc(uint64_t size) { return (void *)syscall(ScMalloc, (int64_t)size, 0, 0); }
+
+void *realloc(void *ptr, uint64_t size) {
+    return (void *)syscall(ScRealloc, (int64_t)ptr, (int64_t)size, 0);
+}
+
+void free(void *ptr) { syscall(ScFree, (int64_t)ptr, 0, 0); }
 
 int64_t read_file(const uint8_t *name, uint8_t *buffer) {
     int64_t len = 0;
