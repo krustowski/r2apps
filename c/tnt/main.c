@@ -24,6 +24,9 @@ typedef struct {
     uint8_t active;
     uint8_t line[LINE_CAP];
     uint8_t llen;
+    uint8_t last_line[LINE_CAP]; /* last executed command for up-arrow recall */
+    uint8_t last_llen;
+    uint8_t esc_state;           /* 0=normal  1=saw ESC  2=saw ESC+[ */
 } Session_T;
 
 uint8_t debug = 0;
@@ -31,24 +34,21 @@ uint8_t debug = 0;
 int main(int argc, char **argv) {
     const uint8_t *net_arg = (const uint8_t *)"slip";
 
+    /* Process all args from argv[1]; unrecognised tokens (e.g. the binary name
+     * the kernel may inject) are silently skipped — only known keywords act. */
     if (argc > 1) {
-        printf((const uint8_t *)"tnt: started with args:");
         for (int i = 1; i < argc; i++) {
-            printf((const uint8_t *)" %s", (uint8_t *)argv[i]);
-
-            if (memcmp((uint8_t *)argv[i], (uint8_t *)"debug", 5) == 0) {
+            if (memcmp((uint8_t *)argv[i], (uint8_t *)"debug", 6) == 0) {
                 debug = 1;
             } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"--net", 5) == 0 && i + 1 < argc) {
                 net_arg = (const uint8_t *)argv[i + 1];
                 i++;
-                printf((const uint8_t *)" %s", (uint8_t *)argv[i]);
-            } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"eth", 3) == 0) {
+            } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"eth", 4) == 0) {
                 net_arg = (const uint8_t *)"eth";
-            } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"slip", 4) == 0) {
+            } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"slip", 5) == 0) {
                 net_arg = (const uint8_t *)"slip";
             }
         }
-        print((const uint8_t *)"\n");
     }
 
     uint8_t packet_buf[2048];
@@ -136,12 +136,44 @@ int main(int argc, char **argv) {
                 continue;
             }
 
+            /*
+             *  ANSI/VT100 escape sequence state machine.
+             *  Up arrow sends ESC [ A (0x1B 0x5B 0x41).
+             *  All other CSI sequences are consumed and ignored.
+             */
+            if (sess->esc_state == 1) {
+                sess->esc_state = (b == '[') ? 2 : 0;
+                continue;
+            }
+            if (sess->esc_state == 2) {
+                sess->esc_state = 0;
+                if (b == 'A' && sess->last_llen > 0) {
+                    /* Erase what is currently typed, then echo the last command. */
+                    for (uint8_t k = 0; k < sess->llen; k++)
+                        write(client, (const uint8_t *)"\b \b", 3);
+                    memcpy(sess->line, sess->last_line, sess->last_llen);
+                    sess->llen = sess->last_llen;
+                    write(client, sess->line, sess->llen);
+                }
+                continue; /* B=down C=right D=left — all ignored */
+            }
+            if (b == 0x1B) { /* ESC */
+                sess->esc_state = 1;
+                continue;
+            }
+
             if (b == '\r') {
                 /* TELNET sends CRLF; \n below fires on the LF */
                 continue;
             }
 
             if (b == '\n') {
+                sess->esc_state = 0;
+                /* Save non-empty command to history before dispatching. */
+                if (sess->llen > 0) {
+                    memcpy(sess->last_line, sess->line, sess->llen);
+                    sess->last_llen = sess->llen;
+                }
                 int quit = shell_dispatch(client, sockets, sess->line, sess->llen);
                 sess->llen = 0;
                 if (quit) {
@@ -154,6 +186,7 @@ int main(int argc, char **argv) {
             }
 
             if (b == 0x7f || b == '\b') { /* DEL or BS */
+                sess->esc_state = 0;
                 if (sess->llen > 0)
                     sess->llen--;
                 continue;

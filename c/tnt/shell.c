@@ -72,7 +72,8 @@ static void cmd_help(TcpSocket_T *sock) {
                                     "  ls [path]     list directory (default: cwd)\r\n"
                                     "  cd <path>     change directory\r\n"
                                     "  read <path>   print file contents\r\n"
-                                    "  run <name>    execute ELF binary\r\n"
+                                    "  bg <name> [args...]  run ELF in background\r\n"
+                                    "  ts            list running tasks\r\n"
                                     "  play <name>   play MIDI file\r\n"
                                     "  stop          stop playback\r\n"
                                     "  sysinfo       show system information\r\n"
@@ -288,35 +289,40 @@ static void cmd_read(TcpSocket_T *sock, const uint8_t *path_arg) {
     uint8_t abs[64];
     build_abs_path(abs, path_arg);
 
-    /* ScReadFile only resolves a single filename component — it cannot traverse
-     * subdirectories.  Split abs into parent dir + bare filename, chdir to the
-     * parent so the kernel sets the right FAT cluster, call read_file with just
-     * the filename, then restore the original cwd. */
-    uint8_t parent[64];
-    const uint8_t *fname = abs;
-    {
-        uint8_t last = 0;
-        for (uint8_t k = 0; abs[k]; k++)
-            if (abs[k] == '/')
-                last = k;
-        if (last > 0) {
-            str_copy(parent, abs, last + 1); /* include the '/' */
-            parent[last] = '\0';
-            fname = abs + last + 1;
-        } else {
-            str_copy(parent, cwd, 64);
-        }
-    }
-
-    chdir(parent);
-
     static uint8_t file_buf[4096];
     uint16_t i;
     for (i = 0; i < (uint16_t)sizeof(file_buf); i++)
         file_buf[i] = 0;
 
-    int64_t r = read_file(fname, file_buf);
-    chdir(cwd); /* restore process cwd cluster */
+    /* Try the full absolute path first — ISO9660 resolves subdirectories
+     * natively, and FAT12 root files work this way too. */
+    int64_t r = read_file(abs, file_buf);
+
+    if (!r) {
+        /* Full-path lookup failed: likely a FAT12 subdirectory file.
+         * ScReadFile only matches a single filename component, so chdir to the
+         * parent directory (which uses resolve_path_from to walk subdirs) and
+         * call read_file with just the bare filename, then restore cwd. */
+        uint8_t parent[64];
+        const uint8_t *fname = abs;
+        uint8_t last = 0;
+        for (uint8_t k = 0; abs[k]; k++)
+            if (abs[k] == '/')
+                last = k;
+        if (last > 0) {
+            str_copy(parent, abs, last + 1);
+            parent[last] = '\0';
+            fname = abs + last + 1;
+        } else {
+            str_copy(parent, cwd, 64);
+        }
+        chdir(parent);
+        for (i = 0; i < (uint16_t)sizeof(file_buf); i++)
+            file_buf[i] = 0;
+        r = read_file(fname, file_buf);
+        chdir(cwd);
+    }
+
     if (!r) {
         sock_str(sock, (const uint8_t *)"read: failed to open '");
         sock_str(sock, abs);
@@ -393,14 +399,68 @@ static void cmd_stop(TcpSocket_T *sock) {
     sock_str(sock, (const uint8_t *)"play: stopped\r\n");
 }
 
-static void cmd_run(TcpSocket_T *sock, const uint8_t *name) {
+static const uint8_t *const task_status[] = {
+    (const uint8_t *)"Ready   ", (const uint8_t *)"Running ", (const uint8_t *)"Idle    ", (const uint8_t *)"Blocked ", (const uint8_t *)"Crashed ", (const uint8_t *)"Dead    ",
+};
+
+static void cmd_ts(TcpSocket_T *sock) {
+    const int MAX_TASKS = 10;
+    TaskInfo_T tasks[MAX_TASKS];
+    int64_t count = list_tasks(tasks, MAX_TASKS);
+
+    if (count <= 0) {
+        sock_str(sock, (const uint8_t *)"No tasks.\r\n");
+        return;
+    }
+
+    sock_str(sock, (const uint8_t *)"PID  M  STATUS    NAME\r\n");
+    for (int64_t i = 0; i < count; i++) {
+        TaskInfo_T *t = &tasks[i];
+        sock_u32(sock, t->id);
+        sock_str(sock, (const uint8_t *)"    ");
+        sock_str(sock, t->mode == 0 ? (const uint8_t *)"K  " : (const uint8_t *)"U  ");
+        uint8_t s = t->status < 6 ? t->status : 0;
+        sock_str(sock, task_status[s]);
+        sock_str(sock, (const uint8_t *)"  ");
+        uint8_t nlen = 0;
+        while (nlen < 16 && t->name[nlen] && t->name[nlen] != ' ')
+            nlen++;
+        write(sock, t->name, nlen);
+        sock_str(sock, (const uint8_t *)"\r\n");
+    }
+}
+
+static void cmd_bg(TcpSocket_T *sock, const uint8_t *arg) {
+    if (!arg || !arg[0]) {
+        sock_str(sock, (const uint8_t *)"bg: usage: bg <name> [args...]\r\n");
+        return;
+    }
+
+    /* Extract the binary name (up to first space) for the file lookup. */
+    uint8_t name[13];
+    uint8_t i = 0;
+    while (i < 12 && arg[i] && arg[i] != ' ') {
+        name[i] = arg[i];
+        i++;
+    }
+    name[i] = '\0';
+
+    if (i == 0) {
+        sock_str(sock, (const uint8_t *)"bg: usage: bg <name> [args...]\r\n");
+        return;
+    }
+
+    /* Pass the full arg string (name + optional args) as the argv array so
+     * push_user_args tokenises it: argv[0]=name, argv[1]=first_arg, ...  */
     uint8_t pid = 0;
-    if (!run_elf(name, &pid)) {
-        sock_str(sock, (const uint8_t *)"run: failed to launch '");
+    if (!run_elf(name, arg, &pid)) {
+        sock_str(sock, (const uint8_t *)"bg: failed to launch '");
         sock_str(sock, name);
         sock_str(sock, (const uint8_t *)"'\r\n");
     } else {
-        sock_str(sock, (const uint8_t *)"run: launched pid=");
+        sock_str(sock, (const uint8_t *)"bg: launched '");
+        sock_str(sock, name);
+        sock_str(sock, (const uint8_t *)"' pid=");
         sock_u32(sock, pid);
         sock_str(sock, (const uint8_t *)"\r\n");
     }
@@ -516,10 +576,12 @@ int shell_dispatch(TcpSocket_T *sock, TcpSocket_T sockets[MAX_SOCKETS], uint8_t 
         cmd_cd(sock, arg);
     } else if ((arg = str_after(line, (const uint8_t *)"read "))) {
         cmd_read(sock, arg);
-    } else if ((arg = str_after(line, (const uint8_t *)"run "))) {
-        cmd_run(sock, arg);
+    } else if ((arg = str_after(line, (const uint8_t *)"bg "))) {
+        cmd_bg(sock, arg);
     } else if ((arg = str_after(line, (const uint8_t *)"play "))) {
         cmd_play(sock, arg);
+    } else if (str_eq(line, (const uint8_t *)"ts")) {
+        cmd_ts(sock);
     } else if (str_eq(line, (const uint8_t *)"stop")) {
         cmd_stop(sock);
     } else {
