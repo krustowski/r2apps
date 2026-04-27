@@ -144,6 +144,7 @@ typedef enum SyscallNumber : int64_t {
     ScListMounts = 0x2c,
     ScListDirPath = 0x2d,
     ScChdir = 0x2e,
+    ScListTasks = 0x2f,
     // Port IO + Networking Operations
     ScWritePort = 0x30,
     ScReadPort = 0x31,
@@ -341,11 +342,39 @@ int64_t chdir(const uint8_t *path);
 int64_t list_dir(int64_t cluster, Entry_T entries[32]);
 
 /*
+ *  type TaskInfo_T structure
+ *
+ *  One entry returned by list_tasks() / ScListTasks (0x2F).
+ *  20 bytes: id(1) mode(1) status(1) _pad(1) name(16).
+ *  mode:   0=Kernel  1=User
+ *  status: 0=Ready 1=Running 2=Idle 3=Blocked 4=Crashed 5=Dead
+ */
+typedef struct {
+    uint8_t id;
+    uint8_t mode;
+    uint8_t status;
+    uint8_t _pad;
+    uint8_t name[16];
+} __attribute__((packed)) TaskInfo_T;
+
+/*
+ *  int64_t list_tasks() prototype
+ *
+ *  Implementation of syscall 0x2F.
+ *  Fills buf with up to <max> TaskInfo_T entries (max 10).
+ *  Returns the number of entries written.
+ */
+int64_t list_tasks(TaskInfo_T *buf, uint8_t max);
+
+/*
  *  int64_t run_elf() prototype
  *
  *  Implementation of syscall 0x2A.
+ *  Launches <name> as a background task.  <args> is a space-delimited string
+ *  whose first token becomes argv[0] (pass NULL to use <name> as argv[0]).
+ *  On success writes the new PID to *pid (if non-NULL) and returns 1.
  */
-int64_t run_elf(const uint8_t *name, uint8_t *pid);
+int64_t run_elf(const uint8_t *name, const uint8_t *args, uint8_t *pid);
 
 /*
  *  int64_t run_fs_check() prototype

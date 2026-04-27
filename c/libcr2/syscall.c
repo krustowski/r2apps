@@ -236,11 +236,16 @@ int64_t list_dir(int64_t cluster, Entry_T entries[32]) {
     return 1;
 }
 
-int64_t run_elf(const uint8_t *name, uint8_t *pid) {
-    if (syscall(ScRunELF, (int64_t)name, (int64_t)pid, 0)) {
-        return 0;
-    }
+int64_t list_tasks(TaskInfo_T *buf, uint8_t max) {
+    return syscall(ScListTasks, (int64_t)buf, (int64_t)max, 0);
+}
 
+int64_t run_elf(const uint8_t *name, const uint8_t *args, uint8_t *pid) {
+    int64_t r = syscall(ScRunELF, (int64_t)name, (int64_t)args, 0);
+    if (r == 0)
+        return 0;
+    if (pid)
+        *pid = (uint8_t)r;
     return 1;
 }
 
