@@ -2,5 +2,5 @@ CompileFlags:
   Add:
     - "-I../libcr2"
     - "-I."
-    #- "-std=gnu2x"
+    - "-std=gnu2x"
 

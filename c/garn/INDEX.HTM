@@ -1,0 +1,19 @@
+<html>
+<head><title>garn</title></head>
+<body>
+<h1>rou2exOS / garn</h1>
+<p>HTTP/1.0 server running on the r2 kernel.</p>
+<p>Time: <b id="up">connecting...</b></p>
+<ul>
+  <li><a href="/info">/info</a> &mdash; system information</li>
+  <li><a href="/events">/events</a> &mdash; SSE uptime stream</li>
+  <li><a href="/HELLO.TXT">/HELLO.TXT</a> &mdash; example file</li>
+</ul>
+<script>
+var es = new EventSource('/events');
+es.addEventListener('time', function(e) {
+  document.getElementById('up').textContent = e.data;
+});
+</script>
+</body>
+</html>

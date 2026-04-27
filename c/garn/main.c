@@ -4,6 +4,7 @@
 #include "string.h"
 #include "syscall.h"
 
+#include "config.h"
 #include "helpers.h"
 #include "parser.h"
 #include "router.h"
@@ -18,32 +19,65 @@
  *  krusty@vxn.dev / Aug 5, 2025
  */
 
-#define BIND_PORT 80
-
 uint8_t debug = 0;
 
 int main(int argc, char **argv) {
-    const uint8_t *net_arg = (const uint8_t *)"slip";
+    GarnConfig_T cfg;
+    config_defaults(&cfg);
 
-    if (argc > 1) {
-        printf((const uint8_t *)"garn: started with args:");
-        for (int i = 1; i < argc; i++) {
-            printf((const uint8_t *)" %s", (uint8_t *)argv[i]);
+    /* Capture the kernel cwd at launch so we can find garn.cfg even if
+     * the shell changes directory after starting us.
+     * run_elf() has no argv mechanism, so --config can't be passed from the
+     * shell — the cwd at launch is the only per-instance discriminator.
+     * Workflow: cd /mnt/fat/GARN1 && run garn  →  reads /mnt/fat/GARN1/garn.cfg
+     *           cd /mnt/fat/GARN2 && run garn  →  reads /mnt/fat/GARN2/garn.cfg */
+    SysInfo_T si;
+    si.system_path[0]  = '\0';
+    si.system_path[31] = '\0';
+    read_sysinfo(&si);
+    si.system_path[31] = '\0';
 
-            if (memcmp((uint8_t *)argv[i], (uint8_t *)"debug", 5) == 0) {
-                debug = 1;
-            } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"--net", 5) == 0 && i + 1 < argc) {
-                net_arg = (const uint8_t *)argv[i + 1];
-                i++;
-                printf((const uint8_t *)" %s", (uint8_t *)argv[i]);
-            } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"eth", 3) == 0) {
-                net_arg = (const uint8_t *)"eth";
-            } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"slip", 4) == 0) {
-                net_arg = (const uint8_t *)"slip";
-            }
-        }
-        print((const uint8_t *)"\n");
+    uint8_t default_config[64];
+    {
+        uint32_t n = strlen(si.system_path);
+        memcpy(default_config, si.system_path, n);
+        if (n > 0 && default_config[n - 1] != '/') default_config[n++] = '/';
+        memcpy(default_config + n, "GARN.CFG\0", 9);
     }
+
+    /* Scan all args for --config; unrecognized tokens (e.g. binary name) are
+     * silently skipped so this works regardless of argv[0] vs argv[1] convention. */
+    const uint8_t *config_path = default_config;
+    for (int i = 1; i < argc - 1; i++) {
+        if (memcmp((uint8_t *)argv[i], (uint8_t *)"--config", 9) == 0) {
+            config_path = (const uint8_t *)argv[i + 1];
+            break;
+        }
+    }
+    config_load(config_path, &cfg);
+
+    /* Apply CLI overrides on top of config; print only recognised args so the
+     * binary name (which the kernel passes as an argv token) stays invisible. */
+    if (argc > 1) {
+        for (int i = 1; i < argc; i++) {
+            if (memcmp((uint8_t *)argv[i], (uint8_t *)"debug", 6) == 0) {
+                cfg.debug = 1;
+            } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"--net", 5) == 0 && i + 1 < argc) {
+                i++;
+                uint32_t nlen = strlen((const uint8_t *)argv[i]);
+                if (nlen > 7) nlen = 7;
+                memcpy(cfg.net, (uint8_t *)argv[i], nlen);
+                cfg.net[nlen] = '\0';
+            } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"eth", 4) == 0) {
+                memcpy(cfg.net, (const uint8_t *)"eth\0", 4);
+            } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"slip", 5) == 0) {
+                memcpy(cfg.net, (const uint8_t *)"slip\0", 5);
+            }
+            /* unrecognised tokens (binary name, --config + its value) silently skipped */
+        }
+    }
+
+    debug = cfg.debug;
 
     uint8_t temp_buf[2048];
     uint8_t packet_buf[2048];
@@ -57,7 +91,7 @@ int main(int argc, char **argv) {
     TcpHeader_T tcp_header;
 
     TcpSocket_T *server = socket_tcp4(sockets);
-    bind(server, BIND_PORT);
+    bind(server, cfg.port);
 
     listen(server);
 
@@ -65,13 +99,13 @@ int main(int argc, char **argv) {
     uint16_t sse_remote_port = 0; /* discriminator: ephemeral port changes on reconnect */
     uint8_t sse_last_sec = 0xff;  /* last RTC second we processed; 0xff = none yet */
 
-    print((const uint8_t *)"-> garn HTTP/1.0 service starting on port 80\n");
+    printf((const uint8_t *)"-> garn HTTP/1.0 service starting on port %u\n", (uint32_t)cfg.port);
 
-    if (net_driver_bind_port(net_arg, BIND_PORT) < 0) {
+    if (net_driver_bind_port(cfg.net, cfg.port) < 0) {
         print((const uint8_t *)"-> net driver init failed\n");
         return 1;
     }
-    printf((const uint8_t *)"-> net driver: %s\n", net_arg);
+    printf((const uint8_t *)"-> net driver: %s\n", cfg.net);
 
     for (;;) {
         if (sse_client) {
@@ -186,7 +220,7 @@ int main(int argc, char **argv) {
             respond(client, 405, (const uint8_t *)"Method Not Allowed", (const uint8_t *)"text/plain", b, strlen(b));
 
         } else if (rpath[0] == '/' && rpath[1] == '\0') {
-            route_root(client);
+            route_file(client, (const uint8_t *)"INDEX.HTM", temp_buf, sizeof(temp_buf), cfg.path);
 
         } else if (memcmp(rpath, (const uint8_t *)"/info", 6) == 0) {
             route_info(client);
@@ -201,7 +235,7 @@ int main(int argc, char **argv) {
             do_close = 0;
 
         } else if (rpath[0] == '/' && rpath[1] != '\0') {
-            route_file(client, rpath + 1, temp_buf, sizeof(temp_buf));
+            route_file(client, rpath + 1, temp_buf, sizeof(temp_buf), cfg.path);
 
         } else {
             const uint8_t b[] = "Not Found";
