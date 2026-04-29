@@ -118,6 +118,19 @@ uint64_t map_vram(void) {
 
 int64_t set_video_mode(uint8_t mode) { return syscall(ScSetVideoMode, (int64_t)mode, 0, 0); }
 
+int64_t get_fb_info(FBInfo_T *info) { return syscall(ScGetFBInfo, (int64_t)info, 0, 0); }
+
+int64_t blit_buffer(const uint32_t *pixels) { return syscall(ScBlitBuffer, (int64_t)pixels, 0, 0); }
+
+int64_t blit_buffer_scaled(const uint32_t *pixels, uint32_t src_w, uint32_t src_h) {
+    int64_t dims = ((int64_t)src_w << 16) | (int64_t)src_h;
+    return syscall(ScBlitBuffer, (int64_t)pixels, dims, 0);
+}
+
+int64_t get_kernel_font(uint8_t *buf, uint64_t buf_size) {
+    return syscall(ScGetKernelFont, (int64_t)buf, (int64_t)buf_size, 0);
+}
+
 int64_t play_freq(uint16_t freq, uint16_t duration) {
     if (syscall(ScPlayFreq, (int64_t)freq, (int64_t)duration, 0)) {
         return 0;
@@ -343,6 +356,8 @@ int64_t send_data(uint8_t type, uint8_t *buffer) {
 int64_t net_register(void) { return syscall(ScNetRegister, 0, 0, 0); }
 
 int64_t net_bind_port(uint16_t port) { return syscall(ScNetRegister, (int64_t)port, 0, 0); }
+
+int64_t get_net_status(NetStatus_T *ns) { return syscall(ScNetStatus, (int64_t)ns, 0, 0); }
 
 int64_t send_eth_frame(const uint8_t *frame, uint32_t len) {
     (void)len;

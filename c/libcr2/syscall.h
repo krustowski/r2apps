@@ -32,7 +32,26 @@ typedef struct {
     uint8_t system_version[8];
     uint32_t system_path_cluster;
     uint32_t system_uptime;
+    uint8_t ip_addr[4];
 } __attribute__((packed)) SysInfo_T;
+
+/*
+ *  type NetStatus_T structure
+ *
+ *  Filled by syscall 0x38 (ScNetStatus).
+ *  mac: RTL8139 hardware MAC (cached in kernel when ETH driver registers).
+ *  ip:  IPv4 address (written by ETH driver via write_sysinfo / 0x01/0x02).
+ *  drv_active: 1 if the global ETH driver process is registered.
+ *  n_ports: number of active TCP port bindings.
+ *  ports[16]: bound TCP destination ports (0-padded).
+ */
+typedef struct {
+    uint8_t  mac[6];
+    uint8_t  ip[4];
+    uint8_t  drv_active;
+    uint8_t  n_ports;
+    uint16_t ports[16];
+} __attribute__((packed)) NetStatus_T;
 
 /*
  *  type Entry_T structure
@@ -94,6 +113,19 @@ typedef struct {
 } __attribute__((packed)) VfsDirEntry_T;
 
 /*
+ *  type FBInfo_T structure
+ *
+ *  Returned by get_fb_info() / ScGetFBInfo (0x16).
+ *  Describes the VESA linear framebuffer provided by the bootloader.
+ */
+typedef struct {
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint32_t bpp;
+} __attribute__((packed)) FBInfo_T;
+
+/*
  *  type RTC_T structure
  *
  *  This structure is to hold all important fields needed to read time from the RTC hardware chip.
@@ -131,6 +163,9 @@ typedef enum SyscallNumber : int64_t {
     ScWriteVGA = 0x13,
     ScMapVram = 0x14,
     ScSetVideoMode = 0x15,
+    ScGetFBInfo = 0x16,
+    ScBlitBuffer = 0x17,
+    ScGetKernelFont = 0x18,
     ScPlayFreq = 0x1a,
     ScPlayFile = 0x1b,
     ScPlayStop = 0x1f,
@@ -155,7 +190,8 @@ typedef enum SyscallNumber : int64_t {
     ScSendPacket = 0x34,
     ScReceivePort = 0x35,
     ScSendPort = 0x36,
-    ScNetRegister = 0x37
+    ScNetRegister = 0x37,
+    ScNetStatus   = 0x38
 } SyscallNo_T;
 
 /*
@@ -273,6 +309,36 @@ int64_t write_vga(const uint8_t *vga_buf, const uint8_t *palette);
  *  Returns the virtual base address on success, 0 on failure. Idempotent.
  */
 uint64_t map_vram(void);
+
+/*
+ *  int64_t get_fb_info() prototype
+ *
+ *  Implementation of syscall 0x16.
+ *  Fills *info with width, height, pitch, and bpp of the VESA framebuffer.
+ *  Returns 0 on success, 1 if no framebuffer is available.
+ */
+int64_t get_fb_info(FBInfo_T *info);
+
+/*
+ *  int64_t blit_buffer() prototype
+ *
+ *  Implementation of syscall 0x17.
+ *  Blits a 32bpp (0x00RRGGBB) pixel buffer of fb.width × fb.height pixels
+ *  to the VESA framebuffer.  One call per frame.
+ */
+int64_t blit_buffer(const uint32_t *pixels);
+int64_t blit_buffer_scaled(const uint32_t *pixels, uint32_t src_w, uint32_t src_h);
+
+/*
+ *  int64_t get_kernel_font() prototype
+ *
+ *  Implementation of syscall 0x18.
+ *  Copies the kernel's embedded PSF1 glyph data into buf (capacity buf_size bytes).
+ *  Returns the char_size (bytes per glyph = font height in rows), or 0 on error.
+ *  Glyph n occupies bytes [n*char_size .. (n+1)*char_size]; each row is one byte,
+ *  MSB = leftmost pixel (8 px wide).
+ */
+int64_t get_kernel_font(uint8_t *buf, uint64_t buf_size);
 
 /*
  *  int64_t set_video_mode() prototype
@@ -528,6 +594,15 @@ int64_t net_register(void);
  *  driver (net_register) must already be running to handle ARP and ICMP.
  */
 int64_t net_bind_port(uint16_t port);
+
+/*
+ *  int64_t get_net_status() prototype
+ *
+ *  Implementation of syscall 0x38.
+ *  Fills *ns with the current network status (MAC, IP, driver active, port table).
+ *  Returns 0 on success, negative on error.
+ */
+int64_t get_net_status(NetStatus_T *ns);
 
 /*
  *  int64_t send_eth_frame() prototype

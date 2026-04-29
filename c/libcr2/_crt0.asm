@@ -1,22 +1,26 @@
+section .bss
+align 16
+r2_stack: resb 1024 * 1536   ; 1.5 MB private stack
+r2_stack_top:
+
 section .text
 
 extern main
 
 global _start
 _start:
-    ; rdi = argc
-    mov rdi, [rsp]
-    ; rsi = &argv[0]
-    lea rsi, [rsp + 8]
+    ; Switch to our own stack before touching any C code.
+    ; The kernel-provided stack is too small for deep C++ call chains.
+    lea rsp, [r2_stack_top]
+    and rsp, -16               ; ensure 16-byte alignment (SysV ABI)
 
-    ; rax = argc
-    mov rax, rdi
-    add rax, 1
-    shl rax, 3        ; multiply by 8
-    add rax, rsi      ; rax = argv + (argc+1)
-    mov rdx, rax      ; rdx = envp
+    ; Preserve argc/argv/envp from the kernel stack — but we've already
+    ; moved RSP, so we can't read [old_rsp] any more.  For this bare-metal
+    ; app we don't need them; pass zeros so main(void) works cleanly.
+    xor rdi, rdi
+    xor rsi, rsi
+    xor rdx, rdx
 
-    ; call main
     call main
 
     ; syscall exit(rax)
@@ -25,5 +29,5 @@ _start:
     mov rdx, 0x00
     int 0x7f
 
-    hlt
-
+.hang:
+    jmp .hang       ; hlt is ring-0 only; spin if exit syscall returns
