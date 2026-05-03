@@ -9,17 +9,17 @@ extern main
 
 global _start
 _start:
-    ; Switch to our own stack before touching any C code.
-    ; The kernel-provided stack is too small for deep C++ call chains.
+    ; The kernel pushes an SysV argv frame on the initial stack:
+    ;   [rsp+0] = argc, [rsp+8] = argv[0], [rsp+16] = argv[1], ...
+    ; Read them before switching to our private stack.
+    mov rdi, [rsp]      ; argc
+    lea rsi, [rsp+8]    ; argv
+
+    ; Switch to our own stack (kernel-provided stack is too small).
     lea rsp, [r2_stack_top]
     and rsp, -16               ; ensure 16-byte alignment (SysV ABI)
 
-    ; Preserve argc/argv/envp from the kernel stack — but we've already
-    ; moved RSP, so we can't read [old_rsp] any more.  For this bare-metal
-    ; app we don't need them; pass zeros so main(void) works cleanly.
-    xor rdi, rdi
-    xor rsi, rsi
-    xor rdx, rdx
+    xor rdx, rdx               ; envp = NULL
 
     call main
 

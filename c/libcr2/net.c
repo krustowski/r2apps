@@ -313,10 +313,10 @@ NetDriver_T net_drv;
 int net_driver_select(const uint8_t *name) {
     if (name && name[0] == 'e') {
         static const uint8_t my_mac[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
-        static const uint8_t my_ip[4] = {10, 3, 4, 2};
+        static const uint8_t my_ip[4]  = {10, 3, 4, 2};
 
         memcpy(eth_my_mac, my_mac, 6);
-        memcpy(eth_my_ip, my_ip, 4);
+        memcpy(eth_my_ip,  my_ip,  4);
 
         net_register();
         net_drv.recv = eth_drv_recv;
@@ -338,11 +338,16 @@ int net_driver_select(const uint8_t *name) {
 int net_driver_bind_port(const uint8_t *name, uint16_t port) {
     if (name && name[0] == 'e') {
         static const uint8_t my_mac[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
-        static const uint8_t my_ip[4] = {10, 3, 4, 2};
+        static const uint8_t my_ip[4]  = {10, 3, 4, 2};
 
         memcpy(eth_my_mac, my_mac, 6);
-        memcpy(eth_my_ip, my_ip, 4);
+        memcpy(eth_my_ip,  my_ip,  4);
 
+        /* Become the global driver if nobody else has registered yet.
+         * The kernel's register_driver is idempotent: first caller wins,
+         * subsequent calls are no-ops.  This lets GARN or TNT bootstrap
+         * the NIC without a separate eth.elf process. */
+        net_register();
         net_bind_port(port);
         net_drv.recv = eth_drv_recv;
         net_drv.send_ip = eth_drv_send;
@@ -631,6 +636,24 @@ TcpSocket_T *tcp_connect(TcpSocket_T sockets[MAX_SOCKETS], const uint8_t remote_
 void free_socket(TcpSocket_T *sock) {
     sock->used = 0;
     sock->state = SOCKET_CLOSED;
+}
+
+SocketSet_T socket_select(TcpSocket_T sockets[MAX_SOCKETS], uint8_t events) {
+    SocketSet_T result = 0;
+    for (uint8_t i = 0; i < MAX_SOCKETS; i++) {
+        TcpSocket_T *s = &sockets[i];
+        if (!s->used) continue;
+        uint8_t match = 0;
+        if ((events & SEL_READ)   && s->state == SOCKET_ESTABLISHED && s->rx_len > 0)
+            match = 1;
+        if ((events & SEL_WRITE)  && s->state == SOCKET_ESTABLISHED)
+            match = 1;
+        if ((events & SEL_EXCEPT) && s->state != SOCKET_ESTABLISHED && s->state != SOCKET_LISTENING)
+            match = 1;
+        if (match)
+            result |= (SocketSet_T)(1u << i);
+    }
+    return result;
 }
 
 void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8_t flags) {

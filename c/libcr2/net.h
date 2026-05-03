@@ -253,6 +253,30 @@ TcpSocket_T *alloc_socket(TcpSocket_T sockets[MAX_SOCKETS]);
 void free_socket(TcpSocket_T *sock);
 
 /*
+ *  type SocketSet_T
+ *
+ *  Bitmask of socket slots — bit i corresponds to sockets[i].
+ *  Supports up to MAX_SOCKETS = 8 sockets.
+ */
+typedef uint8_t SocketSet_T;
+
+#define SEL_READ   0x01  /* ESTABLISHED and rx_len > 0 (data waiting) */
+#define SEL_WRITE  0x02  /* ESTABLISHED (ready to send) */
+#define SEL_EXCEPT 0x04  /* used but not ESTABLISHED or LISTENING (stale/error) */
+
+/*
+ *  SocketSet_T socket_select() prototype
+ *
+ *  Non-blocking scan of the socket array.  For each used slot whose current
+ *  state matches at least one of the requested event flags (SEL_READ,
+ *  SEL_WRITE, SEL_EXCEPT), the corresponding bit is set in the returned
+ *  bitmask.  Returns 0 if no sockets match.
+ *
+ *  Does not block and makes no syscalls — all state is in userland memory.
+ */
+SocketSet_T socket_select(TcpSocket_T sockets[MAX_SOCKETS], uint8_t events);
+
+/*
  *  void bind() prototype
  *
  *  This function sets a socket's <local_port> property to the <port> value.
