@@ -191,7 +191,8 @@ typedef enum SyscallNumber : int64_t {
     ScReceivePort = 0x35,
     ScSendPort = 0x36,
     ScNetRegister = 0x37,
-    ScNetStatus   = 0x38
+    ScNetStatus   = 0x38,
+    ScReadFileAt  = 0x39
 } SyscallNo_T;
 
 /*
@@ -444,8 +445,37 @@ void free(void *ptr);
  *  int64_t read_file() prototype
  *
  *  Implementation of syscall 0x20.
+ *
+ *  Reads the whole file, and is never told how much room the buffer has, so
+ *  the caller must be able to hold the largest file it will ever be handed.
+ *  read_file_at() is the way to read a file that does not fit.
  */
 int64_t read_file(const uint8_t *name, uint8_t *buffer);
+
+/*
+ *  A range of a file to read: where the bytes go, where in the file to start
+ *  and how many to take.  Passed to the kernel by pointer.
+ */
+typedef struct {
+    uint64_t buffer;
+    uint64_t offset;
+    uint64_t length;
+} ReadRange_T;
+
+/*
+ *  int64_t read_file_at() prototype
+ *
+ *  Implementation of syscall 0x39.
+ *
+ *  Reads at most <length> bytes of <name> starting <offset> bytes in, and
+ *  returns how many were read: short at the end of the file, zero when
+ *  <offset> is past it, and -1 on an error.  Unlike read_file() the kernel
+ *  is told the size of the buffer, so a file larger than anything the caller
+ *  could hold can be worked through a piece at a time.
+ *
+ *  Works on the floppy and on the CD alike.
+ */
+int64_t read_file_at(const uint8_t *name, uint8_t *buffer, uint64_t offset, uint64_t length);
 
 /*
  *  int64_t write_file() prototype
@@ -547,10 +577,15 @@ int64_t list_mounts(MountInfo_T *buf);
  *
  *  Implementation of syscall 0x2D.
  *  Lists the directory at the given absolute VFS path (FAT12 or ISO9660).
- *  Fills buf with up to 32 VfsDirEntry_T entries (38 bytes each).
- *  Returns the number of entries written, or a negative error code.
+ *
+ *  buf MUST have room for 64 entries of 38 bytes (2432 bytes).  The syscall
+ *  carries no capacity argument and writes one entry per directory member up
+ *  to 64, so a shorter buffer is silently overrun.
+ *
+ *  Returns the number of entries written, or -1 on error.  Treat any value
+ *  outside [0, 64] as an error before using the buffer.
  */
-int64_t list_dir_path(const uint8_t *path, VfsDirEntry_T buf[32]);
+int64_t list_dir_path(const uint8_t *path, VfsDirEntry_T buf[64]);
 
 /*
  *  int64_t write_port() prototype

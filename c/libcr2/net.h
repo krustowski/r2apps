@@ -107,6 +107,23 @@ extern NetDriver_T net_drv;
 int net_recv_nb(uint8_t *buf, uint32_t maxlen);
 
 /*
+ *  void net_set_nonblocking() prototype
+ *
+ *  Switches the ETH driver between the blocking receive (the default, which
+ *  suspends the process inside the kernel until a frame arrives) and the
+ *  non-blocking one, which returns 0 when the queue is empty.
+ *
+ *  A server that must do work between packets -- pushing timed events, reaping
+ *  idle sockets -- cannot use the blocking reader: everything else in its loop
+ *  would then run only as often as packets happen to arrive.  Such a server
+ *  selects the non-blocking reader and paces itself with sleep_ms().
+ *
+ *  No effect under SLIP, whose reader never blocks.
+ *  Call after net_driver_select() / net_driver_bind_port().
+ */
+void net_set_nonblocking(uint8_t on);
+
+/*
  *  int net_driver_select() prototype
  *
  *  Initialises net_drv with the requested driver ("slip" or "eth").
@@ -136,6 +153,7 @@ int net_driver_bind_port(const uint8_t *name, uint16_t port);
  */
 void net_get_local_ip(uint8_t ip[4]);
 void net_get_local_mac(uint8_t mac[6]);
+void net_arp_set(const uint8_t ip[4], const uint8_t mac[6]);
 
 /*
  *  type Ipv4Header_T structure
@@ -202,7 +220,14 @@ typedef struct {
  *
  *  Uncomplete list of various TCP connection states.
  */
-typedef enum { SOCKET_CLOSED, SOCKET_LISTENING, SOCKET_SYN_SENT, SOCKET_ESTABLISHED, SOCKET_FIN_WAIT } SocketState;
+typedef enum {
+    SOCKET_CLOSED,
+    SOCKET_LISTENING,
+    SOCKET_SYN_SENT,
+    SOCKET_ESTABLISHED,
+    SOCKET_FIN_WAIT,  /* we sent FIN, waiting for the peer to finish the close */
+    SOCKET_CLOSE_WAIT /* peer sent FIN, but its request is still unread */
+} SocketState;
 
 /*
  *  type TcpSocket_T structure
@@ -224,6 +249,7 @@ typedef struct TcpSocket_T {
     uint8_t used;
     uint32_t seq_num;
     uint32_t ack_num;
+    uint32_t last_activity; /* net_set_time() stamp of last traffic; see socket_reap() */
 } __attribute__((packed)) TcpSocket_T;
 
 /*
@@ -264,6 +290,43 @@ TcpSocket_T *alloc_socket(TcpSocket_T sockets[MAX_SOCKETS]);
 void free_socket(TcpSocket_T *sock);
 
 /*
+ *  void socket_pool_init() prototype
+ *
+ *  Puts every slot of a socket array into a known-closed state.  _crt0.asm
+ *  reserves BSS but does not clear it, so a `static TcpSocket_T sockets[]`
+ *  only starts out zeroed if the kernel's ELF loader clears the
+ *  memsz-over-filesz gap.  Call this before socket_tcp4() and the pool is
+ *  well-defined either way.
+ */
+void socket_pool_init(TcpSocket_T sockets[MAX_SOCKETS]);
+
+/*
+ *  void net_set_time() prototype
+ *
+ *  Publishes a monotonically increasing wall-clock second count (the
+ *  system_uptime field of SysInfo_T, for instance) to the TCP layer, which
+ *  stamps each socket's last_activity from it.  That stamp is what lets
+ *  socket_reap() tell a live connection from an abandoned one.
+ *
+ *  A value of 0 means "no clock available" and disables socket_reap(), so
+ *  callers that never invoke this are unaffected.
+ */
+void net_set_time(uint32_t secs);
+
+/*
+ *  void net_set_debug() prototype
+ *
+ *  Turns per-packet TCP tracing on or off.  Off by default.
+ *
+ *  send_tcp_packet() runs for every segment sent, bare ACKs included, so the
+ *  trace is only useful while debugging a specific exchange: left on it buries
+ *  the kernel console and throttles transfers to the speed of the serial
+ *  writes.  Applications with a debug switch of their own should forward it
+ *  here.  Genuine errors are reported regardless of this setting.
+ */
+void net_set_debug(uint8_t on);
+
+/*
  *  type SocketSet_T
  *
  *  Bitmask of socket slots — bit i corresponds to sockets[i].
@@ -286,6 +349,25 @@ typedef uint8_t SocketSet_T;
  *  Does not block and makes no syscalls — all state is in userland memory.
  */
 SocketSet_T socket_select(TcpSocket_T sockets[MAX_SOCKETS], uint8_t events);
+
+/*
+ *  uint8_t socket_reap() prototype
+ *
+ *  Releases sockets that have gone quiet: those idle for at least <idle_secs>
+ *  (reset with an RST first, so the peer learns the connection is gone) and
+ *  those stuck in FIN_WAIT because the peer never completed the close.
+ *
+ *  Slots whose bit is set in <protect> are left alone -- pass the bit of a
+ *  deliberately long-lived connection, such as an open event stream.
+ *  LISTENING sockets are never collected.
+ *
+ *  Without this a peer that opens connections and abandons them (a browser
+ *  speculatively pre-connecting, say) pins a slot each time until the pool is
+ *  exhausted and every further SYN can only be answered with an RST.
+ *
+ *  Returns the number of slots released.  Requires net_set_time().
+ */
+uint8_t socket_reap(TcpSocket_T sockets[MAX_SOCKETS], uint32_t idle_secs, SocketSet_T protect);
 
 /*
  *  void bind() prototype

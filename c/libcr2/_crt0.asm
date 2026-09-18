@@ -4,7 +4,6 @@ r2_stack: resb 1024 * 1536   ; 1.5 MB private stack
 r2_stack_top:
 
 section .text
-
 extern main
 
 global _start
@@ -23,10 +22,16 @@ _start:
 
     call main
 
-    ; syscall exit(rax)
-    mov rsi, rax
-    mov rdi, 0x00
-    mov rdx, 0x00
+    ; syscall exit(code) --- RAX = syscall No., RDI = arg1, RSI = arg2.
+    ;
+    ; main's return value arrives in RAX, which is exactly where the kernel
+    ; looks for the syscall number, so it has to be moved out of the way
+    ; first: a non-zero exit code would otherwise invoke the syscall of that
+    ; number instead of exit, the process would spin in .hang below, and a
+    ; shell waiting on it (fg) would never be woken again.
+    mov rsi, rax               ; arg2 = exit code
+    mov rdi, 0x00              ; arg1 = pid (unused)
+    xor eax, eax               ; syscall No. 0x00 = exit
     int 0x7f
 
 .hang:

@@ -302,8 +302,26 @@ int64_t list_mounts(MountInfo_T *buf) {
     return syscall(ScListMounts, 0, (int64_t)buf, 0);
 }
 
-int64_t list_dir_path(const uint8_t *path, VfsDirEntry_T buf[32]) {
+/* buf MUST have room for 64 entries (64 * 38 = 2432 bytes).  Syscall 0x2D
+ * takes no capacity argument and writes as many entries as the directory
+ * holds, up to 64, so a smaller buffer is overrun with no diagnostic.
+ * Returns the entry count, or -1 on error; treat anything outside [0, 64]
+ * as an error. */
+int64_t list_dir_path(const uint8_t *path, VfsDirEntry_T buf[64]) {
     return syscall(ScListDirPath, (int64_t)path, (int64_t)buf, 0);
+}
+
+int64_t read_file_at(const uint8_t *name, uint8_t *buffer, uint64_t offset, uint64_t length) {
+    ReadRange_T req;
+
+    if (!name || !name[0] || !buffer)
+        return -1;
+
+    req.buffer = (uint64_t)buffer;
+    req.offset = offset;
+    req.length = length;
+
+    return syscall(ScReadFileAt, (int64_t)name, (int64_t)&req, 0);
 }
 
 /* Kernel PORT_WRITE (0x30) ABI: arg1=&port (u16 ptr), arg2=&value (u32 ptr). */
