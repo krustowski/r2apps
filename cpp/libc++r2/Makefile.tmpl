@@ -1,0 +1,82 @@
+#
+#  Makefile.tmpl --- shared build rules for a C++ program targeting r2.
+#
+#  An application Makefile sets a name and includes this:
+#
+#      NAME := hello
+#      include ../../Makefile.tmpl
+#
+#  and gets:
+#
+#      make build      NAME.elf and NAME.bin
+#      make install    copy NAME.ELF onto the floppy image
+#      make clean
+#
+#  Variables worth overriding before the include:
+#
+#      SOURCES      default: every .cpp beside the Makefile
+#      LIBCXXR2     path to the libc++r2 root (default: two levels up)
+#      LIBCR2       path to c/libcr2.a, when linking the C library too
+#      FLOPPY       floppy image for `make install`
+#
+
+NAME     ?= app
+LIBCXXR2 ?= $(abspath ../..)
+BUILD    ?= ./build
+SOURCES  ?= $(wildcard *.cpp)
+FLOPPY   ?= $(abspath $(LIBCXXR2)/../../fat.img)
+
+CXX      ?= g++
+NASM     ?= nasm
+OBJCOPY  ?= llvm-objcopy
+
+INCLUDE  := $(LIBCXXR2)/include
+LIBRARY  := $(LIBCXXR2)/libc++r2.a
+CRT0_OBJ := $(LIBCXXR2)/_crt0.o
+LINKER   := $(LIBCXXR2)/linker.ld
+
+CXXFLAGS ?= -std=c++17 -m64 -O2 \
+            -ffreestanding -nostdlib -nostdinc -nostdinc++ \
+            -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+            -fno-stack-protector -fno-asynchronous-unwind-tables \
+            -fno-pie -fcf-protection=none -mno-red-zone -fno-math-errno \
+            -ffunction-sections -fdata-sections \
+            -Wall -Wextra \
+            -I$(INCLUDE)
+
+#  --gc-sections drops every function the program does not reach, which is
+#  what keeps a binary that includes the whole library down to a few tens of
+#  kilobytes.  -lgcc supplies the compiler's own helpers (128-bit division and
+#  the like); it is a static archive with no libc behind it.
+LDFLAGS  ?= -nostdlib -nostartfiles -static -no-pie \
+            -Wl,--gc-sections \
+            -Xlinker "-T$(LINKER)"
+
+OBJECTS  := $(patsubst %.cpp,$(BUILD)/%.o,$(notdir $(SOURCES)))
+
+.PHONY: build clean install run-info
+
+build: $(NAME).elf $(NAME).bin
+
+$(BUILD)/%.o: %.cpp
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(LIBRARY) $(CRT0_OBJ):
+	@$(MAKE) -C $(LIBCXXR2) all
+
+$(NAME).elf: $(OBJECTS) $(LIBRARY) $(CRT0_OBJ)
+	$(CXX) $(LDFLAGS) $(CRT0_OBJ) $(OBJECTS) $(LIBRARY) $(EXTRA_LIBS) -lgcc -o $@
+	@echo "built $@"
+
+$(NAME).bin: $(NAME).elf
+	@$(OBJCOPY) -O binary $< $@
+
+#  The kernel loads 8.3 names from a FAT12 image, so the file goes on in
+#  upper case.
+install: $(NAME).elf
+	@mcopy -o -i $(FLOPPY) $(NAME).elf ::$(shell echo $(NAME) | tr a-z A-Z | cut -c1-8).ELF
+	@echo "copied $(NAME).elf to $(FLOPPY)"
+
+clean:
+	@rm -rf $(BUILD) $(NAME).elf $(NAME).bin

@@ -1,0 +1,7 @@
+build/
+*.o
+*.a
+*.elf
+*.bin
+tests/host/host_test
+tests/host/arena_test
