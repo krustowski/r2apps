@@ -6,6 +6,7 @@
  */
 
 #include "optional.hpp"
+#include "panic.hpp"
 #include "string.hpp"
 #include "syscall.hpp"
 #include "vector.hpp"
@@ -26,13 +27,6 @@ string_view arg(int index) noexcept;
 /*  Ends the process without running any of that.  For use when the program
  *  state is already suspect.  */
 [[noreturn]] void quick_exit(int code);
-
-/*
- *  Prints a message and exits with code 1.  This is what the runtime calls
- *  when it gives up --- a pure virtual call, a failed assertion, an attempt to
- *  throw with exceptions disabled.
- */
-[[noreturn]] void panic(string_view message);
 
 /*  Registers a function to run at exit.  Up to 32; returns false past that.  */
 bool at_exit(void (*fn)());
@@ -64,18 +58,5 @@ string_view task_status_name(uint8_t status);
 optional<uint8_t> spawn(string_view path, string_view args = string_view());
 
 } // namespace r2
-
-/*
- *  R2_ASSERT — panics with file and line when the condition does not hold.
- *  Compiled out entirely when R2_NDEBUG is defined.
- */
-#ifdef R2_NDEBUG
-#define R2_ASSERT(cond) ((void)0)
-#else
-#define R2_ASSERT(cond)                                                                            \
-    ((cond) ? (void)0 : ::r2::panic(::r2::string_view(__FILE__ ":" R2_STRINGIFY(__LINE__) ": " #cond)))
-#define R2_STRINGIFY_(x) #x
-#define R2_STRINGIFY(x) R2_STRINGIFY_(x)
-#endif
 
 #endif

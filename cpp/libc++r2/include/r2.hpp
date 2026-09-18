@@ -14,18 +14,27 @@
  *          return 0;
  *      }
  *
- *  Build with cpp/libc++r2/Makefile.tmpl; see README.md.
+ *  Build with cpp/libc++r2/Makefile.tmpl; see README.md.  The default is
+ *  C++23: compare.hpp, concepts.hpp, coroutine.hpp and expected.hpp are the
+ *  C++20/23 pieces, and each is a no-op when the translation unit is built as
+ *  C++17, so older code keeps compiling unchanged.
  */
 
 #include "r2/types.hpp"
 
 #include "r2/algorithm.hpp"
 #include "r2/array.hpp"
+#include "r2/compare.hpp"
+#include "r2/concepts.hpp"
+#include "r2/coroutine.hpp"
+#include "r2/expected.hpp"
 #include "r2/function.hpp"
 #include "r2/initializer_list.hpp"
 #include "r2/memory.hpp"
 #include "r2/new.hpp"
 #include "r2/optional.hpp"
+#include "r2/panic.hpp"
+#include "r2/source_location.hpp"
 #include "r2/span.hpp"
 #include "r2/string.hpp"
 #include "r2/string_view.hpp"

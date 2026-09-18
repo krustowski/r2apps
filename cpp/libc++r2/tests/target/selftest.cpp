@@ -179,6 +179,80 @@ void test_math() {
     CHECK(sin(r2::PI / 2) > 0.9999);
 }
 
+#if R2_CXX20_OR_LATER
+
+/*  A coroutine, so the frame allocation happens on the real arena.  */
+generator<uint32_t> fibonacci(uint32_t count) {
+    uint32_t a = 0;
+    uint32_t b = 1;
+    for (uint32_t i = 0; i < count; i++) {
+        co_yield a;
+        uint32_t next = a + b;
+        a = b;
+        b = next;
+    }
+}
+
+enum class ProbeError { TooSmall, Missing };
+
+expected<uint32_t, ProbeError> checked_double(uint32_t value) {
+    if (value == 0)
+        return unexpected(ProbeError::TooSmall);
+    return value * 2;
+}
+
+void test_cxx23() {
+    println("c++20/23 facilities");
+
+    /*  Three-way comparison on the library's own types.  */
+    CHECK((string_view("abc") <=> string_view("abd")) < 0);
+    CHECK((string("x") <=> string("x")) == 0);
+
+    /*  expected, including the monadic path.  */
+    auto doubled = checked_double(21);
+    CHECK(doubled.has_value());
+    CHECK(*doubled == 42);
+
+    auto failed = checked_double(0);
+    CHECK(!failed.has_value());
+    CHECK(failed.error() == ProbeError::TooSmall);
+    CHECK(failed.value_or(7) == 7);
+
+    auto chained = doubled.transform([](uint32_t v) { return v + 1; });
+    CHECK(chained.has_value());
+    CHECK(*chained == 43);
+
+    /*  Coroutines: the frame comes out of the arena, so this is the check
+     *  that matters on target.  */
+    heap::Stats before = heap::stats();
+
+    vector<uint32_t> sequence;
+    for (uint32_t value : fibonacci(10))
+        CHECK(sequence.push_back(value));
+
+    CHECK(sequence.size() == 10);
+    CHECK(sequence[0] == 0);
+    CHECK(sequence[1] == 1);
+    CHECK(sequence[9] == 34);
+
+    sequence.clear();
+    sequence = vector<uint32_t>();
+
+    /*  The frame must be given back when the generator goes out of scope.  */
+    heap::Stats after = heap::stats();
+    CHECK(after.live_allocations == before.live_allocations);
+    CHECK(after.free_bytes == before.free_bytes);
+
+    /*  Structured bindings through the tuple protocol.  */
+    array<int, 3> triple{4, 5, 6};
+    auto [a, b, c] = triple;
+    CHECK(a == 4 && b == 5 && c == 6);
+
+    printf("  generator, expected and <=> all work on target\n");
+}
+
+#endif
+
 void write_report() {
     string report;
 
@@ -202,6 +276,9 @@ int main() {
     test_filesystem();
     test_time_and_system();
     test_math();
+#if R2_CXX20_OR_LATER
+    test_cxx23();
+#endif
 
     printf("\n{} checks, {} failures\n", g_checks, g_failures);
     write_report();

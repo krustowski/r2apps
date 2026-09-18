@@ -26,6 +26,13 @@ BUILD    ?= ./build
 SOURCES  ?= $(wildcard *.cpp)
 FLOPPY   ?= $(abspath $(LIBCXXR2)/../../fat.img)
 
+#  Language standard.  C++23 by default; the library also builds and works as
+#  C++17 (make STD=c++17), which is what cpp/memento-hello needs.  The C++20/23
+#  headers --- compare, concepts, coroutine, expected --- are empty below C++20,
+#  and R2_REQUIRES erases the constraints, so nothing else changes.
+STD      ?= c++23
+STD_FLAG := -std=$(STD)
+
 CXX      ?= g++
 NASM     ?= nasm
 OBJCOPY  ?= llvm-objcopy
@@ -35,7 +42,7 @@ LIBRARY  := $(LIBCXXR2)/libc++r2.a
 CRT0_OBJ := $(LIBCXXR2)/_crt0.o
 LINKER   := $(LIBCXXR2)/linker.ld
 
-CXXFLAGS ?= -std=c++17 -m64 -O2 \
+CXXFLAGS ?= $(STD_FLAG) -m64 -O2 \
             -ffreestanding -nostdlib -nostdinc -nostdinc++ \
             -fno-exceptions -fno-rtti -fno-threadsafe-statics \
             -fno-stack-protector -fno-asynchronous-unwind-tables \

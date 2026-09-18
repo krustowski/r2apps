@@ -248,6 +248,25 @@ template <class Sink> void format_value(Sink &w, Pad v) {
 template <class Sink> void format_value(Sink &w, Fixed v) { format_double(w, v.value, v.decimals); }
 
 /* ------------------------------------------------------------------------ *
+ *  formattable — what print() will accept
+ * ------------------------------------------------------------------------ */
+
+#if R2_CXX20_OR_LATER
+/*
+ *  A type is formattable when a format_value overload accepts it.  Constraining
+ *  print() on this turns a wall of "no matching function for call to
+ *  format_value" into one line naming the argument that cannot be printed ---
+ *  and it is the hook for adding your own types: declare
+ *
+ *      template <class W> void format_value(W &w, const MyType &v);
+ *
+ *  in MyType's namespace and argument-dependent lookup finds it.
+ */
+template <class T>
+concept formattable = requires(StringWriter &sink, const T &value) { format_value(sink, value); };
+#endif
+
+/* ------------------------------------------------------------------------ *
  *  print / println / printf / format
  * ------------------------------------------------------------------------ */
 
@@ -270,12 +289,16 @@ void substitute(Sink &w, string_view fmt, const T &value, const Rest &...rest) {
 } // namespace detail
 
 /*  Writes each argument in turn, then flushes.  */
-template <class... Args> void print(const Args &...args) {
+template <class... Args>
+R2_REQUIRES((formattable<Args> && ...))
+void print(const Args &...args) {
     (format_value(out, args), ...);
     out.flush();
 }
 
-template <class... Args> void println(const Args &...args) {
+template <class... Args>
+R2_REQUIRES((formattable<Args> && ...))
+void println(const Args &...args) {
     (format_value(out, args), ...);
     out.put('\n');
     out.flush();
@@ -283,13 +306,17 @@ template <class... Args> void println(const Args &...args) {
 
 /*  Substitutes each {} in fmt with the next argument.  Surplus arguments are
  *  dropped; a {} with no argument left is written through unchanged.  */
-template <class... Args> void printf(string_view fmt, const Args &...args) {
+template <class... Args>
+R2_REQUIRES((formattable<Args> && ...))
+void printf(string_view fmt, const Args &...args) {
     detail::substitute(out, fmt, args...);
     out.flush();
 }
 
 /*  The same substitution, returned as a string rather than printed.  */
-template <class... Args> string format(string_view fmt, const Args &...args) {
+template <class... Args>
+R2_REQUIRES((formattable<Args> && ...))
+string format(string_view fmt, const Args &...args) {
     string result;
     StringWriter sink(result);
     detail::substitute(sink, fmt, args...);
@@ -297,7 +324,9 @@ template <class... Args> string format(string_view fmt, const Args &...args) {
 }
 
 /*  Concatenates its arguments into a string.  */
-template <class... Args> string concat(const Args &...args) {
+template <class... Args>
+R2_REQUIRES((formattable<Args> && ...))
+string concat(const Args &...args) {
     string result;
     StringWriter sink(result);
     (format_value(sink, args), ...);

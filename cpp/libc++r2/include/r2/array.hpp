@@ -6,6 +6,8 @@
  */
 
 #include "algorithm.hpp"
+#include "compare.hpp"
+#include "tuple.hpp"
 
 namespace r2 {
 
@@ -52,6 +54,50 @@ constexpr bool operator==(const array<T, N> &a, const array<T, N> &b) {
     return true;
 }
 
+template <class T, size_t N>
+constexpr bool operator!=(const array<T, N> &a, const array<T, N> &b) {
+    return !(a == b);
+}
+
+/*  get<I>(arr) --- the third piece of the tuple protocol, found by ADL.  */
+template <size_t I, class T, size_t N> constexpr T &get(array<T, N> &a) noexcept {
+    static_assert(I < N, "array index out of range");
+    return a.elems_[I];
+}
+
+template <size_t I, class T, size_t N> constexpr const T &get(const array<T, N> &a) noexcept {
+    static_assert(I < N, "array index out of range");
+    return a.elems_[I];
+}
+
+template <size_t I, class T, size_t N> constexpr T &&get(array<T, N> &&a) noexcept {
+    static_assert(I < N, "array index out of range");
+    return static_cast<T &&>(a.elems_[I]);
+}
+
+#if __cplusplus >= 202002L
+template <class T, size_t N>
+constexpr auto operator<=>(const array<T, N> &a, const array<T, N> &b) {
+    for (size_t i = 0; i < N; i++) {
+        if (auto order = a[i] <=> b[i]; order != 0)
+            return order;
+    }
+    return decltype(a[0] <=> b[0])::equivalent;
+}
+#endif
+
 } // namespace r2
+
+namespace std {
+
+template <class T, r2::usize N> struct tuple_size<r2::array<T, N>> {
+    static constexpr r2::usize value = N;
+};
+
+template <r2::usize I, class T, r2::usize N> struct tuple_element<I, r2::array<T, N>> {
+    using type = T;
+};
+
+} // namespace std
 
 #endif

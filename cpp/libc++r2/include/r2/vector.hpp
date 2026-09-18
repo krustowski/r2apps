@@ -264,6 +264,18 @@ template <class T> bool operator==(const vector<T> &a, const vector<T> &b) {
 
 template <class T> bool operator!=(const vector<T> &a, const vector<T> &b) { return !(a == b); }
 
+#if __cplusplus >= 202002L
+/*  Lexicographical, the same order std::vector uses.  */
+template <class T> auto operator<=>(const vector<T> &a, const vector<T> &b) {
+    size_t shared = a.size() < b.size() ? a.size() : b.size();
+    for (size_t i = 0; i < shared; i++) {
+        if (auto order = a[i] <=> b[i]; order != 0)
+            return order;
+    }
+    return static_cast<decltype(a[0] <=> b[0])>(a.size() <=> b.size());
+}
+#endif
+
 } // namespace r2
 
 #endif

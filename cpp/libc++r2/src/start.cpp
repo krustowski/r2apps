@@ -122,4 +122,27 @@ void panic(string_view message) {
     leave(1);
 }
 
+void panic_at(string_view message, source_location where) {
+    write_console(string_view("\npanic: "));
+    write_console(message);
+    write_console(string_view(" ["));
+    write_console(string_view(where.file_name()));
+    write_console(string_view(":"));
+
+    /*  Formatting the line number by hand, because format() allocates and the
+     *  heap is one of the things that might have gone wrong.  */
+    char digits[12];
+    size_t count = 0;
+    uint32_t line = where.line();
+    do {
+        digits[count++] = (char)('0' + line % 10);
+        line /= 10;
+    } while (line != 0 && count < sizeof(digits));
+    while (count > 0)
+        write_console(string_view(&digits[--count], 1));
+
+    write_console(string_view("]\n"));
+    leave(1);
+}
+
 } // namespace r2

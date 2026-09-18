@@ -99,6 +99,67 @@ void show_filesystem() {
     }
 }
 
+#if R2_CXX20_OR_LATER
+
+/*
+ *  The C++20/23 half of the library.  Guarded, so this same file still builds
+ *  with `make build STD=c++17`, where the guard simply removes it.
+ */
+
+enum class ConfigError { Missing, Malformed };
+
+/*  expected<T, E>: the value, or the reason there isn't one.  */
+expected<int, ConfigError> read_port(string_view text) {
+    if (text.empty())
+        return unexpected(ConfigError::Missing);
+
+    int64_t value = 0;
+    if (!parse_int(text, value) || value <= 0 || value > 65535)
+        return unexpected(ConfigError::Malformed);
+
+    return (int)value;
+}
+
+string_view describe(ConfigError error) {
+    return error == ConfigError::Missing ? string_view("missing") : string_view("malformed");
+}
+
+/*  A coroutine: values are produced one at a time, not collected up front.  */
+generator<string> directory_names(string_view path) {
+    for (const fs::Entry &entry : fs::list(path))
+        co_yield entry.name;
+}
+
+void show_cxx23() {
+    println("\nc++23");
+
+    for (string_view text : {string_view("8080"), string_view("nonsense"), string_view()}) {
+        auto port = read_port(text);
+        if (port)
+            printf("  port \"{}\" -> {}\n", text, *port);
+        else
+            printf("  port \"{}\" -> {}\n", text, describe(port.error()));
+    }
+
+    /*  The monadic form: the error passes straight through the chain.  */
+    auto doubled = read_port("21").transform([](int value) { return value * 2; });
+    printf("  21 doubled -> {}\n", doubled.value_or(-1));
+
+    size_t count = 0;
+    for (const string &name : directory_names("/")) {
+        if (count++ < 3)
+            printf("  lazily: {}\n", name);
+    }
+    printf("  {} names pulled from the generator\n", count);
+
+    /*  Three-way comparison, on the library's own types.  */
+    printf("  \"abc\" <=> \"abd\" is {}\n",
+           (string_view("abc") <=> string_view("abd")) < 0 ? string_view("less")
+                                                           : string_view("not less"));
+}
+
+#endif
+
 void show_heap() {
     println("\nheap");
 
@@ -122,6 +183,9 @@ int main(int argc, char **argv) {
     show_containers();
     show_system();
     show_filesystem();
+#if R2_CXX20_OR_LATER
+    show_cxx23();
+#endif
     show_heap();
 
     println("\ndone.");

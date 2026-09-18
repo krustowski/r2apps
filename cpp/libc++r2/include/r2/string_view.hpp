@@ -9,6 +9,7 @@
  *  way across that boundary.
  */
 
+#include "compare.hpp"
 #include "span.hpp"
 
 namespace r2 {
@@ -141,6 +142,17 @@ constexpr bool operator==(string_view a, string_view b) { return a.compare(b) ==
 constexpr bool operator!=(string_view a, string_view b) { return a.compare(b) != 0; }
 constexpr bool operator<(string_view a, string_view b) { return a.compare(b) < 0; }
 constexpr bool operator>(string_view a, string_view b) { return a.compare(b) > 0; }
+constexpr bool operator<=(string_view a, string_view b) { return a.compare(b) <= 0; }
+constexpr bool operator>=(string_view a, string_view b) { return a.compare(b) >= 0; }
+
+#if __cplusplus >= 202002L
+constexpr std::strong_ordering operator<=>(string_view a, string_view b) {
+    int result = a.compare(b);
+    return result < 0    ? std::strong_ordering::less
+           : result > 0  ? std::strong_ordering::greater
+                         : std::strong_ordering::equal;
+}
+#endif
 
 namespace literals {
 constexpr string_view operator"" _sv(const char *s, size_t len) { return string_view(s, len); }

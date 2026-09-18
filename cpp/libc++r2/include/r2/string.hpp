@@ -239,6 +239,15 @@ inline bool operator==(const string &a, const string &b) { return a.view().compa
 inline bool operator!=(const string &a, const string &b) { return !(a == b); }
 inline bool operator!=(const string &a, string_view b) { return !(a == b); }
 inline bool operator<(const string &a, const string &b) { return a.view().compare(b.view()) < 0; }
+inline bool operator>(const string &a, const string &b) { return a.view().compare(b.view()) > 0; }
+
+#if __cplusplus >= 202002L
+inline std::strong_ordering operator<=>(const string &a, const string &b) {
+    return a.view() <=> b.view();
+}
+
+inline std::strong_ordering operator<=>(const string &a, string_view b) { return a.view() <=> b; }
+#endif
 
 inline string operator+(string_view a, string_view b) {
     string out;

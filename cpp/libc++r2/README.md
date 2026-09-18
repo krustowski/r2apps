@@ -4,6 +4,8 @@ A C++ runtime and standard library for the [`r2` kernel](https://github.com/krus
 in the same spirit as `c/libcr2`: no host libc, no libstdc++, nothing but the
 kernel ABI underneath.
 
+C++23 by default, C++17 on request (`make STD=c++17`).
+
 ```cpp
 #include <r2.hpp>
 
@@ -44,6 +46,11 @@ eight characters.
 | `r2/new.hpp`, `r2/memory.hpp` | `operator new`/`delete`, `unique_ptr`, `construct_at`, uninitialised algorithms |
 | `r2/vector.hpp`, `r2/string.hpp`, `r2/string_view.hpp`, `r2/array.hpp`, `r2/span.hpp`, `r2/optional.hpp`, `r2/function.hpp` | the containers |
 | `r2/algorithm.hpp`, `r2/utility.hpp`, `r2/type_traits.hpp` | `sort` (introsort), `find`, `lower_bound`, `move`, `forward`, `pair`, the traits the containers need |
+| `r2/expected.hpp` | `expected<T, E>` and `unexpected<E>`, with the C++23 monadic operations |
+| `r2/coroutine.hpp` | `std::coroutine_handle` and friends, plus `generator<T>` |
+| `r2/compare.hpp` | the three-way comparison categories, so `<=>` works at all |
+| `r2/concepts.hpp` | the constraints the library puts on its own templates |
+| `r2/source_location.hpp`, `r2/panic.hpp` | where a call came from; `panic`, `R2_ASSERT` |
 | `r2/io.hpp` | `print`, `println`, `printf("{}")`, `format`, `concat` --- type-safe, no varargs |
 | `r2/heap.hpp` | the arena allocator, and its statistics |
 | `r2/syscall.hpp` | the raw ABI: syscall numbers, the kernel's structures, `raw_syscall` |
@@ -56,9 +63,82 @@ eight characters.
 | `r2/audio.hpp` | the PC speaker |
 | `r2/math.hpp` | `sqrt`, `sin`, `cos`, `floor`, `fmod`, ... since there is no libm |
 
-It is C++17, built `-fno-exceptions -fno-rtti -nostdinc -nostdinc++`.  There is
-no `std::` namespace beyond the three things the language itself requires:
-`std::initializer_list`, `std::nothrow` and `std::align_val_t`.
+### The standard, and what the language needs from a freestanding library
+
+Built `-fno-exceptions -fno-rtti -nostdinc -nostdinc++`, so nothing comes from
+the host toolchain.  Some of C++ is not really library, though --- parts of the
+language only work if certain names exist in namespace `std`, and a
+freestanding implementation has to supply them itself:
+
+| To write | `std::` must contain | Supplied by |
+| -------- | -------------------- | ----------- |
+| `vector<int> v{1, 2, 3}` | `initializer_list` | `r2/initializer_list.hpp` |
+| `new (p) T{}` | the placement forms of `operator new` | `r2/new.hpp` |
+| `auto operator<=>(const T&) const = default` | `strong_ordering`, `weak_ordering`, `partial_ordering`, `common_comparison_category` | `r2/compare.hpp` |
+| `co_yield`, `co_await` | `coroutine_traits`, `coroutine_handle`, `suspend_always` | `r2/coroutine.hpp` |
+| `auto [a, b, c] = arr` | `tuple_size`, `tuple_element` | `r2/tuple.hpp` |
+
+Everything else in `std::` is absent on purpose.  The library's own vocabulary
+lives in `r2::`.
+
+Built as C++17, the C++20/23 headers are empty and `R2_REQUIRES` erases the
+constraints, so the same archive still serves a translation unit that is not on
+C++23 yet --- `cpp/memento-hello` is one.  The host test suite builds the older
+tests as C++17 and the newer ones as C++23 for exactly this reason.
+
+### What C++23 buys you here
+
+**`expected<T, E>`** is the one that changes how code reads.  This library has
+no exceptions, so every fallible call already returns its failure; `expected`
+lets it say *what* failed rather than just *that* it did, and chain:
+
+```cpp
+enum class ConfigError { Missing, Malformed };
+
+r2::expected<int, ConfigError> read_port(r2::string_view text) {
+    if (text.empty())
+        return r2::unexpected(ConfigError::Missing);
+
+    int64_t value = 0;
+    if (!r2::parse_int(text, value) || value <= 0 || value > 65535)
+        return r2::unexpected(ConfigError::Malformed);
+
+    return (int)value;
+}
+
+auto doubled = read_port("21").transform([](int v) { return v * 2; });
+r2::println(doubled.value_or(-1));      // 42
+```
+
+**Coroutines** work, including the heap allocation of the frame.  Each promise
+type defines `get_return_object_on_allocation_failure`, which makes the
+compiler use the nothrow `operator new` and check the result --- so a generator
+that cannot fit in the arena comes back empty instead of dereferencing null:
+
+```cpp
+r2::generator<r2::string> directory_names(r2::string_view path) {
+    for (const r2::fs::Entry &entry : r2::fs::list(path))
+        co_yield entry.name;
+}
+
+for (const r2::string &name : directory_names("/"))
+    r2::println(name);
+```
+
+**Concepts** constrain the library's own templates, which mostly shows up in
+the error messages: printing a type nothing knows how to format now says so in
+one line instead of a page of failed overloads.  `format_value` is the
+extension point --- declare
+
+```cpp
+template <class W> void format_value(W &w, const MyType &value);
+```
+
+in your type's namespace and `print`, `printf` and `format` pick it up through
+argument-dependent lookup.
+
+**`<=>`** is available on `string`, `string_view`, `vector`, `array` and
+`pair`, and on your own types through `= default`.
 
 ### No exceptions, so failure is in the return value
 
@@ -228,15 +308,22 @@ is still visible.
 
 ## Tests
 
-`make check` runs the host tests: a thousand-odd assertions over the allocator
-(including a churn loop that checks every block comes back), the containers,
-the string, `sort`, and the number formatting.  They run natively, where a
-failure is a line number rather than a triple fault.
+`make check` runs three host suites natively, where a failure is a line number
+rather than a triple fault:
+
+- the containers, the string, `sort`, the number formatting and the allocator
+  (including a churn loop that checks every block comes back) --- built as
+  **C++17**, which is what keeps that promise honest;
+- the arena override, `R2_HEAP_ARENA`, in a binary of its own;
+- the C++20/23 facilities --- `<=>`, concepts, `expected`, coroutines,
+  structured bindings, `source_location` --- built as **C++23**.
 
 `tests/target/` is the other half --- startup, the console, the filesystem
-round trip, the clock and the heap under load --- and it can only run on r2.
-It writes its result to `CXXTEST.TXT` on the floppy so a run can be checked
-from outside the virtual machine.
+round trip, the clock, the heap under load, and the C++23 facilities again
+where the coroutine frames come out of the real arena.  It can only run on r2,
+and writes its result to `CXXTEST.TXT` on the floppy so a run can be checked
+from outside the virtual machine.  Last run on a kernel built from
+`r2_main`: 188 checks, 0 failures.
 
 ## Known rough edges
 

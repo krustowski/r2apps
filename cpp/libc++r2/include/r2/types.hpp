@@ -14,6 +14,26 @@
  *  app doing C++ with libcr2's TCP stack underneath has to do.
  */
 
+/*
+ *  R2_REQUIRES(...) --- a requires-clause where the language has one, and
+ *  nothing where it does not.  It lets the same declaration carry its
+ *  constraints when built as C++20 or later and still compile as C++17, which
+ *  is what keeps this library usable from cpp/memento-hello.
+ */
+#if __cplusplus >= 202002L
+#define R2_REQUIRES(...) requires(__VA_ARGS__)
+#define R2_CXX20_OR_LATER 1
+#else
+#define R2_REQUIRES(...)
+#define R2_CXX20_OR_LATER 0
+#endif
+
+#if __cplusplus >= 202302L
+#define R2_CXX23_OR_LATER 1
+#else
+#define R2_CXX23_OR_LATER 0
+#endif
+
 typedef char int8_t;
 typedef short int16_t;
 typedef int int32_t;

@@ -7,6 +7,8 @@
  *  move, forward, swap, exchange and pair.
  */
 
+#include "compare.hpp"
+#include "tuple.hpp"
 #include "type_traits.hpp"
 
 namespace r2 {
@@ -88,6 +90,62 @@ constexpr bool operator<(const pair<T1, T2> &a, const pair<T1, T2> &b) {
     return a.second < b.second;
 }
 
+#if __cplusplus >= 202002L
+template <class T1, class T2>
+constexpr auto operator<=>(const pair<T1, T2> &a, const pair<T1, T2> &b) {
+    if (auto order = a.first <=> b.first; order != 0)
+        return order;
+    return a.second <=> b.second;
+}
+#endif
+
+/*  get<I>(p), for structured bindings and for generic code.  */
+template <size_t I, class T1, class T2> constexpr auto &get(pair<T1, T2> &p) noexcept {
+    static_assert(I < 2, "pair has two elements");
+    if constexpr (I == 0)
+        return p.first;
+    else
+        return p.second;
+}
+
+template <size_t I, class T1, class T2> constexpr const auto &get(const pair<T1, T2> &p) noexcept {
+    static_assert(I < 2, "pair has two elements");
+    if constexpr (I == 0)
+        return p.first;
+    else
+        return p.second;
+}
+
+/*
+ *  The rvalue overload is not optional.  `auto [a, b] = p;` copies p into a
+ *  hidden variable and then calls get<i> on it as an XVALUE, not an lvalue
+ *  ([dcl.struct.bind]/4), so without this the const overload is selected and
+ *  the bindings come out const.
+ */
+template <size_t I, class T1, class T2> constexpr auto &&get(pair<T1, T2> &&p) noexcept {
+    static_assert(I < 2, "pair has two elements");
+    if constexpr (I == 0)
+        return r2::move(p.first);
+    else
+        return r2::move(p.second);
+}
+
 } // namespace r2
+
+namespace std {
+
+template <class T1, class T2> struct tuple_size<r2::pair<T1, T2>> {
+    static constexpr r2::usize value = 2;
+};
+
+template <class T1, class T2> struct tuple_element<0, r2::pair<T1, T2>> {
+    using type = T1;
+};
+
+template <class T1, class T2> struct tuple_element<1, r2::pair<T1, T2>> {
+    using type = T2;
+};
+
+} // namespace std
 
 #endif

@@ -29,6 +29,13 @@ AR          ?= ar
 NASM        ?= nasm
 OBJCOPY     ?= llvm-objcopy
 
+#  Language standard.  C++23 by default; the library also builds and works as
+#  C++17 (make STD=c++17), which is what cpp/memento-hello needs.  The C++20/23
+#  headers --- compare, concepts, coroutine, expected --- are empty below C++20,
+#  and R2_REQUIRES erases the constraints, so nothing else changes.
+STD      ?= c++23
+STD_FLAG := -std=$(STD)
+
 ARENA_BYTES ?= 524288
 STACK_BYTES ?= 524288
 
@@ -38,7 +45,7 @@ STACK_BYTES ?= 524288
 #  -mno-red-zone          the kernel interrupts userland; the red zone is not
 #                         safe below rsp when an interrupt frame lands there
 #  -fno-pie               the image is linked at a fixed 0x600_000
-CXXFLAGS := -std=c++17 -m64 -O2 \
+CXXFLAGS := $(STD_FLAG) -m64 -O2 \
             -ffreestanding -nostdlib -nostdinc -nostdinc++ \
             -fno-exceptions -fno-rtti -fno-threadsafe-statics \
             -fno-stack-protector -fno-asynchronous-unwind-tables \
