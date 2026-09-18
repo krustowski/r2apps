@@ -88,8 +88,24 @@ template <class T> struct is_const<const T> : true_type {};
 /*  Compiler-backed traits: no way to write these in the language itself.  */
 template <class T>
 inline constexpr bool is_trivially_copyable_v = __is_trivially_copyable(T);
+
+/*
+ *  Two spellings of the same trait.  clang has deprecated
+ *  __has_trivial_destructor and warns on every use of it; gcc 14 still knows
+ *  only that older name.  Ask the compiler which one it has, so that neither
+ *  the build nor clangd's view of it comes out full of warnings.
+ */
+#ifdef __has_builtin
+#if __has_builtin(__is_trivially_destructible)
+#define _R2CXX_IS_TRIVIALLY_DESTRUCTIBLE(T) __is_trivially_destructible(T)
+#endif
+#endif
+#ifndef _R2CXX_IS_TRIVIALLY_DESTRUCTIBLE
+#define _R2CXX_IS_TRIVIALLY_DESTRUCTIBLE(T) __has_trivial_destructor(T)
+#endif
+
 template <class T>
-inline constexpr bool is_trivially_destructible_v = __has_trivial_destructor(T);
+inline constexpr bool is_trivially_destructible_v = _R2CXX_IS_TRIVIALLY_DESTRUCTIBLE(T);
 template <class B, class D> inline constexpr bool is_base_of_v = __is_base_of(B, D);
 template <class T> inline constexpr bool is_enum_v = __is_enum(T);
 template <class T> inline constexpr bool is_class_v = __is_class(T);

@@ -38,6 +38,12 @@ include ../../Makefile.tmpl
 that `fg` takes the name without the extension and rejects anything longer than
 eight characters.
 
+Copy `examples/hello/.clangd` in beside it too.  clangd knows nothing about
+Makefile.tmpl, so without that file it parses the source with the host's
+default flags, fails to find `<r2.hpp>` and marks every name in namespace `r2`
+as undeclared.  The file just restates the compile flags; its relative include
+path assumes the program sits one level below `examples/`.
+
 ## What is in it
 
 | Header | What it gives you |
@@ -361,6 +367,7 @@ libc++r2/
 ├── linker.ld               0x600_000, with .init_array bracketed
 ├── Makefile                the library
 ├── Makefile.tmpl           include this from an application
+├── examples/*/.clangd      so the editor parses with the build's flags
 ├── examples/hello          console, containers, filesystem, system info
 ├── examples/gfxdemo        canvas, font, mouse, both display paths
 ├── tests/host              runs natively

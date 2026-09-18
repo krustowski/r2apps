@@ -1,0 +1,25 @@
+#
+#  clangd config for a libc++r2 example.
+#
+#  Without it clangd parses main.cpp with the host's default flags: <r2.hpp>
+#  is not on the include path, so the include fails and every name in
+#  namespace r2 --- println, vector, Canvas, the lot --- is reported as
+#  undeclared.  These are the flags Makefile.tmpl actually compiles with, so
+#  the editor and the build agree: freestanding C++23 with no system headers
+#  in scope at all.
+#
+#  Paths are relative to this directory.  A new example copies this file
+#  unchanged, as long as it sits one level below examples/.
+#
+CompileFlags:
+  Add:
+    - "-std=c++23"
+    - "-I../../include"
+    - "-ffreestanding"
+    - "-nostdinc"
+    - "-nostdinc++"
+    - "-fno-exceptions"
+    - "-fno-rtti"
+    - "-fno-threadsafe-statics"
+    - "-Wall"
+    - "-Wextra"
