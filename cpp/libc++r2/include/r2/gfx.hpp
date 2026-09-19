@@ -13,7 +13,7 @@
  *  256 KiB --- and let the kernel stretch it on the way out.  That is what the
  *  second form of syscall 0x17 is for.
  *
- *  VGA mode 13h.  set_video_mode(0x13) plus map_vram (0x14) gives a 320x200
+ *  VGA mode 13h.  map_vram (0x14) plus set_video_mode(0x13) gives a 320x200
  *  byte-per-pixel surface mapped straight into the process.  One byte per
  *  pixel, 256 palette entries, no blit syscall per frame.  Vga13 restores the
  *  text mode in its destructor, so a program that returns to the shell does
@@ -171,8 +171,13 @@ class Canvas {
 
 class Display {
   public:
-    /*  Queries the framebuffer (syscall 0x16).  nullopt when the kernel was
-     *  booted in text mode and has none.  */
+    /*
+     *  Queries the framebuffer (syscall 0x16).  nullopt when the kernel was
+     *  booted in text mode and has none --- note that the syscall still
+     *  succeeds there and describes the 80x25 character buffer, so open()
+     *  additionally requires true colour and at least a 320x200 screen before
+     *  it believes the answer.  Fall back to Vga13 when this returns nullopt.
+     */
     static optional<Display> open();
 
     uint32_t width() const noexcept { return info_.width; }

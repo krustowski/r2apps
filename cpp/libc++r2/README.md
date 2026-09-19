@@ -303,9 +303,18 @@ Two paths, and `examples/gfxdemo` uses whichever the kernel actually has:
   in a 2 MiB process, so draw into a small canvas --- 320x200 is 256 KiB --- and
   let the kernel scale it up.  That is what the second form of syscall `0x17`
   is for.
-- **VGA mode 13h.**  `Vga13::open()` switches the hardware and maps VGA RAM
-  into the process; one byte per pixel, no blit syscall per frame.  Text mode
-  is restored by the destructor.
+- **VGA mode 13h.**  `Vga13::open()` maps VGA RAM into the process and then
+  switches the hardware; one byte per pixel, no blit syscall per frame.  Text
+  mode is restored by the destructor.
+
+Which path you get is decided by `Display::open()`, and it has to be careful:
+on a text-mode boot `get_fb_info` still *succeeds* and describes the 80x25
+character buffer.  Take that for a framebuffer and `present()` writes 32-bit
+pixels into text VRAM, where the VGA reads every pixel as a character plus an
+attribute byte --- the screen fills with coloured letters instead of the
+picture.  So `open()` also insists on true colour and at least a 320x200
+screen, and returns `nullopt` otherwise so the mode-13h path is taken.  The
+same test is in `c/them/gfx.c`.
 
 Text comes from the kernel's own PSF font via `Font::kernel()` --- 8 pixels
 wide, one byte per row, most significant bit leftmost.  If the kernel has no

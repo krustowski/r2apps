@@ -256,7 +256,19 @@ optional<Display> Display::open() {
     if (raw_syscall(Sys::GetFbInfo, (int64_t)&display.info_, 0) != 0)
         return nullopt;
 
-    if (display.info_.width == 0 || display.info_.height == 0)
+    /*
+     *  A text-mode boot has no framebuffer, but syscall 0x16 still succeeds:
+     *  it reports the 80x25 character buffer instead, 8 bits deep.  Accepting
+     *  that and blitting a canvas into it puts 32-bit pixels in text VRAM,
+     *  where the VGA reads each one as a character/attribute pair --- the
+     *  screen fills with coloured letters instead of the picture.  A real
+     *  linear framebuffer is true colour and at least a mode-13h screen in
+     *  size; c/them/gfx.c rejects the character buffer the same way.
+     */
+    if (display.info_.bpp < 24)
+        return nullopt;
+
+    if (display.info_.width < VGA13_WIDTH || display.info_.height < VGA13_HEIGHT)
         return nullopt;
 
     return display;
@@ -293,16 +305,19 @@ optional<Canvas> Display::make_canvas(uint32_t max_width) const {
  * ------------------------------------------------------------------------ */
 
 optional<Vga13> Vga13::open() {
-    if (raw_syscall(Sys::SetVideoMode, 0x13, 0) != 0)
-        return nullopt;
-
+    /*
+     *  VRAM first, mode second, which is the order gfxtest, cube and them use.
+     *  Mapping can fail --- and if it does, the screen is still the text mode
+     *  the shell left behind, rather than a graphics mode with nothing able to
+     *  draw into it.
+     */
     uint64_t base = 0;
     raw_syscall(Sys::MapVram, 0, (int64_t)&base);
-
-    if (base == 0) {
-        raw_syscall(Sys::SetVideoMode, 0x03, 0);
+    if (base == 0)
         return nullopt;
-    }
+
+    if (raw_syscall(Sys::SetVideoMode, 0x13, 0) != 0)
+        return nullopt;
 
     Vga13 vga;
     vga.vram_ = (uint8_t *)base;
