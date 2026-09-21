@@ -23,7 +23,7 @@ int main(int argc, char **argv) {
 ```
 make                 # libc++r2.a, libc++r2compat.a, _crt0.o
 make check           # host-side tests: allocator, containers, formatting
-make examples        # examples/hello and examples/gfxdemo
+make examples        # examples/hello, examples/gfxdemo and examples/snake
 ```
 
 An application needs a two-line Makefile:
@@ -296,7 +296,8 @@ place so each new C++ program does not have to rediscover them.
 
 ## Graphics
 
-Two paths, and `examples/gfxdemo` uses whichever the kernel actually has:
+Two paths, and `examples/gfxdemo` and `examples/snake` use whichever the
+kernel actually has:
 
 - **VESA framebuffer.**  `Display::open()` describes it; `present()` sends a
   `Canvas`.  A full-screen 32-bit buffer at 1024x768 is 3 MiB and will not fit
@@ -320,6 +321,13 @@ Text comes from the kernel's own PSF font via `Font::kernel()` --- 8 pixels
 wide, one byte per row, most significant bit leftmost.  If the kernel has no
 font, `Canvas::draw_text` draws boxes rather than nothing, so a layout problem
 is still visible.
+
+`present_reduced()` is the whole of the mode-13h path, and it is two colours
+by brightness --- so a program that has to work in both places picks its
+palette for that: `examples/snake` keeps the board and the grid below the
+threshold and everything the player must see above it, and draws the food as a
+disc and the snake as squares so the two are still told apart once every
+bright pixel is the same white.
 
 ## Tests
 
@@ -379,6 +387,7 @@ libc++r2/
 ├── examples/*/.clangd      so the editor parses with the build's flags
 ├── examples/hello          console, containers, filesystem, system info
 ├── examples/gfxdemo        canvas, font, mouse, both display paths
+├── examples/snake          a game: main loop, keyboard, score on the floppy
 ├── tests/host              runs natively
 └── tests/target            runs on r2, writes CXXTEST.TXT
 ```

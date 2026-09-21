@@ -96,6 +96,7 @@ $(CRT0_OBJ): $(ROOT)/src/_crt0.asm
 examples: all
 	@$(MAKE) -C examples/hello build
 	@$(MAKE) -C examples/gfxdemo build
+	@$(MAKE) -C examples/snake build
 
 #  Host-side tests: the containers, the string and the allocator are pure
 #  memory and can be exercised natively, where a failure is a line number
@@ -107,4 +108,5 @@ clean:
 	@rm -rf $(BUILD) $(LIBRARY) $(COMPAT_LIB) $(CRT0_OBJ)
 	@$(MAKE) -C examples/hello clean 2>/dev/null || true
 	@$(MAKE) -C examples/gfxdemo clean 2>/dev/null || true
+	@$(MAKE) -C examples/snake clean 2>/dev/null || true
 	@$(MAKE) -C tests/host clean 2>/dev/null || true
