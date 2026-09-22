@@ -1,0 +1,49 @@
+#
+#  Makefile.tmpl --- shared build rules for Go applications on rou2exOS.
+#
+#  An application needs a two-line Makefile:
+#
+#      NAME := hello
+#      include ../Makefile.tmpl
+#
+#  Everything is built inside the tinygo-r2 image, so the only thing that has
+#  to be installed on the host is Docker.  Run `make image` once (or after
+#  changing anything under tinygo-r2/) to build it.
+#
+
+NAME        ?= placeholder
+
+# The Go module root, which is the directory holding this template.
+GO_ROOT     ?= $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+APP_DIR     := $(notdir $(CURDIR))
+
+IMAGE       ?= tinygo-r2:0.38.0
+DOCKER      ?= docker
+
+# -opt=z trades speed for size, which is the right way round on a machine that
+# gives each program a 2 MiB frame to live in.
+TINYGO_FLAGS ?= -target=r2 -opt=z -no-debug
+
+RUN = $(DOCKER) run --rm -v $(GO_ROOT):/src -w /src/$(APP_DIR) $(IMAGE)
+
+.PHONY: build image fmt clean
+
+build:
+	@$(RUN) tinygo build $(TINYGO_FLAGS) -o /src/$(APP_DIR)/$(NAME).elf .
+	@echo "$(NAME).elf: $$(stat -c %s $(NAME).elf) bytes"
+
+# Build the TinyGo image that knows about the r2 target.  Cheap: it only copies
+# files into an existing image, so there is no LLVM rebuild.
+image:
+	@$(DOCKER) build -t $(IMAGE) $(GO_ROOT)/tinygo-r2
+
+fmt:
+	@$(RUN) gofmt -l -w .
+
+# There is no `vet` target on purpose.  The syscall entry points are bodyless
+# declarations bound to assembly through TinyGo's //go:export, and the stock
+# `go vet` rejects those out of hand ("missing function body") because it
+# expects a .s file in the package.  `make build` is the real check.
+
+clean:
+	@rm -f $(NAME).elf $(NAME).bin
