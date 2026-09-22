@@ -1,0 +1,28 @@
+{
+  "sockets": [
+    {
+      "id": "gateway_icmp",
+      "socket_name": "gateway ICMP",
+      "host_name": "10.3.4.1",
+      "port_tcp": 0,
+      "path_http": "",
+      "expected_http_code_array": []
+    },
+    {
+      "id": "garn_http",
+      "socket_name": "garn HTTP",
+      "host_name": "http://10.3.4.2",
+      "port_tcp": 80,
+      "path_http": "/info",
+      "expected_http_code_array": [200]
+    },
+    {
+      "id": "tnt_telnet",
+      "socket_name": "tnt TELNET",
+      "host_name": "10.3.4.2",
+      "port_tcp": 23,
+      "path_http": "",
+      "expected_http_code_array": []
+    }
+  ]
+}

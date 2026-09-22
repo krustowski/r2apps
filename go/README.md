@@ -3,11 +3,13 @@
 | Project name | Purpose | State |
 | ------------ | ------- | ----- |
 | `libgor2` | The Go binding for the `r2` kernel ABI: every syscall, plus the types they read and write. | usable |
+| `r2net` | The TCP/IP stack: ARP, IPv4, ICMP, UDP, DNS, TCP and an HTTP/1.0 client, over the kernel's raw packets. | usable |
 | `tinygo-r2` | The TinyGo target that makes Go run on `r2` at all --- runtime hooks, entry point, memory map. | usable |
 | `hello` | The minimal Go program: says who it is, what it was given, and what time the machine thinks it is. | stable |
 | `gfxdemo` | Graphics test: plasma, bouncing balls and kernel-font text, through whichever of the three display paths the machine has. | stable |
 | `routtest` | Goroutine evaluation: what one costs, how many fit, what the cooperative scheduler does, and where the collector has to be pushed. | stable |
 | `icmpresp` | ICMP Echo responder over SLIP. A port of `c/icmpresp`, and the proof that a Go program can be a real `r2` service. | stable |
+| `dish` | The [vxn.dev](https://github.com/thevxn/dish) one-shot monitoring service, ported: HTTP, TCP and ICMP checks, results pushed to plain-HTTP channels. | stable |
 
 Go on `r2` is TinyGo, not the `gc` toolchain.  What you get is the whole Go
 *language* --- slices, maps, strings, interfaces, closures, `defer`, `panic`,
@@ -110,6 +112,10 @@ Verified on the real kernel under QEMU, not just compiled:
   listing, file reads, serial, packets
 - graphics: VGA mode 13h at 134 fps and a scaled VESA blit at 26 fps, both
   full-screen 320x200 with a palette, text and moving sprites (`gfxdemo`)
+- `encoding/json`, including decoding into nested structs and slices, and
+  `flag`, which `dish` uses for a command line identical to its upstream's
+- networking, over both links: ICMP, DNS, TCP and HTTP/1.0 against real
+  servers (`r2net`, `dish`)
 
 A `println` hello world is about 10 KiB; the same program with `fmt` is about
 110 KiB, which is what most of these examples cost.
@@ -121,7 +127,7 @@ A `println` hello world is about 10 KiB; the same program with `fmt` is about
   and nowhere else --- a tight loop starves every other goroutine in the
   process.  (The kernel still preempts the process as a whole on the PIT.)
 - **`os` and `net`.**  There is no file descriptor and no socket on `r2`; use
-  `libgor2` instead.
+  `libgor2` for the ABI and `r2net` for anything above the wire.
 - **`go` statements in a service that must not block.**  `libgor2.SleepMS`
   parks the whole process in the kernel, so every goroutine stops with it.
   `time.Sleep` sleeps one goroutine.
