@@ -68,9 +68,12 @@ func (d *fbDisplay) present(c *canvas) error {
 
 // close hands the screen back.  There is no video mode to restore on this
 // path, but the last frame would otherwise sit there over whatever the shell
-// prints next.
+// prints next, so the screen is blacked out by drawing one more frame.
+//
+// Syscall 0x11 is no use here: it clears the VGA text writer, which on a
+// graphical boot is not what is on the screen.
 func (d *fbDisplay) close() {
-	libgor2.Clear()
+	libgor2.WriteVGA(make([]byte, screenW*screenH), d.pal.rgb)
 }
 
 // blitDisplay converts the canvas to 0x00RRGGBB itself and asks the kernel to
@@ -93,7 +96,11 @@ func (d *blitDisplay) present(c *canvas) error {
 }
 
 func (d *blitDisplay) close() {
-	libgor2.Clear()
+	for i := range d.buf {
+		d.buf[i] = 0
+	}
+
+	libgor2.BlitScaled(d.buf, screenW, screenH)
 }
 
 // vgaDisplay drives the VGA itself: mode 13h, the palette in the DAC, and the

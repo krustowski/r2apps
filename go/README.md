@@ -4,7 +4,9 @@
 | ------------ | ------- | ----- |
 | `libgor2` | The Go binding for the `r2` kernel ABI: every syscall, plus the types they read and write. | usable |
 | `tinygo-r2` | The TinyGo target that makes Go run on `r2` at all --- runtime hooks, entry point, memory map. | usable |
-| `example-print` | The minimal Go program: says who it is, what it was given, and what time the machine thinks it is. | stable |
+| `hello` | The minimal Go program: says who it is, what it was given, and what time the machine thinks it is. | stable |
+| `gfxdemo` | Graphics test: plasma, bouncing balls and kernel-font text, through whichever of the three display paths the machine has. | stable |
+| `routtest` | Goroutine evaluation: what one costs, how many fit, what the cooperative scheduler does, and where the collector has to be pushed. | stable |
 | `icmpresp` | ICMP Echo responder over SLIP. A port of `c/icmpresp`, and the proof that a Go program can be a real `r2` service. | stable |
 
 Go on `r2` is TinyGo, not the `gc` toolchain.  What you get is the whole Go
@@ -20,7 +22,7 @@ The only thing that has to be installed on the host is Docker.
 
 ```shell
 cd tinygo-r2 && make image     # once; builds the TinyGo image that knows about r2
-cd ../example-print && make    # produces hello.elf
+cd ../hello && make            # produces hello.elf
 ```
 
 An application needs a two-line Makefile:
@@ -38,7 +40,7 @@ Copy the `.elf` onto the floppy image and run it from the shell like any other
 `r2` program:
 
 ```shell
-mcopy -i fat.img example-print/hello.elf ::BIN/HELLO.ELF
+mcopy -i fat.img hello/hello.elf ::BIN/HELLO.ELF
 # in the r2 shell
 run HELLO
 ```
@@ -106,6 +108,8 @@ Verified on the real kernel under QEMU, not just compiled:
 - `strconv`, `strings`, `bytes`, `sort`, `errors`, `math`, `unicode/utf8`, `sync`
 - the whole of `libgor2`: sysinfo, RTC, ticks, mounts, task list, directory
   listing, file reads, serial, packets
+- graphics: VGA mode 13h at 134 fps and a scaled VESA blit at 26 fps, both
+  full-screen 320x200 with a palette, text and moving sprites (`gfxdemo`)
 
 A `println` hello world is about 10 KiB; the same program with `fmt` is about
 110 KiB, which is what most of these examples cost.
@@ -121,6 +125,75 @@ A `println` hello world is about 10 KiB; the same program with `fmt` is about
 - **`go` statements in a service that must not block.**  `libgor2.SleepMS`
   parks the whole process in the kernel, so every goroutine stops with it.
   `time.Sleep` sleeps one goroutine.
+
+## Goroutines
+
+Goroutines, channels, `select`, `sync` and `time.Sleep` all work. What is
+different from real Go is the cost and the scheduling, and `routtest` measures
+both rather than asserting them. A run on the text kernel:
+
+```
+  stacks    16 parked, 32874 bytes each (32 KiB), committed at `go`
+  heap      1588 KiB total, 1029 KiB free -> about 32 live goroutines
+  churn     16 finished goroutines grew the heap 513 KiB, 0 frees
+            runtime.GC() returned 481 KiB --- nothing else will
+  spawn     192 goroutines, 8 at a time: 204 ms running, 165 ms collecting
+  chan      50000 round trips in 183 ms, 3 us per trip
+  yield     without Gosched: "aaaaaaaabbbb"
+            with Gosched:    "abcabcabcabc"
+  sleep     slept 51 ms (asked 50), other goroutine ran 10530 times
+```
+
+Three things follow from that, and they are the difference between a design
+that works here and one that dies in the field:
+
+**A goroutine costs 32 KiB, and about thirty can be alive at once.** The stack
+size comes from `default-stack-size` in `tinygo-r2/r2.json`; the ceiling is that
+divided into the heap. A goroutine per connection is an ordinary thing to write
+in Go and is not affordable on r2 --- use a loop, or a small fixed worker pool.
+
+**`go` commits the whole stack before the goroutine runs once.** So what limits
+a burst is not how long the goroutines live but how many are outstanding before
+one of them gets scheduled. A loop that starts three hundred short-lived
+goroutines needs three hundred stacks at the same time; the first version of
+`routtest` did exactly that and died with `out of memory`. Spawn in batches and
+wait for each.
+
+**The collector does not run on its own.** Sixteen goroutines that have already
+finished still held 513 KiB until `runtime.GC()` was called, with zero frees in
+between. Worse, a stack is 32 KiB of *contiguous* heap, so churn fragments the
+arena and allocation fails earlier than the free byte count suggests. Anything
+long-running that creates goroutines should call `runtime.GC()` at a natural
+quiet point.
+
+Two smaller notes: `runtime.NumGoroutine()` is a TinyGo stub that always returns
+1, so do not trust it; and `runtime.ReadMemStats` *is* real on this collector,
+which is what makes the numbers above measurable from inside the program.
+
+## Graphics
+
+There are three ways to get pixels onto an `r2` screen, and `gfxdemo` drives
+all of them.  Which ones exist depends on how the machine was booted, so a
+program has to ask rather than assume:
+
+| Path | Syscalls | Notes |
+| ---- | -------- | ----- |
+| VGA mode 13h | `0x14` map VRAM, `0x15` set mode, `0x30` DAC palette | 320x200, 256 colours, no syscall per frame --- the canvas is copied straight into mapped video memory.  Works on any boot. |
+| Framebuffer, 1:1 | `0x13` | The kernel walks a palette-indexed canvas and writes the VESA framebuffer.  Lands in the top-left corner at its own size. |
+| Framebuffer, scaled | `0x17` | Takes 0x00RRGGBB pixels and stretches them over the whole screen. |
+
+**A reported framebuffer is not a usable framebuffer.**  Booted from the
+text-mode kernel, `GetFBInfo` answers `80x25, 16 bpp` --- that is the VGA text
+buffer, and pushing 320x200 pixels of 32-bit colour at it writes a long way
+past its end.  Check `BPP == 32` and the dimensions before believing it; the
+graphics kernel (the second GRUB entry) reports `1024x768, 32 bpp`.
+
+Two more things worth knowing:
+
+- `Clear()` (syscall `0x11`) clears the VGA *text* writer, so it does not blank
+  a framebuffer.  To hand a graphical screen back, draw one black frame.
+- Mode 13h has to be given back explicitly with `SetVideoMode(Mode03Text)` or
+  the shell is left drawing into a graphics mode.
 
 ## Gotchas
 
