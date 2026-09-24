@@ -12,9 +12,7 @@ class CalculatorWindow
     bool fresh = false;       // next digit replaces current input
     bool resultSt = false;    // showing result of last =
     bool err = false;         // division by zero
-    Coord panX = 5, panY = 5; // panel origin; drag title bar to reposition
-    bool dragging = false;
-    Coord dragMX0 = 0, dragMY0 = 0, dragPX0 = 0, dragPY0 = 0;
+    Coord panX = 0, panY = 0; // the client area starts at the corner
 
     PlatformWindow *wnd = nullptr;
     PlatformColor *dark = nullptr;
@@ -211,51 +209,17 @@ class CalculatorWindow
             OnPaint(data->Data.OnPaint.ctx, data->Data.OnPaint.target);
             return;
         }
-        if (data->type == PlatformWindowInputEventType::OnMouseMove)
-        {
-            if (!dragging)
-                return;
-            Coord mx = data->Data.OnMouseMove.mouseX;
-            Coord my = data->Data.OnMouseMove.mouseY;
-            Coord nx = dragPX0 + (mx - dragMX0);
-            Coord ny = dragPY0 + (my - dragMY0);
-            if (nx < 0)
-                nx = 0;
-            if (nx >= 114)
-                nx = 113;
-            if (ny < 0)
-                ny = 0;
-            if (ny >= 79)
-                ny = 78;
-            panX = nx;
-            panY = ny;
-            wnd->Repaint();
-            return;
-        }
         if (data->type == PlatformWindowInputEventType::OnMouseClick)
         {
             if (data->Data.OnMouseClick.state != PlatformWindowButtonState::Pressed)
-            {
-                dragging = false;
                 return;
-            }
             Coord mx = data->Data.OnMouseClick.mouseX;
             Coord my = data->Data.OnMouseClick.mouseY;
-            // Title bar drag
-            if (my >= panY && my < panY + 15 && mx >= panX && mx < panX + 207)
-            {
-                dragging = true;
-                dragMX0 = mx;
-                dragMY0 = my;
-                dragPX0 = panX;
-                dragPY0 = panY;
-                return;
-            }
             // Keypad hit test — coords relative to panX/panY
-            const int CX[4] = {F_COORD(panX) + 3, F_COORD(panX) + 54, F_COORD(panX) + 105, F_COORD(panX) + 156};
-            const int CW = 46;
-            const int RY[4] = {F_COORD(panY) + 44, F_COORD(panY) + 59, F_COORD(panY) + 74, F_COORD(panY) + 89};
-            const int RH = 13;
+            const int CX[4] = {F_COORD(panX) + 3, F_COORD(panX) + 42, F_COORD(panX) + 81, F_COORD(panX) + 120};
+            const int CW = 36;
+            const int RY[4] = {F_COORD(panY) + 21, F_COORD(panY) + 35, F_COORD(panY) + 49, F_COORD(panY) + 63};
+            const int RH = 11;
             for (int r = 0; r < 4; r++)
             {
                 if (my < RY[r] || my >= RY[r] + RH)
@@ -364,26 +328,20 @@ class CalculatorWindow
         if (!target)
             return;
         if (!dark)
-            dark = dc->CreateColor(0xFF0A0A20, nullptr, nullptr);
+            dark = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
         if (!light)
             light = dc->CreateColor(0xFFE0E0FF, nullptr, nullptr);
         if (!font)
-            font = dc->CreateFont(12, nullptr, false, false, false, nullptr, nullptr);
+            font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         if (!dark || !light || !font)
             return;
 
         Coord W = target->GetWidth();
         Coord H = target->GetHeight();
 
-        target->FillRect(0, 0, W, H, dark, false);
-        drawWallpaper(dc, target);
-        target->FillRect(0, H - 14, W, 1, dark, false);
-        target->FillRect(0, H - 13, W, 13, light, false);
-
-        // Dialog panel — panX/panY driven, drag title bar to reposition
-        target->FillRect(panX, panY, 207, 122, dark, false);
-        target->FillRect(panX + 2, panY + 2, 203, 118, light, false);
-        target->FillRect(panX + 2, panY + 15, 203, 1, dark, false); // title separator
+        // The client area is the calculator itself; the root draws the frame,
+        // the title bar and the line on the taskbar.
+        target->FillRect(0, 0, W, H, light, false);
 
         PlatformDrawTextOptions opts{};
         opts.font = font;
@@ -391,11 +349,8 @@ class CalculatorWindow
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
 
-        target->DrawText(panX + 2, panY + 2, 203, 13, "Calculator", &opts, false);
-        target->DrawText(0, H - 13, W, 13, "Calculator  -  r2", &opts, false);
-
         // ── Display area ──
-        target->FillRect(panX + 3, panY + 17, 200, 24, dark, false);
+        target->FillRect(panX + 3, panY + 2, 154, 14, dark, false);
 
         // left: "lhs op" context
         if (pendingOp != 0)
@@ -414,22 +369,22 @@ class CalculatorWindow
             lo.foreground = light;
             lo.horizontalAlign = PlatformAlign::Begin;
             lo.verticalAlign = PlatformAlign::Middle;
-            target->DrawText(panX + 5, panY + 17, 100, 24, ctx, &lo, false);
+            target->DrawText(panX + 5, panY + 2, 80, 14, ctx, &lo, false);
         }
 
         // right: current number or "Error"
         opts.horizontalAlign = PlatformAlign::End;
         opts.foreground = light;
-        target->DrawText(panX + 3, panY + 17, 196, 24, err ? "Error" : inp, &opts, false);
+        target->DrawText(panX + 3, panY + 2, 150, 14, err ? "Error" : inp, &opts, false);
 
-        target->FillRect(panX + 2, panY + 42, 203, 1, dark, false); // divider below display
+        target->FillRect(panX + 2, panY + 18, 156, 1, dark, false); // divider below display
 
         // ── Keypad (4 columns × 4 rows) ──
         // Offsets: col x = {panX+3, panX+54, panX+105, panX+156}, w=46; row y = {panY+44..+89}, h=13
-        const int CX[4] = {F_COORD(panX) + 3, F_COORD(panX) + 54, F_COORD(panX) + 105, F_COORD(panX) + 156};
-        const int CW = 46;
-        const int RY[4] = {F_COORD(panY) + 44, F_COORD(panY) + 59, F_COORD(panY) + 74, F_COORD(panY) + 89};
-        const int RH = 13;
+        const int CX[4] = {F_COORD(panX) + 3, F_COORD(panX) + 42, F_COORD(panX) + 81, F_COORD(panX) + 120};
+        const int CW = 36;
+        const int RY[4] = {F_COORD(panY) + 21, F_COORD(panY) + 35, F_COORD(panY) + 49, F_COORD(panY) + 63};
+        const int RH = 11;
 
         const char *labels[4][4] = {
             {"7", "8", "9", "*"},
@@ -460,7 +415,7 @@ class CalculatorWindow
         // Hint line
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.foreground = dark;
-        target->DrawText(panX + 2, panY + 105, 203, 11, "Bcsp del    C clear    Esc close", &opts, false);
+        target->DrawText(panX + 2, panY + 77, 156, 9, "Bcsp del   C clear   Esc close", &opts, false);
     }
 
 public:

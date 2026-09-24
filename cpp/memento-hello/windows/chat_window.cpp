@@ -12,7 +12,10 @@ class ChatWindow
 
     static const int MSG_W = 44;
     static const int MAX_MSGS = 50;
-    static const int VIS_ROWS = 10;
+    // Same arithmetic as the IRC window: the bottom 24 units are two rules,
+    // the nick line and the input line, and a thirteenth row of messages lands
+    // on top of the nick.
+    static const int VIS_ROWS = 12;
     static const int IN_CAP = 60;
 
     // Connection phase
@@ -452,33 +455,27 @@ class ChatWindow
     void OnPaint(PlatformDrawingContext *dc, PlatformBitmap *target)
     {
         if (!dark)
-            dark = dc->CreateColor(0xFF0A0A20, nullptr, nullptr);
+            dark = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
         if (!light)
             light = dc->CreateColor(0xFFE0E0FF, nullptr, nullptr);
         if (!font)
-            font = dc->CreateFont(12, nullptr, false, false, false, nullptr, nullptr);
+            font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         if (!dark || !light || !font)
             return;
 
         Coord W = target->GetWidth();
         Coord H = target->GetHeight();
-        target->FillRect(0, 0, W, H, dark, false);
-        drawWallpaper(dc, target);
-        target->FillRect(0, H - 14, W, 1, dark, false);
-        target->FillRect(0, H - 13, W, 13, light, false);
+
 
         // Dialog chrome
-        target->FillRect(5, 8, 310, 175, dark, false);
-        target->FillRect(7, 10, 306, 171, light, false);
-        target->FillRect(7, 24, 306, 1, dark, false);
+        // Client area only: the root frames the window and names it.
+        target->FillRect(0, 0, W, H, light, false);
 
         PlatformDrawTextOptions opts{};
         opts.font = font;
         opts.foreground = dark;
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
-        target->DrawText(7, 10, 288, 14, "Chat", &opts, false);
-        target->DrawText(0, H - 13, W, 13, "Chat  -  r2", &opts, false);
 
         opts.horizontalAlign = PlatformAlign::Begin;
 
@@ -490,11 +487,11 @@ class ChatWindow
                                    ? "e.g. 10.3.3.1  [Enter] next  [Esc] cancel"
                                    : "[Enter] connect  [Esc] back";
 
-            target->DrawText(10, 40, 300, 14, prompt, &opts, false);
+            target->DrawText(6, 6, W - 12, 10, prompt, &opts, false);
 
             // Input box — inset 30 px each side for comfortable margin
-            target->FillRect(30, 56, 260, 18, dark, false);
-            target->FillRect(32, 58, 256, 14, light, false);
+            target->FillRect(20, 20, W - 40, 14, dark, false);
+            target->FillRect(22, 22, W - 44, 10, light, false);
             char display[IN_CAP + 3] = {};
             int i = 0;
             while (inputBuf[i])
@@ -504,9 +501,9 @@ class ChatWindow
             }
             display[i++] = '_';
             display[i] = '\0';
-            target->DrawText(36, 58, 248, 14, display, &opts, false);
+            target->DrawText(26, 22, W - 52, 10, display, &opts, false);
 
-            target->DrawText(10, 82, 300, 12, hint, &opts, false);
+            target->DrawText(6, 38, W - 12, 10, hint, &opts, false);
 
             // Show current peer IP when on port screen
             if (phase == PH_PORT)
@@ -525,13 +522,13 @@ class ChatWindow
                         ipstr[k++] = '.';
                 }
                 ipstr[k] = '\0';
-                target->DrawText(10, 100, 300, 12, ipstr, &opts, false);
+                target->DrawText(6, 50, W - 12, 10, ipstr, &opts, false);
             }
         }
         else
         {
             // ── Chat view ───────────────────────────────────────────────────
-            target->FillRect(7, 151, 306, 1, dark, false);
+            target->FillRect(2, H - 24, W - 4, 1, dark, false);
 
             // Nick / status strip
             char nickLine[36] = {};
@@ -559,11 +556,11 @@ class ChatWindow
                     nickLine[ni++] = *s++;
             }
             nickLine[ni] = '\0';
-            target->DrawText(10, 152, 300, 10, nickLine, &opts, false);
+            target->DrawText(4, H - 23, W - 8, 9, nickLine, &opts, false);
 
             // Input field
-            target->FillRect(7, 163, 306, 1, dark, false);
-            target->FillRect(7, 164, 306, 17, light, false);
+            target->FillRect(2, H - 13, W - 4, 1, dark, false);
+            target->FillRect(2, H - 12, W - 4, 11, light, false);
             char display[IN_CAP + 3] = {};
             int i = 0;
             while (inputBuf[i])
@@ -573,7 +570,7 @@ class ChatWindow
             }
             display[i++] = '_';
             display[i] = '\0';
-            target->DrawText(10, 164, 300, 17, display, &opts, false);
+            target->DrawText(4, H - 12, W - 8, 11, display, &opts, false);
 
             // Message area — last VIS_ROWS lines
             int startMsg = msgTotal - VIS_ROWS;
@@ -584,7 +581,7 @@ class ChatWindow
                 int idx = startMsg + i;
                 if (idx >= msgTotal)
                     break;
-                target->DrawText(10, 26 + i * 12, 300, 12, msgs[idx % MAX_MSGS], &opts, false);
+                target->DrawText(4, 4 + i * 10, W - 8, 10, msgs[idx % MAX_MSGS], &opts, false);
             }
         }
     }

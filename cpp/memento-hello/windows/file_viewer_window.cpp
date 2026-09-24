@@ -217,36 +217,30 @@ private:
         if (!target)
             return;
         if (!dark)
-            dark = dc->CreateColor(0xFF0A0A20, nullptr, nullptr);
+            dark = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
         if (!light)
             light = dc->CreateColor(0xFFE0E0FF, nullptr, nullptr);
         if (!font)
-            font = dc->CreateFont(12, nullptr, false, false, false, nullptr, nullptr);
+            font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         if (!dark || !light || !font)
             return;
 
         Coord W = target->GetWidth(), H = target->GetHeight();
 
-        target->FillRect(0, 0, W, H, dark, false);
-        drawWallpaper(dc, target);
-        target->FillRect(0, H - 14, W, 1, dark, false);
-        target->FillRect(0, H - 13, W, 13, light, false);
-        target->FillRect(5, 8, 310, 175, dark, false);
-        target->FillRect(7, 10, 306, 171, light, false);
-        target->FillRect(7, 24, 306, 1, dark, false);
-        target->FillRect(7, 37, 306, 1, dark, false);
+        // Client area only — the frame, the title and the taskbar entry are
+        // the root's.
+        target->FillRect(0, 0, W, H, light, false);
+        target->FillRect(2, 13, W - 4, 1, dark, false);
 
         PlatformDrawTextOptions opts{};
         opts.font = font;
         opts.foreground = dark;
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
-        target->DrawText(7, 10, 280, 14, "File Viewer", &opts, false);
-        target->DrawText(0, H - 13, W, 13, "File  -  r2", &opts, false);
 
         // Path on left, line/total on right of the subheader row
         opts.horizontalAlign = PlatformAlign::Begin;
-        target->DrawText(10, 25, 220, 12, (const mchar *)filePath, &opts, false);
+        target->DrawText(3, 2, W - 60, 10, (const mchar *)filePath, &opts, false);
 
         if (nLines > VIS)
         {
@@ -275,7 +269,7 @@ private:
             writeInt(nLines);
             sbuf[sn] = 0;
             opts.horizontalAlign = PlatformAlign::End;
-            target->DrawText(10, 25, 300, 12, (const mchar *)sbuf, &opts, false);
+            target->DrawText(3, 2, W - 6, 10, (const mchar *)sbuf, &opts, false);
         }
 
         opts.horizontalAlign = PlatformAlign::Begin;
@@ -284,7 +278,7 @@ private:
             int li = scrollTop + row;
             if (li >= nLines)
                 break;
-            Coord ry = 38 + row * 12;
+            Coord ry = 16 + row * 10;
             char lineBuf[128];
             int ll = lineLen[li] < 127 ? lineLen[li] : 127;
             for (int j = 0; j < ll; j++)
@@ -293,16 +287,18 @@ private:
                 lineBuf[j] = (c >= 0x20 && c < 0x7F) ? c : '.';
             }
             lineBuf[ll] = 0;
-            target->DrawText(9, ry, 302, 11, (const mchar *)lineBuf, &opts, false);
+            target->DrawText(3, ry, W - 6, 9, (const mchar *)lineBuf, &opts, false);
         }
 
         // Back button
-        target->FillRect(7, 158, 306, 1, dark, false);
-        target->FillRect(120, 161, 80, 13, dark, false);
-        target->FillRect(121, 162, 78, 11, light, false);
+        int backX = (F_COORD(W) - 80) / 2;
+        int backY = F_COORD(H) - 13;
+        target->FillRect(2, backY - 3, W - 4, 1, dark, false);
+        target->FillRect(backX, backY, 80, 11, dark, false);
+        target->FillRect(backX + 1, backY + 1, 78, 9, light, false);
         opts.foreground = dark;
         opts.horizontalAlign = PlatformAlign::Middle;
-        target->DrawText(120, 161, 80, 13, "Back", &opts, false);
+        target->DrawText(backX, backY, 80, 11, "Back", &opts, false);
     }
 };
 

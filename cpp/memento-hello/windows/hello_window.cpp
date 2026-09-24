@@ -50,10 +50,12 @@ private:
     void OnPaint(PlatformDrawingContext *dc, PlatformBitmap *target)
     {
         if (!bg)
-            bg = dc->CreateColor(0xFF1A1A2E, nullptr, nullptr);
+            bg = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
         if (!fg)
             fg = dc->CreateColor(0xFFE0E0FF, nullptr, nullptr);
         if (!font)
+            // The landing screen keeps the large face; everything past it is
+            // laid out around the small one.
             font = dc->CreateFont(16, nullptr, false, false, false, nullptr, nullptr);
         if (!bg || !fg || !font)
             return;

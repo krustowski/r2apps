@@ -16,7 +16,7 @@ static void drawWallpaper(PlatformDrawingContext *dc, PlatformBitmap *target)
     if (!lit)
         lit = dc->CreateColor(0xFFD0D0F8, nullptr, nullptr);
     if (!dk)
-        dk = dc->CreateColor(0xFF050510, nullptr, nullptr);
+        dk = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
     if (!lit)
         return;
 

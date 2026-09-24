@@ -6,6 +6,21 @@
 class NetWindow
 {
 public:
+    // Dialog metrics, in the window's own client coordinates — the root draws
+    // the frame, the title bar and the taskbar entry. The widest thing here
+    // is a MAC address, seventeen characters at four units each, and the
+    // window is sized to that and not to the screen: 132 units across.
+    static const int LABEL_X = 6, LABEL_W = 34;
+    static const int VALUE_X = 42, VALUE_W = 84;
+    static const int ROW1_Y = 4, ROW2_Y = 15, ROW3_Y = 26;
+    // The ports go under their label, four to a row across the full width,
+    // rather than beside it where they would force the window wider. The
+    // kernel can report sixteen; the rest are simply not shown.
+    static const int PORTS_SEP_Y = 38, PORTS_Y = 41, PORT_GRID_Y = 53;
+    static const int PORT_ROWS = 2, PORT_COLS = 4, PORT_COL_W = 30;
+    static const int BACK_W = 52, BACK_H = 11;
+
+public:
     static void onEvent(void *instance, struct PlatformWindowInterfaceInputEvent *data)
     {
         reinterpret_cast<NetWindow *>(instance)->onEvent_(data);
@@ -17,6 +32,12 @@ private:
     PlatformColor *dark = nullptr;
     PlatformColor *light = nullptr;
     PlatformFont *font = nullptr;
+    // What the last read returned, and whether another one is due.
+    NetStatus_T ns{};
+    SysInfo_T si{};
+    bool statusStale = true;
+    int backX = 0; // where the Back button was last drawn, for the hit test
+    int backY = 0;
 
     static char hexNibble(unsigned char n) { return n < 10 ? '0' + n : 'a' + (n - 10); }
 
@@ -99,7 +120,14 @@ private:
         }
         if (data->type == PlatformWindowInputEventType::OnMouseClick)
         {
-            if (data->Data.OnMouseClick.state == PlatformWindowButtonState::Pressed)
+            // Only the Back button closes it. Closing on any click made sense
+            // when this filled the screen; now it has a title bar with a
+            // close box on it, and clicking the body is how you focus it.
+            if (data->Data.OnMouseClick.state != PlatformWindowButtonState::Pressed)
+                return;
+            Coord mx = data->Data.OnMouseClick.mouseX;
+            Coord my = data->Data.OnMouseClick.mouseY;
+            if (my >= backY && my < backY + BACK_H && mx >= backX && mx < backX + BACK_W)
                 wnd->Close();
             return;
         }
@@ -117,35 +145,33 @@ private:
         if (!target)
             return;
         if (!dark)
-            dark = dc->CreateColor(0xFF0A0A20, nullptr, nullptr);
+            dark = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
         if (!light)
             light = dc->CreateColor(0xFFE0E0FF, nullptr, nullptr);
         if (!font)
-            font = dc->CreateFont(12, nullptr, false, false, false, nullptr, nullptr);
+            font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         if (!dark || !light || !font)
             return;
 
-        NetStatus_T ns{};
-        get_net_status(&ns);
-        SysInfo_T si{};
-        read_sysinfo(&si);
+        // Read once and on request, not on every paint: with windows over a
+        // live desktop a paint happens on every mouse move.
+        if (statusStale)
+        {
+            memset(&ns, 0, sizeof(ns));
+            get_net_status(&ns);
+            memset(&si, 0, sizeof(si));
+            read_sysinfo(&si);
+            statusStale = false;
+        }
 
         Coord W = target->GetWidth(), H = target->GetHeight();
-        target->FillRect(0, 0, W, H, dark, false);
-        drawWallpaper(dc, target);
-        target->FillRect(0, H - 14, W, 1, dark, false);
-        target->FillRect(0, H - 13, W, 13, light, false);
-        target->FillRect(5, 8, 310, 175, dark, false);
-        target->FillRect(7, 10, 306, 171, light, false);
-        target->FillRect(7, 24, 306, 1, dark, false); // title sep
+        target->FillRect(0, 0, W, H, light, false);
 
         PlatformDrawTextOptions opts{};
         opts.font = font;
         opts.foreground = dark;
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
-        target->DrawText(7, 10, 280, 14, "Network", &opts, false);
-        target->DrawText(0, H - 13, W, 13, "Net  -  r2", &opts, false);
 
         // Section: Interface
         opts.horizontalAlign = PlatformAlign::Begin;
@@ -153,59 +179,52 @@ private:
         // IP row — from sysinfo (set by ETH driver via ScSysInfo 0x02)
         char ipbuf[16];
         ipToStr(si.ip_addr, ipbuf);
-        target->DrawText(10, 28, 36, 12, "IP:", &opts, false);
-        target->DrawText(50, 28, 250, 12, (const mchar *)ipbuf, &opts, false);
+        target->DrawText(LABEL_X, ROW1_Y, LABEL_W, 10, "IP:", &opts, false);
+        target->DrawText(VALUE_X, ROW1_Y, VALUE_W, 10, (const mchar *)ipbuf, &opts, false);
 
         // MAC row
         char macbuf[18];
         macToStr(ns.mac, macbuf);
-        target->DrawText(10, 42, 36, 12, "MAC:", &opts, false);
-        target->DrawText(50, 42, 250, 12, (const mchar *)macbuf, &opts, false);
+        target->DrawText(LABEL_X, ROW2_Y, LABEL_W, 10, "MAC:", &opts, false);
+        target->DrawText(VALUE_X, ROW2_Y, VALUE_W, 10, (const mchar *)macbuf, &opts, false);
 
         // Driver row
-        target->DrawText(10, 56, 60, 12, "Driver:", &opts, false);
-        target->DrawText(76, 56, 220, 12,
+        target->DrawText(LABEL_X, ROW3_Y, LABEL_W, 10, "Driver:", &opts, false);
+        target->DrawText(VALUE_X, ROW3_Y, VALUE_W, 10,
                          ns.drv_active ? "Active" : "Inactive", &opts, false);
 
         // Separator before port table
-        target->FillRect(7, 72, 306, 1, dark, false);
+        target->FillRect(2, PORTS_SEP_Y, W - 4, 1, dark, false);
 
         // Ports section header
-        target->DrawText(10, 75, 70, 12, "TCP ports:", &opts, false);
+        target->DrawText(LABEL_X, PORTS_Y, LABEL_W + 30, 10, "TCP ports:", &opts, false);
 
         if (ns.n_ports == 0)
         {
-            target->DrawText(90, 75, 210, 12, "(none registered)", &opts, false);
+            target->DrawText(LABEL_X, PORT_GRID_Y, VALUE_W, 10, "none", &opts, false);
         }
         else
         {
-            // Render ports as a space-separated run, wrapping every 8 per row
-            static const int COLS = 8;
-            for (int i = 0; i < ns.n_ports && i < 16; i++)
+            for (int i = 0; i < ns.n_ports && i < PORT_ROWS * PORT_COLS; i++)
             {
-                int row = i / COLS, col = i % COLS;
-                Coord ry = 75 + row * 13;
-                Coord rx = (col == 0) ? 90 : 90 + col * 36;
-                if (col == 0 && row > 0)
-                {
-                    // new row label blank
-                    rx = 10;
-                    // shift the column positions on rows > 0
-                    rx = 10 + (i % COLS) * 36;
-                }
+                int row = i / PORT_COLS, col = i % PORT_COLS;
+                Coord ry = PORT_GRID_Y + row * 11;
+                Coord rx = LABEL_X + col * PORT_COL_W;
                 char pbuf[6];
                 u16ToStr(ns.ports[i], pbuf);
-                target->DrawText(rx, ry, 35, 12, (const mchar *)pbuf, &opts, false);
+                target->DrawText(rx, ry, PORT_COL_W - 2, 10, (const mchar *)pbuf, &opts, false);
             }
         }
 
         // Back button
-        target->FillRect(7, 158, 306, 1, dark, false);
-        target->FillRect(120, 161, 80, 13, dark, false);
-        target->FillRect(121, 162, 78, 11, light, false);
+        backX = (F_COORD(W) - BACK_W) / 2;
+        backY = F_COORD(H) - BACK_H - 2;
+        target->FillRect(2, backY - 3, W - 4, 1, dark, false);
+        target->FillRect(backX, backY, BACK_W, BACK_H, dark, false);
+        target->FillRect(backX + 1, backY + 1, BACK_W - 2, BACK_H - 2, light, false);
         opts.foreground = dark;
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
-        target->DrawText(120, 161, 80, 13, "Back", &opts, false);
+        target->DrawText(backX, backY, BACK_W, BACK_H, "Back", &opts, false);
     }
 };

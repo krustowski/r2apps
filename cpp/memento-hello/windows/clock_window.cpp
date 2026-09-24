@@ -21,11 +21,8 @@ private:
     PlatformColor *face = nullptr;
     PlatformFont *font = nullptr;
     unsigned char lastSec = 0xFF;
-    unsigned long startTick = 0; // get_ticks() snapshot at OnCreate
+    unsigned long startTick = 0; // r2::ticks() snapshot at OnCreate
     RTC_raw cachedRtc = {};      // RTC read once at OnCreate
-    Coord panX = 10, panY = 8;   // panel origin; drag title bar to reposition
-    bool dragging = false;
-    Coord dragMX0 = 0, dragMY0 = 0, dragPX0 = 0, dragPY0 = 0;
 
     // Bresenham line on bitmap
     static void drawLine(PlatformBitmap *bm, PlatformColor *col,
@@ -69,44 +66,32 @@ private:
             return;
 
         if (!dark)
-            dark = dc->CreateColor(0xFF0A0A20, nullptr, nullptr);
+            dark = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
         if (!light)
             light = dc->CreateColor(0xFFE0E0FF, nullptr, nullptr);
         if (!face)
             face = dc->CreateColor(0xFFD0D0F8, nullptr, nullptr);
         if (!font)
-            font = dc->CreateFont(12, nullptr, false, false, false, nullptr, nullptr);
+            font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         if (!dark || !light)
             return;
 
         Coord W = target->GetWidth();
         Coord H = target->GetHeight();
 
-        // Full clear first — drawWallpaper only draws shapes, not a solid fill,
-        // so any previous window's content would bleed through the gaps.
-        target->FillRect(0, 0, W, H, dark, false);
-        drawWallpaper(dc, target);
-
-        // ── Bottom bar
-        target->FillRect(0, H - 14, W, 1, dark, false);
-        target->FillRect(0, H - 13, W, 13, light, false);
-
-        // ── Panel box — panX/panY driven, drag title bar to reposition
-        target->FillRect(panX, panY, 120, 117, dark, false);          // outer border
-        target->FillRect(panX + 2, panY + 2, 116, 113, light, false); // inner face
-        target->FillRect(panX + 2, panY + 16, 116, 1, dark, false);   // title separator
+        // The client area is the clock face and its readout; the root draws
+        // the frame, the title bar and the taskbar entry.
+        target->FillRect(0, 0, W, H, light, false);
 
         PlatformDrawTextOptions opts{};
         opts.font = font;
         opts.foreground = dark;
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
-        target->DrawText(panX + 2, panY + 2, 116, 14, "Clock", &opts, false);
-        target->DrawText(0, H - 13, W, 13, "ESC  back", &opts, false);
 
-        // ── Clock face — centred in inner panel (inner width=116 → CX=panX+2+58=panX+60)
-        const int CX = F_COORD(panX) + 60, CY = F_COORD(panY) + 58;
-        const int R = 40; // keeps face and digital readout inside panel
+        // ── Clock face — centred across the client, the readout below it
+        const int CX = F_COORD(W) / 2, CY = 42;
+        const int R = 36;
 
         int fx = CX - R, fy = CY - R, fs = R * 2;
         target->FillRect(fx, fy, fs, fs, dark, false);                 // rim
@@ -129,7 +114,7 @@ private:
 
         // ── Derive current time from a single RTC snapshot + tick delta.
         // read_rtc is NOT called here; cachedRtc is filled once in OnCreate.
-        unsigned long elapsed = get_ticks() - startTick;
+        unsigned long elapsed = r2::ticks() - startTick;
         unsigned long baseSec = (unsigned long)cachedRtc.hours * 3600u + (unsigned long)cachedRtc.minutes * 60u + (unsigned long)cachedRtc.seconds;
         unsigned long nowSec = baseSec + elapsed / 1000u;
         int sec = (int)(nowSec % 60);
@@ -150,7 +135,7 @@ private:
                 (char)('0' + hr24 / 10), (char)('0' + hr24 % 10), ':',
                 (char)('0' + min / 10), (char)('0' + min % 10), ':',
                 (char)('0' + sec / 10), (char)('0' + sec % 10), '\0'};
-            target->DrawText(CX - 40, CY + R + 4, 80, 12, tbuf, &opts, false);
+            target->DrawText(CX - 40, CY + R + 4, 80, 9, tbuf, &opts, false);
         }
     }
 
@@ -159,10 +144,10 @@ private:
         if (data->type == PlatformWindowInputEventType::OnCreate)
         {
             // Read RTC exactly once before IM mode starts (CPU not yet at 100%).
-            // All subsequent time computation uses get_ticks() deltas — no more
+            // All subsequent time computation uses r2::ticks() deltas — no more
             // read_rtc calls during normal operation eliminates the UIP spin freeze.
             read_rtc(&cachedRtc);
-            startTick = (unsigned long)get_ticks();
+            startTick = (unsigned long)r2::ticks();
             wnd->SetImmediateMode(true);
             return;
         }
@@ -173,7 +158,7 @@ private:
         }
         if (data->type == PlatformWindowInputEventType::OnImmediateModeIdleLoop)
         {
-            unsigned long elapsed = (unsigned long)get_ticks() - startTick;
+            unsigned long elapsed = (unsigned long)r2::ticks() - startTick;
             unsigned long baseSec = (unsigned long)cachedRtc.hours * 3600u + (unsigned long)cachedRtc.minutes * 60u + (unsigned long)cachedRtc.seconds;
             unsigned char curSec = (unsigned char)((baseSec + elapsed / 1000u) % 60u);
             if (curSec != lastSec)
@@ -183,51 +168,12 @@ private:
             }
             return;
         }
-        if (data->type == PlatformWindowInputEventType::OnMouseMove)
-        {
-            if (!dragging)
-                return;
-            Coord mx = data->Data.OnMouseMove.mouseX;
-            Coord my = data->Data.OnMouseMove.mouseY;
-            Coord nx = dragPX0 + (mx - dragMX0);
-            Coord ny = dragPY0 + (my - dragMY0);
-            if (nx < 0)
-                nx = 0;
-            if (nx >= 201)
-                nx = 200;
-            if (ny < 0)
-                ny = 0;
-            if (ny >= 84)
-                ny = 83;
-            panX = nx;
-            panY = ny;
-            wnd->Repaint();
-            return;
-        }
+        // Moving the window and closing it are both the root's job now, so a
+        // click in the face does nothing. It used to close the clock, which
+        // was right when the clock filled the screen and wrong the moment it
+        // became a window you might want to click on to bring forward.
         if (data->type == PlatformWindowInputEventType::OnMouseClick)
-        {
-            Coord mx = data->Data.OnMouseClick.mouseX;
-            Coord my = data->Data.OnMouseClick.mouseY;
-            if (data->Data.OnMouseClick.state == PlatformWindowButtonState::Pressed)
-            {
-                if (my >= panY && my < panY + 14 && mx >= panX && mx < panX + 120)
-                {
-                    dragging = true;
-                    dragMX0 = mx;
-                    dragMY0 = my;
-                    dragPX0 = panX;
-                    dragPY0 = panY;
-                    return;
-                }
-                wnd->SetImmediateMode(false);
-                wnd->Close();
-            }
-            else
-            {
-                dragging = false;
-            }
             return;
-        }
         if (data->type != PlatformWindowInputEventType::OnKeyEvent)
             return;
         auto *key = data->Data.OnKeyEvent.key;

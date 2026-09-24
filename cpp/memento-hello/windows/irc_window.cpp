@@ -9,9 +9,23 @@ class IRCWindow
     static const int SOCK_CLOSED = 0;
     static const unsigned short LOCAL_PORT = 6668;
 
-    static const int MSG_W = 44;
+    // How much of a line is kept. This used to be 44, which was the width of
+    // the window when it filled a 320x200 screen; it has been a 290-unit
+    // window over a desktop for a while now, and at four units to the glyph
+    // that is seventy columns. A PRIVMSG spends up to fourteen of them on
+    // "<nick> ", so 44 left about twenty-seven for what someone actually
+    // said — which is why every second line from the server came back cut in
+    // half. This is the message column with the user list taken off it.
+    static const int USERS_W = 60;      // the user list, fifteen characters
+    static const int MSG_W = 54;        // and what is left for the messages
     static const int MAX_MSGS = 50;
-    static const int VIS_ROWS = 10;
+    // A nick may not eat more than this much of a message line.
+    static const int NICK_SHOW = 12;
+    // What is left of the client area once the two rules, the status line and
+    // the input line have had the bottom 24 units of it: thirteen rows fit the
+    // space only if the status line is not there, and the thirteenth was being
+    // drawn straight through it.
+    static const int VIS_ROWS = 12;
     static const int IN_CAP = 60;
 
     enum Phase
@@ -42,6 +56,20 @@ class IRCWindow
     int scrollOffset = 0;
     int regCount = 0;
 
+    // ── Who is in the channel ───────────────────────────────────────────────
+    //
+    // Kept from the NAMES reply the server sends on join (353, ended by 366)
+    // and then from the JOIN, PART, QUIT, KICK and NICK messages as they
+    // arrive. Ops sort first, then everyone else, each alphabetically, so the
+    // list does not reshuffle under the eye every time somebody joins.
+    static const int MAX_USERS = 48;
+    static const int USER_LEN = 17;
+    char users[MAX_USERS][USER_LEN]; // [0] is '@' for an op, or the first letter
+    int nUsers = 0;
+    int userScroll = 0;      // first name shown, when the channel outgrows the pane
+    int userRowsShown = 1;   // how many fit; the paint works it out and leaves it here
+    int userPaneX = 0;       // and where the pane starts, for the hit test
+
     char ircPartial[514] = {};
     int ircPartialLen = 0;
 
@@ -66,6 +94,164 @@ class IRCWindow
         }
         msgs[slot][i] = '\0';
         msgTotal++;
+    }
+
+    // ── The user list ───────────────────────────────────────────────────────
+    //
+    // An entry is the nick with its op marker still on the front, so the
+    // marker survives a round trip through the list and the sort can see it.
+
+    static bool isOpMark(char c) { return c == '@' || c == '~' || c == '&' || c == '%'; }
+
+    static char lowerc(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
+
+    // Case-insensitive compare of the names, ignoring any op marker.
+    static int nickCmp(const char *a, const char *b)
+    {
+        if (isOpMark(*a))
+            a++;
+        if (*a == '+')
+            a++;
+        if (isOpMark(*b))
+            b++;
+        if (*b == '+')
+            b++;
+        while (*a && *b)
+        {
+            char ca = lowerc(*a), cb = lowerc(*b);
+            if (ca != cb)
+                return ca < cb ? -1 : 1;
+            a++;
+            b++;
+        }
+        if (*a == *b)
+            return 0;
+        return *a ? 1 : -1;
+    }
+
+    // Ops first, then everyone else: the rank is what the sort keys on before
+    // the name itself.
+    static int userRank(const char *s) { return isOpMark(*s) ? 0 : 1; }
+
+    void userClear()
+    {
+        nUsers = 0;
+        userScroll = 0;
+    }
+
+    // How far down the list may be pushed before the last name sits at the
+    // bottom of the pane. The row count comes from the paint, which is the
+    // only place that knows how tall the window is.
+    int userMaxScroll() const
+    {
+        int over = nUsers - userRowsShown;
+        return over > 0 ? over : 0;
+    }
+
+    void clampUserScroll()
+    {
+        int max = userMaxScroll();
+        if (userScroll > max)
+            userScroll = max;
+        if (userScroll < 0)
+            userScroll = 0;
+    }
+
+    int userIndex(const char *name) const
+    {
+        for (int i = 0; i < nUsers; i++)
+            if (nickCmp(users[i], name) == 0)
+                return i;
+        return -1;
+    }
+
+    void userAdd(const char *name)
+    {
+        if (!name || !name[0] || nUsers >= MAX_USERS)
+            return;
+        // A voice marker says nothing this list shows, and keeping it would
+        // make the same person look like two.
+        if (*name == '+')
+            name++;
+        if (!name[0] || userIndex(name) >= 0)
+            return;
+
+        int at = nUsers;
+        while (at > 0)
+        {
+            const char *prev = users[at - 1];
+            int pr = userRank(prev), nr = userRank(name);
+            if (pr < nr || (pr == nr && nickCmp(prev, name) <= 0))
+                break;
+            scopy(users[at], users[at - 1], USER_LEN);
+            at--;
+        }
+        scopy(users[at], name, USER_LEN);
+        nUsers++;
+    }
+
+    void userRemove(const char *name)
+    {
+        int at = userIndex(name);
+        if (at < 0)
+            return;
+        for (int i = at; i < nUsers - 1; i++)
+            scopy(users[i], users[i + 1], USER_LEN);
+        nUsers--;
+    }
+
+    void userRename(const char *from, const char *to)
+    {
+        int at = userIndex(from);
+        if (at < 0)
+        {
+            userAdd(to);
+            return;
+        }
+        bool wasOp = isOpMark(users[at][0]);
+        userRemove(from);
+        if (wasOp)
+        {
+            char marked[USER_LEN];
+            marked[0] = '@';
+            int i = 0;
+            while (to[i] && i < USER_LEN - 2)
+            {
+                marked[i + 1] = to[i];
+                i++;
+            }
+            marked[i + 1] = '\0';
+            userAdd(marked);
+        }
+        else
+        {
+            userAdd(to);
+        }
+    }
+
+    // The trailing parameter of a 353 is the space-separated names.
+    void userAddList(const char *names)
+    {
+        char one[USER_LEN];
+        int i = 0;
+        while (*names && *names != '\r')
+        {
+            if (*names == ' ')
+            {
+                one[i] = '\0';
+                if (i)
+                    userAdd(one);
+                i = 0;
+                names++;
+                continue;
+            }
+            if (i < USER_LEN - 1)
+                one[i++] = *names;
+            names++;
+        }
+        one[i] = '\0';
+        if (i)
+            userAdd(one);
     }
 
     static bool parseIP(const char *s, unsigned char ip[4])
@@ -183,6 +369,7 @@ class IRCWindow
             {
                 registered = true;
                 regCount++;
+                userClear();
                 addLine("[registered]");
                 wnd->Repaint();
                 char jbuf[64];
@@ -230,7 +417,7 @@ class IRCWindow
             int i = 0;
             disp[i++] = '<';
             int ni = 0;
-            while (pnick[ni] && i < 14)
+            while (pnick[ni] && ni < NICK_SHOW)
                 disp[i++] = pnick[ni++];
             disp[i++] = '>';
             disp[i++] = ' ';
@@ -243,6 +430,7 @@ class IRCWindow
         }
         if (cmdEq(cmd, "JOIN"))
         {
+            userAdd(pnick);
             char disp[MSG_W + 1];
             int i = 0;
             disp[i++] = '*';
@@ -260,6 +448,7 @@ class IRCWindow
         }
         if (cmdEq(cmd, "PART") || cmdEq(cmd, "QUIT"))
         {
+            userRemove(pnick);
             char disp[MSG_W + 1];
             int i = 0;
             disp[i++] = '*';
@@ -273,6 +462,97 @@ class IRCWindow
             disp[i] = '\0';
             addLine(disp);
             wnd->Repaint();
+            return;
+        }
+        if (cmdEq(cmd, "NICK"))
+        {
+            // ":old!user@host NICK :new" — the new nick is the trailing
+            // parameter on most servers and a plain one on the rest.
+            const char *t = getTrailing(cmd);
+            char newNick[32];
+            int i = 0;
+            if (t)
+            {
+                while (t[i] && t[i] != '\r' && i < 30)
+                {
+                    newNick[i] = t[i];
+                    i++;
+                }
+            }
+            else
+            {
+                const char *p2 = cmd + 4;
+                while (*p2 == ' ')
+                    p2++;
+                while (p2[i] && p2[i] != ' ' && p2[i] != '\r' && i < 30)
+                {
+                    newNick[i] = p2[i];
+                    i++;
+                }
+            }
+            newNick[i] = '\0';
+            if (i)
+            {
+                userRename(pnick, newNick);
+                // Our own rename has to be followed, or the status line goes
+                // on claiming a nick the server no longer knows us by.
+                if (nickCmp(nick, pnick) == 0)
+                    scopy(nick, newNick, sizeof(nick));
+                char disp[MSG_W + 1];
+                int j = 0;
+                disp[j++] = '*';
+                disp[j++] = ' ';
+                int k = 0;
+                while (pnick[k] && j < MSG_W - 12)
+                    disp[j++] = pnick[k++];
+                const char *arrow = " -> ";
+                while (*arrow && j < MSG_W)
+                    disp[j++] = *arrow++;
+                k = 0;
+                while (newNick[k] && j < MSG_W)
+                    disp[j++] = newNick[k++];
+                disp[j] = '\0';
+                addLine(disp);
+                wnd->Repaint();
+            }
+            return;
+        }
+        if (cmdEq(cmd, "KICK"))
+        {
+            // "KICK #channel victim :reason" — the victim is the second
+            // parameter, which is the one this list cares about.
+            const char *p2 = cmd + 4;
+            while (*p2 == ' ')
+                p2++;
+            while (*p2 && *p2 != ' ')
+                p2++; // past the channel
+            while (*p2 == ' ')
+                p2++;
+            char victim[32];
+            int i = 0;
+            while (p2[i] && p2[i] != ' ' && p2[i] != '\r' && i < 30)
+            {
+                victim[i] = p2[i];
+                i++;
+            }
+            victim[i] = '\0';
+            if (i)
+            {
+                userRemove(victim);
+                char disp[MSG_W + 1];
+                int j = 0;
+                disp[j++] = '*';
+                disp[j++] = ' ';
+                int k = 0;
+                while (victim[k] && j < MSG_W - 8)
+                    disp[j++] = victim[k++];
+                const char *s2 = " kicked";
+                while (*s2 && j < MSG_W)
+                    disp[j++] = *s2++;
+                disp[j] = '\0';
+                addLine(disp);
+                wnd->Repaint();
+            }
             return;
         }
         if (cmdEq(cmd, "NOTICE"))
@@ -310,6 +590,27 @@ class IRCWindow
         }
         if (cmd[0] >= '0' && cmd[0] <= '9')
         {
+            // 353 is the NAMES reply: the trailing parameter is the whole
+            // membership of the channel, space separated and marked up with
+            // @ for the ops. It arrives in as many lines as the server needs,
+            // and 366 says that was the last of them. These used to be thrown
+            // away with the rest of the numerics, which is why there was
+            // nothing to build a user list from.
+            if (cmd[0] == '3' && cmd[1] == '5' && cmd[2] == '3')
+            {
+                const char *t = getTrailing(cmd);
+                if (t)
+                {
+                    userAddList(t);
+                    wnd->Repaint();
+                }
+                return;
+            }
+            if (cmd[0] == '3' && cmd[1] == '6' && cmd[2] == '6')
+            {
+                wnd->Repaint();
+                return;
+            }
             // Skip MOTD (372, 375, 376) and other noisy numerics
             if (cmd[0] == '3' && cmd[1] == '7' &&
                 (cmd[2] == '2' || cmd[2] == '5' || cmd[2] == '6'))
@@ -318,15 +619,11 @@ class IRCWindow
                 return;
             if (cmd[0] == '2' && cmd[1] == '6' && (cmd[2] == '5' || cmd[2] == '6'))
                 return;
-            // Skip 002, 003, 004, 005 (server info), 332/333 (topic), 353/366 (NAMES)
+            // Skip 002, 003, 004, 005 (server info) and 332/333 (topic)
             if (cmd[0] == '0' && cmd[1] == '0' &&
                 (cmd[2] == '2' || cmd[2] == '3' || cmd[2] == '4' || cmd[2] == '5'))
                 return;
             if (cmd[0] == '3' && cmd[1] == '3' && (cmd[2] == '2' || cmd[2] == '3'))
-                return;
-            if (cmd[0] == '3' && cmd[1] == '5' && cmd[2] == '3')
-                return;
-            if (cmd[0] == '3' && cmd[1] == '6' && cmd[2] == '6')
                 return;
             const char *t = getTrailing(cmd);
             if (t)
@@ -622,6 +919,30 @@ class IRCWindow
             OnPaint(data->Data.OnPaint.ctx, data->Data.OnPaint.target);
             return;
         }
+        if (data->type == PlatformWindowInputEventType::OnMouseClick)
+        {
+            if (phase != PH_CHAT ||
+                data->Data.OnMouseClick.state != PlatformWindowButtonState::Pressed)
+                return;
+            Coord mx = data->Data.OnMouseClick.mouseX;
+            Coord my = data->Data.OnMouseClick.mouseY;
+            if (F_COORD(mx) < userPaneX - 3 || userPaneX == 0)
+                return;
+            int lastRowY = 17 + (userRowsShown - 1) * 10;
+            if (my >= 4 && my < 15)
+            {
+                userScroll -= userRowsShown;
+                clampUserScroll();
+                wnd->Repaint();
+            }
+            else if (my >= lastRowY && my < lastRowY + 10)
+            {
+                userScroll += userRowsShown;
+                clampUserScroll();
+                wnd->Repaint();
+            }
+            return;
+        }
         if (data->type != PlatformWindowInputEventType::OnKeyEvent)
             return;
         auto *key = data->Data.OnKeyEvent.key;
@@ -787,6 +1108,23 @@ class IRCWindow
             wnd->Repaint();
             return;
         }
+        // Ctrl and an arrow scroll the user list; the arrows on their own
+        // belong to the messages, which is the pane you are usually reading.
+        bool ctrlHeld = key->isLeftControl || key->isRightControl;
+        if (phase == PH_CHAT && ctrlHeld && (key->isArrowUp || key->isPageUp))
+        {
+            userScroll -= key->isPageUp ? userRowsShown : 1;
+            clampUserScroll();
+            wnd->Repaint();
+            return;
+        }
+        if (phase == PH_CHAT && ctrlHeld && (key->isArrowDown || key->isPageDown))
+        {
+            userScroll += key->isPageDown ? userRowsShown : 1;
+            clampUserScroll();
+            wnd->Repaint();
+            return;
+        }
         if (phase == PH_CHAT && key->isArrowUp)
         {
             int maxScroll = msgTotal > VIS_ROWS ? msgTotal - VIS_ROWS : 0;
@@ -832,32 +1170,26 @@ class IRCWindow
     void OnPaint(PlatformDrawingContext *dc, PlatformBitmap *target)
     {
         if (!dark)
-            dark = dc->CreateColor(0xFF0A0A20, nullptr, nullptr);
+            dark = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
         if (!light)
             light = dc->CreateColor(0xFFE0E0FF, nullptr, nullptr);
         if (!font)
-            font = dc->CreateFont(12, nullptr, false, false, false, nullptr, nullptr);
+            font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         if (!dark || !light || !font)
             return;
 
         Coord W = target->GetWidth();
         Coord H = target->GetHeight();
-        target->FillRect(0, 0, W, H, dark, false);
-        drawWallpaper(dc, target);
-        target->FillRect(0, H - 14, W, 1, dark, false);
-        target->FillRect(0, H - 13, W, 13, light, false);
 
-        target->FillRect(5, 8, 310, 175, dark, false);
-        target->FillRect(7, 10, 306, 171, light, false);
-        target->FillRect(7, 24, 306, 1, dark, false);
+
+        // Client area only: the root frames the window and names it.
+        target->FillRect(0, 0, W, H, light, false);
 
         PlatformDrawTextOptions opts{};
         opts.font = font;
         opts.foreground = dark;
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
-        target->DrawText(7, 10, 288, 14, "IRC", &opts, false);
-        target->DrawText(0, H - 13, W, 13, "IRC  -  r2", &opts, false);
 
         opts.horizontalAlign = PlatformAlign::Begin;
 
@@ -884,9 +1216,9 @@ class IRCWindow
                 hint = "default #r2   [Enter] connect   [Esc] back";
                 defval = "#r2";
             }
-            target->DrawText(10, 40, 300, 14, prompt, &opts, false);
-            target->FillRect(30, 56, 260, 18, dark, false);
-            target->FillRect(32, 58, 256, 14, light, false);
+            target->DrawText(6, 6, W - 12, 10, prompt, &opts, false);
+            target->FillRect(20, 20, W - 40, 14, dark, false);
+            target->FillRect(22, 22, W - 44, 10, light, false);
             char display[IN_CAP + 3] = {};
             int i = 0;
             if (inputLen == 0)
@@ -907,8 +1239,8 @@ class IRCWindow
             }
             display[i++] = '_';
             display[i] = '\0';
-            target->DrawText(36, 58, 248, 14, display, &opts, false);
-            target->DrawText(10, 82, 300, 12, hint, &opts, false);
+            target->DrawText(26, 22, W - 52, 10, display, &opts, false);
+            target->DrawText(6, 38, W - 12, 10, hint, &opts, false);
             if (phase == PH_NICK || phase == PH_CHAN)
             {
                 char ipstr[26] = "Server: ";
@@ -925,7 +1257,7 @@ class IRCWindow
                         ipstr[k++] = '.';
                 }
                 ipstr[k] = '\0';
-                target->DrawText(10, 100, 300, 12, ipstr, &opts, false);
+                target->DrawText(6, 50, W - 12, 10, ipstr, &opts, false);
             }
             if (phase == PH_CHAN)
             {
@@ -935,12 +1267,12 @@ class IRCWindow
                 while (nick[ni] && k < 22)
                     nkstr[k++] = nick[ni++];
                 nkstr[k] = '\0';
-                target->DrawText(10, 114, 300, 12, nkstr, &opts, false);
+                target->DrawText(6, 62, W - 12, 10, nkstr, &opts, false);
             }
         }
         else
         {
-            target->FillRect(7, 151, 306, 1, dark, false);
+            target->FillRect(2, H - 24, W - 4, 1, dark, false);
 
             // Status: nick @ channel or connection state
             char status[MSG_W + 4] = {};
@@ -980,10 +1312,10 @@ class IRCWindow
                 if (si < MSG_W) status[si++] = ')';
                 status[si] = '\0';
             }
-            target->DrawText(10, 152, 300, 10, status, &opts, false);
+            target->DrawText(4, H - 23, W - 8, 9, status, &opts, false);
 
-            target->FillRect(7, 163, 306, 1, dark, false);
-            target->FillRect(7, 164, 306, 17, light, false);
+            target->FillRect(2, H - 13, W - 4, 1, dark, false);
+            target->FillRect(2, H - 12, W - 4, 11, light, false);
             char display[IN_CAP + 3] = {};
             int i = 0;
             while (inputBuf[i])
@@ -993,7 +1325,14 @@ class IRCWindow
             }
             display[i++] = '_';
             display[i] = '\0';
-            target->DrawText(10, 164, 300, 17, display, &opts, false);
+            target->DrawText(4, H - 12, W - 8, 11, display, &opts, false);
+
+            // The messages on the left, who is here on the right, with a rule
+            // between them that stops where the status line starts.
+            const int usersX = F_COORD(W) - USERS_W;
+            userPaneX = usersX;
+            const int msgW = usersX - 8;
+            target->FillRect(usersX - 3, 2, 1, F_COORD(H) - 27, dark, false);
 
             int startMsg = msgTotal - VIS_ROWS - scrollOffset;
             if (startMsg < 0)
@@ -1003,7 +1342,7 @@ class IRCWindow
                 int idx = startMsg + r;
                 if (idx >= msgTotal)
                     break;
-                target->DrawText(10, 26 + r * 12, 300, 12, msgs[idx % MAX_MSGS], &opts, false);
+                target->DrawText(4, 4 + r * 10, msgW, 10, msgs[idx % MAX_MSGS], &opts, false);
             }
             // Scroll indicator
             if (scrollOffset > 0)
@@ -1015,9 +1354,52 @@ class IRCWindow
                 ind[k++] = '0' + so % 10;
                 ind[k] = '\0';
                 opts.horizontalAlign = PlatformAlign::End;
-                target->DrawText(7, 26, 306, 12, ind, &opts, false);
+                target->DrawText(4, 4, msgW, 10, ind, &opts, false);
                 opts.horizontalAlign = PlatformAlign::Begin;
             }
+
+            // Who is in the channel. The header carries the count, which is
+            // the part worth knowing when the list is longer than the window.
+            char head[16];
+            {
+                int k = 0;
+                const char *u = "Users ";
+                while (*u)
+                    head[k++] = *u++;
+                int n = nUsers;
+                if (n >= 100)
+                    head[k++] = (char)('0' + n / 100);
+                if (n >= 10)
+                    head[k++] = (char)('0' + (n / 10) % 10);
+                head[k++] = (char)('0' + n % 10);
+                head[k] = '\0';
+            }
+            target->DrawText(usersX, 4, USERS_W, 10, (const mchar *)head, &opts, false);
+            target->FillRect(usersX, 14, USERS_W - 2, 1, dark, false);
+
+            userRowsShown = (F_COORD(H) - 27 - 17) / 10;
+            if (userRowsShown < 1)
+                userRowsShown = 1;
+            clampUserScroll();
+
+            for (int i = 0; i < userRowsShown; i++)
+            {
+                int at = userScroll + i;
+                if (at >= nUsers)
+                    break;
+                target->DrawText(usersX, 17 + i * 10, USERS_W, 10, (const mchar *)users[at], &opts, false);
+            }
+
+            // Where the list runs past the pane, at its two ends: the same
+            // marks the file manager uses, and the same click targets — the
+            // row they are on scrolls the list by a pane-full.
+            opts.horizontalAlign = PlatformAlign::End;
+            if (userScroll > 0)
+                target->DrawText(usersX, 4, USERS_W - 2, 10, "^", &opts, false);
+            if (userScroll < userMaxScroll())
+                target->DrawText(usersX, 17 + (userRowsShown - 1) * 10, USERS_W - 2, 10, "v",
+                                 &opts, false);
+            opts.horizontalAlign = PlatformAlign::Begin;
         }
     }
 

@@ -26,7 +26,22 @@ private:
     char passBuf[64] = {};
     int loginLen = 0;
     int passLen = 0;
-    Coord panX = 20, panY = 52; // panel origin; drag title bar to reposition
+    // Panel metrics, in the window's 320x200 coordinates and sized around the
+    // 4x8 glyph: a title bar of one line, fields and buttons of one line and a
+    // border. Nothing here is wider than what it holds — the widest label is
+    // "Password:" at nine characters, and a login does not need a field
+    // twenty-two characters across. The painter and the hit tests share them.
+    static const int PAN_W = 116, PAN_H = 60;
+    static const int TITLE_H = 10;
+    static const int CLOSE_W = 8, CLOSE_H = 6;
+    static const int LABEL_X = 6, LABEL_W = 38;
+    static const int FIELD_X = 46, FIELD_W = 64, FIELD_H = 10;
+    static const int ROW1_Y = 15, ROW2_Y = 28;
+    static const int BTN_Y = 44, BTN_H = 11;
+    static const int OK_X = 18, OK_W = 32;
+    static const int CANCEL_X = 60, CANCEL_W = 40;
+
+    Coord panX = 102, panY = 70; // panel origin; drag title bar to reposition
     bool dragging = false;
     Coord dragMX0 = 0, dragMY0 = 0, dragPX0 = 0, dragPY0 = 0;
 
@@ -47,12 +62,12 @@ private:
             Coord ny = dragPY0 + (my - dragMY0);
             if (nx < 0)
                 nx = 0;
-            if (nx >= 136)
-                nx = 135;
+            if (nx > 320 - PAN_W)
+                nx = 320 - PAN_W;
             if (ny < 0)
                 ny = 0;
-            if (ny >= 105)
-                ny = 104;
+            if (ny > 200 - PAN_H)
+                ny = 200 - PAN_H;
             panX = nx;
             panY = ny;
             wnd->Repaint();
@@ -71,7 +86,7 @@ private:
             {
                 return mx >= bx && mx < bx + bw && my >= by && my < by + bh;
             };
-            if (my >= panY && my < panY + 14 && mx >= panX && mx < panX + 171)
+            if (my >= panY && my < panY + TITLE_H && mx >= panX && mx < panX + PAN_W - CLOSE_W - 4)
             {
                 dragging = true;
                 dragMX0 = mx;
@@ -80,30 +95,30 @@ private:
                 dragPY0 = panY;
                 return;
             }
-            if (hit(panX + 171, panY + 5, 10, 8))
+            if (hit(panX + PAN_W - CLOSE_W - 3, panY + 3, CLOSE_W, CLOSE_H))
             {
                 wnd->Close();
                 return;
             }
-            if (hit(panX + 70, panY + 22, 109, 14))
+            if (hit(panX + FIELD_X, panY + ROW1_Y, FIELD_W, FIELD_H))
             {
                 focus = 0;
                 wnd->Repaint();
                 return;
             }
-            if (hit(panX + 70, panY + 41, 109, 14))
+            if (hit(panX + FIELD_X, panY + ROW2_Y, FIELD_W, FIELD_H))
             {
                 focus = 1;
                 wnd->Repaint();
                 return;
             }
-            if (hit(panX + 40, panY + 66, 44, 18))
+            if (hit(panX + OK_X, panY + BTN_Y, OK_W, BTN_H))
             {
                 wantsDesktop = true;
                 wnd->Close();
                 return;
             }
-            if (hit(panX + 100, panY + 66, 60, 18))
+            if (hit(panX + CANCEL_X, panY + BTN_Y, CANCEL_W, BTN_H))
             {
                 wnd->Close();
                 return;
@@ -258,11 +273,11 @@ private:
     void OnPaint(PlatformDrawingContext *dc, PlatformBitmap *target)
     {
         if (!dark)
-            dark = dc->CreateColor(0xFF0A0A20, nullptr, nullptr);
+            dark = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
         if (!light)
             light = dc->CreateColor(0xFFE0E0FF, nullptr, nullptr);
         if (!font)
-            font = dc->CreateFont(12, nullptr, false, false, false, nullptr, nullptr);
+            font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         if (!dark || !light || !font)
             return;
 
@@ -272,15 +287,11 @@ private:
         target->FillRect(0, 0, W, H, dark, false);
         drawWallpaper(dc, target);
 
-        // Taskbar
-        target->FillRect(0, H - 14, W, 1, dark, false);
-        target->FillRect(0, H - 13, W, 13, light, false);
-
         // Dialog panel — panX/panY set initial position, draggable via title bar
-        target->FillRect(panX, panY, 185, 96, dark, false);
-        target->FillRect(panX + 2, panY + 2, 181, 92, light, false);
-        target->FillRect(panX + 2, panY + 16, 181, 1, dark, false); // title separator
-        target->FillRect(panX + 171, panY + 5, 10, 8, dark, false); // close button
+        target->FillRect(panX, panY, PAN_W, PAN_H, dark, false);
+        target->FillRect(panX + 2, panY + 2, PAN_W - 4, PAN_H - 4, light, false);
+        target->FillRect(panX + 2, panY + TITLE_H, PAN_W - 4, 1, dark, false); // title separator
+        target->FillRect(panX + PAN_W - CLOSE_W - 3, panY + 3, CLOSE_W, CLOSE_H, dark, false); // close button
 
         PlatformDrawTextOptions opts{};
         opts.font = font;
@@ -288,17 +299,16 @@ private:
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
 
-        target->DrawText(panX + 2, panY + 2, 165, 14, "Login", &opts, false);
-        target->DrawText(0, H - 13, W, 13, "Login  -  r2", &opts, false);
+        target->DrawText(panX + 2, panY + 2, PAN_W - CLOSE_W - 8, TITLE_H - 2, "Login", &opts, false);
 
         opts.horizontalAlign = PlatformAlign::Begin;
-        target->DrawText(panX + 10, panY + 22, 58, 14, "Login:", &opts, false);
-        target->DrawText(panX + 10, panY + 41, 58, 14, "Password:", &opts, false);
+        target->DrawText(panX + LABEL_X, panY + ROW1_Y, LABEL_W, FIELD_H, "Login:", &opts, false);
+        target->DrawText(panX + LABEL_X, panY + ROW2_Y, LABEL_W, FIELD_H, "Password:", &opts, false);
 
-        DrawInputField(target, panX + 70, panY + 22, 109, 14, loginBuf, loginLen, focus == 0, false);
-        DrawInputField(target, panX + 70, panY + 41, 109, 14, passBuf, passLen, focus == 1, true);
+        DrawInputField(target, panX + FIELD_X, panY + ROW1_Y, FIELD_W, FIELD_H, loginBuf, loginLen, focus == 0, false);
+        DrawInputField(target, panX + FIELD_X, panY + ROW2_Y, FIELD_W, FIELD_H, passBuf, passLen, focus == 1, true);
 
-        DrawButton(target, panX + 40, panY + 66, 44, 18, "OK", focus == 2);
-        DrawButton(target, panX + 100, panY + 66, 60, 18, "Cancel", focus == 3);
+        DrawButton(target, panX + OK_X, panY + BTN_Y, OK_W, BTN_H, "OK", focus == 2);
+        DrawButton(target, panX + CANCEL_X, panY + BTN_Y, CANCEL_W, BTN_H, "Cancel", focus == 3);
     }
 };

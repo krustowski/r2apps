@@ -11,34 +11,36 @@ public:
     }
 
     void SetWindow(PlatformWindow *w) { wnd = w; }
-    bool wantsClock = false;
-    bool wantsTasks = false;
-    bool wantsMount = false;
-    bool wantsNet = false;
+
+    // The shell is the one launch that cannot share the screen: it wants text
+    // mode, so the desktop closes for it and main() brings it back afterwards.
+    // Everything else opens as a window over the desktop, which stays put.
     bool wantsShell = false;
-    bool wantsChat = false;
-    bool wantsCalc = false;
-    bool wantsIRC = false;
 
 private:
     PlatformWindow *wnd = nullptr;
     PlatformColor *dark = nullptr;
     PlatformColor *light = nullptr;
     PlatformFont *font = nullptr;
-    int sel = 0; // 0=Clock 1=Shell 2=Net 3=Mount 4=Tasks 5=Chat 6=Calc 7=IRC
+    int sel = 0; // 0=Clock 1=Shell 2=Net 3=Mount 4=Tasks 5=Chat 6=Calc 7=IRC 8=Music 9=Web
 
-    // Row 1: 5 icons at 42-px spacing; Row 2: 2 icons (Chat, Calc).
-    // Frame is FW=230 wide, centered on a 320px canvas: FX=(320-230)/2=45.
-    static const int BSIZ = 29;
-    static const int FW = 230; // dialog frame width
-    static const int FX = 45;  // frame left edge (centered)
-    static const int IX0 = 61, IX1 = 103, IX2 = 145, IX3 = 187, IX4 = 229;
-    static const int IY = 43;   // row 1 icon top (below 16 px title bar)
-    static const int LY = 75;   // row 1 label top
-    static const int IY2 = 91;  // row 2 icon top
-    static const int LY2 = 123; // row 2 label top
-    static const int LW = 44;
-    static const int LH = 12;
+    // Everything here is sized around the 4x8 glyph: an icon is two text
+    // lines tall, a label one, and the frame is what holds them.
+    // Row 1: 5 icons at 30-px spacing; Row 2: 5 icons (Chat, Calc, IRC, Music, Web).
+    // Frame is FW=170 wide, centred on a 320px canvas: FX=(320-170)/2=75.
+    static const int BSIZ = 20;
+    static const int FW = 170; // dialog frame width
+    static const int FX = 75;  // frame left edge (centered)
+    static const int FY = 28;  // frame top
+    static const int FH = 92;  // frame height
+    static const int TITLE_H = 11;
+    static const int IX0 = 90, IX1 = 120, IX2 = 150, IX3 = 180, IX4 = 210;
+    static const int IY = 46;   // row 1 icon top (below the title bar)
+    static const int LY = 68;   // row 1 label top
+    static const int IY2 = 80;  // row 2 icon top
+    static const int LY2 = 102; // row 2 label top
+    static const int LW = 30;
+    static const int LH = 9;
 
     PlatformBitmap *bmpClock = nullptr;
     PlatformBitmap *bmpShell = nullptr;
@@ -48,34 +50,43 @@ private:
     PlatformBitmap *bmpChat = nullptr;
     PlatformBitmap *bmpCalc = nullptr;
     PlatformBitmap *bmpIRC = nullptr;
+    PlatformBitmap *bmpMidi = nullptr;
+    PlatformBitmap *bmpWeb = nullptr;
 
+    //
+    //  The icons are drawn for the size they are shown at: twenty logical
+    //  pixels square, which is two lines of the 4x8 text face. Nothing here is
+    //  a scaled-down version of a larger drawing — at this size a halved
+    //  three-pixel detail lands on one and a half and comes out muddy, so each
+    //  shape is placed on the 20x20 grid directly.
+    //
     void MakeBitmaps(PlatformDrawingContext *dc)
     {
-        // Clock: circular face, corner roundoff, tick marks, hands
+        // Clock: square face with rounded corners, four ticks, two hands
         if (!bmpClock)
         {
-            bmpClock = dc->CreateBitmap(Coord(32), Coord(32), nullptr, nullptr);
+            bmpClock = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
             if (bmpClock)
             {
-                bmpClock->FillRectD(Dim(0), Dim(0), Dim(29), Dim(29), dark);  // bg
-                bmpClock->FillRectD(Dim(3), Dim(3), Dim(23), Dim(23), light); // face
-                bmpClock->FillRectD(Dim(3), Dim(3), Dim(3), Dim(3), dark);    // corner TL
-                bmpClock->FillRectD(Dim(23), Dim(3), Dim(3), Dim(3), dark);   // corner TR
-                bmpClock->FillRectD(Dim(3), Dim(23), Dim(3), Dim(3), dark);   // corner BL
-                bmpClock->FillRectD(Dim(23), Dim(23), Dim(3), Dim(3), dark);  // corner BR
-                bmpClock->FillRectD(Dim(12), Dim(4), Dim(5), Dim(2), dark);   // 12 tick
-                bmpClock->FillRectD(Dim(23), Dim(12), Dim(2), Dim(5), dark);  // 3  tick
-                bmpClock->FillRectD(Dim(12), Dim(23), Dim(5), Dim(2), dark);  // 6  tick
-                bmpClock->FillRectD(Dim(4), Dim(12), Dim(2), Dim(5), dark);   // 9  tick
-                bmpClock->FillRectD(Dim(13), Dim(7), Dim(2), Dim(7), dark);   // hour hand
-                bmpClock->FillRectD(Dim(14), Dim(13), Dim(7), Dim(2), dark);  // min  hand
-                bmpClock->FillRectD(Dim(13), Dim(13), Dim(2), Dim(2), dark);  // pivot
+                bmpClock->FillRect(0, 0, 20, 20, dark, false);   // tile
+                bmpClock->FillRect(3, 3, 14, 14, light, false);  // face
+                bmpClock->FillRect(3, 3, 1, 1, dark, false);     // corner TL
+                bmpClock->FillRect(16, 3, 1, 1, dark, false);    // corner TR
+                bmpClock->FillRect(3, 16, 1, 1, dark, false);    // corner BL
+                bmpClock->FillRect(16, 16, 1, 1, dark, false);   // corner BR
+                bmpClock->FillRect(9, 4, 2, 1, dark, false);     // 12 tick
+                bmpClock->FillRect(15, 9, 1, 2, dark, false);    // 3  tick
+                bmpClock->FillRect(9, 15, 2, 1, dark, false);    // 6  tick
+                bmpClock->FillRect(4, 9, 1, 2, dark, false);     // 9  tick
+                bmpClock->FillRect(9, 6, 2, 5, dark, false);     // hour hand, at 12
+                bmpClock->FillRect(10, 9, 5, 2, dark, false);    // minute hand, at 3
+                bmpClock->FillRect(9, 9, 2, 2, dark, false);     // pivot
             }
         }
-        // Shell: terminal window with title bar dots and ">_" prompt
+        // Shell: terminal window, title bar with three dots, ">_" on the body
         if (!bmpShell)
         {
-            bmpShell = dc->CreateBitmap(Coord(32), Coord(32), nullptr, nullptr);
+            bmpShell = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
             if (bmpShell)
             {
                 PlatformDrawTextOptions to{};
@@ -83,145 +94,163 @@ private:
                 to.foreground = light;
                 to.horizontalAlign = PlatformAlign::Begin;
                 to.verticalAlign = PlatformAlign::Begin;
-                bmpShell->FillRectD(Dim(0), Dim(0), Dim(29), Dim(29), dark); // bg
-                bmpShell->FillRectD(Dim(2), Dim(2), Dim(25), Dim(5), light); // title bar
-                bmpShell->FillRectD(Dim(4), Dim(3), Dim(3), Dim(3), dark);   // dot 1
-                bmpShell->FillRectD(Dim(9), Dim(3), Dim(3), Dim(3), dark);   // dot 2
-                bmpShell->FillRectD(Dim(14), Dim(3), Dim(3), Dim(3), dark);  // dot 3
-                bmpShell->DrawTextD(Dim(3), Dim(9), Dim(24), Dim(16), ">_", &to);
+                bmpShell->FillRect(0, 0, 20, 20, dark, false);   // tile
+                bmpShell->FillRect(2, 2, 16, 16, light, false);  // window frame
+                bmpShell->FillRect(3, 6, 14, 11, dark, false);   // body, leaving a title bar
+                bmpShell->FillRect(4, 3, 2, 2, dark, false);     // dot 1
+                bmpShell->FillRect(7, 3, 2, 2, dark, false);     // dot 2
+                bmpShell->FillRect(10, 3, 2, 2, dark, false);    // dot 3
+                bmpShell->DrawText(4, 8, 12, 8, ">_", &to, false);
             }
         }
-        // Net: parabolic dish (opens right) + signal glyphs << / >>
+        // Net: a globe, built as a disc of rows with the graticule cut out of it
         if (!bmpNet)
         {
-            bmpNet = dc->CreateBitmap(Coord(32), Coord(32), nullptr, nullptr);
+            bmpNet = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
             if (bmpNet)
             {
-                PlatformDrawTextOptions to{};
-                to.font = font;
-                to.foreground = light;
-                to.horizontalAlign = PlatformAlign::Begin;
-                to.verticalAlign = PlatformAlign::Begin;
-                bmpNet->FillRectD(Dim(0), Dim(0), Dim(29), Dim(29), dark);
-                bmpNet->FillRectD(Dim(10), Dim(3), Dim(4), Dim(2), light);  // top arm
-                bmpNet->FillRectD(Dim(7), Dim(5), Dim(4), Dim(2), light);   // curve
-                bmpNet->FillRectD(Dim(5), Dim(7), Dim(3), Dim(2), light);   // curve
-                bmpNet->FillRectD(Dim(3), Dim(9), Dim(3), Dim(2), light);   // curve
-                bmpNet->FillRectD(Dim(2), Dim(11), Dim(3), Dim(4), light);  // apex
-                bmpNet->FillRectD(Dim(3), Dim(15), Dim(3), Dim(2), light);  // curve
-                bmpNet->FillRectD(Dim(5), Dim(17), Dim(3), Dim(2), light);  // curve
-                bmpNet->FillRectD(Dim(7), Dim(19), Dim(4), Dim(2), light);  // curve
-                bmpNet->FillRectD(Dim(10), Dim(21), Dim(4), Dim(2), light); // bottom arm
-                bmpNet->FillRectD(Dim(9), Dim(23), Dim(5), Dim(2), light);  // base top
-                bmpNet->FillRectD(Dim(7), Dim(25), Dim(7), Dim(2), light);  // base mid
-                bmpNet->FillRectD(Dim(5), Dim(27), Dim(10), Dim(2), light); // base foot
-                bmpNet->DrawTextD(Dim(15), Dim(3), Dim(12), Dim(10), "<<", &to);
-                bmpNet->DrawTextD(Dim(15), Dim(13), Dim(12), Dim(10), ">>", &to);
+                bmpNet->FillRect(0, 0, 20, 20, dark, false);    // tile
+                bmpNet->FillRect(7, 2, 6, 1, light, false);     // disc, top row
+                bmpNet->FillRect(5, 3, 10, 1, light, false);
+                bmpNet->FillRect(4, 4, 12, 2, light, false);
+                bmpNet->FillRect(3, 6, 14, 8, light, false);    // the wide middle
+                bmpNet->FillRect(4, 14, 12, 2, light, false);
+                bmpNet->FillRect(5, 16, 10, 1, light, false);
+                bmpNet->FillRect(7, 17, 6, 1, light, false);    // disc, bottom row
+                bmpNet->FillRect(4, 6, 12, 1, dark, false);     // upper latitude
+                bmpNet->FillRect(3, 9, 14, 1, dark, false);     // equator
+                bmpNet->FillRect(4, 13, 12, 1, dark, false);    // lower latitude
+                bmpNet->FillRect(9, 2, 2, 16, dark, false);     // meridian
             }
         }
-        // Mount: three stacked bars with left-side label dot
+        // Mount: three drives, each with a light on the left
         if (!bmpMount)
         {
-            bmpMount = dc->CreateBitmap(Coord(32), Coord(32), nullptr, nullptr);
+            bmpMount = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
             if (bmpMount)
             {
-                bmpMount->FillRectD(Dim(0), Dim(0), Dim(29), Dim(29), dark);
-                bmpMount->FillRectD(Dim(3), Dim(4), Dim(23), Dim(5), light);  // bar 1
-                bmpMount->FillRectD(Dim(3), Dim(12), Dim(23), Dim(5), light); // bar 2
-                bmpMount->FillRectD(Dim(3), Dim(20), Dim(23), Dim(5), light); // bar 3
-                bmpMount->FillRectD(Dim(5), Dim(6), Dim(4), Dim(2), dark);    // dot 1
-                bmpMount->FillRectD(Dim(5), Dim(14), Dim(4), Dim(2), dark);   // dot 2
-                bmpMount->FillRectD(Dim(5), Dim(22), Dim(4), Dim(2), dark);   // dot 3
+                bmpMount->FillRect(0, 0, 20, 20, dark, false);  // tile
+                bmpMount->FillRect(2, 3, 16, 4, light, false);  // drive 1
+                bmpMount->FillRect(2, 9, 16, 4, light, false);  // drive 2
+                bmpMount->FillRect(2, 15, 16, 4, light, false); // drive 3
+                bmpMount->FillRect(4, 4, 2, 2, dark, false);    // light 1
+                bmpMount->FillRect(4, 10, 2, 2, dark, false);   // light 2
+                bmpMount->FillRect(4, 16, 2, 2, dark, false);   // light 3
             }
         }
-        // Tasks: bar-graph with 4 bars of varying height over a baseline
+        // Tasks: four bars on a baseline
         if (!bmpTasks)
         {
-            bmpTasks = dc->CreateBitmap(Coord(32), Coord(32), nullptr, nullptr);
+            bmpTasks = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
             if (bmpTasks)
             {
-                bmpTasks->FillRectD(Dim(0), Dim(0), Dim(29), Dim(29), dark);
-                bmpTasks->FillRectD(Dim(3), Dim(18), Dim(4), Dim(7), light);   // bar 1
-                bmpTasks->FillRectD(Dim(9), Dim(11), Dim(4), Dim(14), light);  // bar 2
-                bmpTasks->FillRectD(Dim(15), Dim(14), Dim(4), Dim(11), light); // bar 3
-                bmpTasks->FillRectD(Dim(22), Dim(7), Dim(4), Dim(18), light);  // bar 4
-                bmpTasks->FillRectD(Dim(3), Dim(25), Dim(23), Dim(2), light);  // baseline
+                bmpTasks->FillRect(0, 0, 20, 20, dark, false);  // tile
+                bmpTasks->FillRect(3, 11, 3, 6, light, false);  // bar 1
+                bmpTasks->FillRect(7, 7, 3, 10, light, false);  // bar 2
+                bmpTasks->FillRect(11, 9, 3, 8, light, false);  // bar 3
+                bmpTasks->FillRect(15, 4, 3, 13, light, false); // bar 4
+                bmpTasks->FillRect(2, 17, 16, 1, light, false); // baseline
             }
         }
-        // Chat: speech bubble with tail and three dots
+        // Chat: speech bubble with a tail and three dots
         if (!bmpChat)
         {
-            bmpChat = dc->CreateBitmap(Coord(32), Coord(32), nullptr, nullptr);
+            bmpChat = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
             if (bmpChat)
             {
-                bmpChat->FillRectD(Dim(0), Dim(0), Dim(29), Dim(29), dark);  // bg
-                bmpChat->FillRectD(Dim(2), Dim(3), Dim(23), Dim(14), light); // bubble body
-                bmpChat->FillRectD(Dim(2), Dim(17), Dim(7), Dim(3), light);  // tail top
-                bmpChat->FillRectD(Dim(2), Dim(20), Dim(5), Dim(2), light);  // tail mid
-                bmpChat->FillRectD(Dim(2), Dim(22), Dim(3), Dim(2), light);  // tail tip
-                bmpChat->FillRectD(Dim(6), Dim(9), Dim(3), Dim(3), dark);    // dot 1
-                bmpChat->FillRectD(Dim(12), Dim(9), Dim(3), Dim(3), dark);   // dot 2
-                bmpChat->FillRectD(Dim(18), Dim(9), Dim(3), Dim(3), dark);   // dot 3
+                bmpChat->FillRect(0, 0, 20, 20, dark, false);   // tile
+                bmpChat->FillRect(2, 3, 16, 10, light, false);  // bubble
+                bmpChat->FillRect(4, 13, 4, 2, light, false);   // tail
+                bmpChat->FillRect(4, 15, 2, 1, light, false);   // tail tip
+                bmpChat->FillRect(5, 7, 2, 2, dark, false);     // dot 1
+                bmpChat->FillRect(9, 7, 2, 2, dark, false);     // dot 2
+                bmpChat->FillRect(13, 7, 2, 2, dark, false);    // dot 3
             }
         }
-        // Calc: calculator body with display strip and 4×3 key grid
+        // Calc: display over three rows of keys
         if (!bmpCalc)
         {
-            bmpCalc = dc->CreateBitmap(Coord(32), Coord(32), nullptr, nullptr);
+            bmpCalc = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
             if (bmpCalc)
             {
-                bmpCalc->FillRectD(Dim(0), Dim(0), Dim(29), Dim(29), dark);  // bg
-                bmpCalc->FillRectD(Dim(3), Dim(2), Dim(23), Dim(29), light); // body
-                bmpCalc->FillRectD(Dim(4), Dim(3), Dim(21), Dim(6), dark);   // display
-                // 4×3 key grid
-                for (int r = 0; r < 4; r++)
+                bmpCalc->FillRect(0, 0, 20, 20, dark, false);   // tile
+                bmpCalc->FillRect(2, 2, 16, 16, light, false);  // body
+                bmpCalc->FillRect(4, 4, 12, 4, dark, false);    // display
+                for (int r = 0; r < 3; r++)
                     for (int c = 0; c < 3; c++)
-                        bmpCalc->FillRectD(Dim(5 + c * 7), Dim(12 + r * 5), Dim(5), Dim(3), dark);
+                        bmpCalc->FillRect(4 + c * 5, 10 + r * 3, 3, 2, dark, false);
             }
         }
-        // IRC: # symbol (two horizontal bars crossing two vertical bars)
+        // IRC: a hash
         if (!bmpIRC)
         {
-            bmpIRC = dc->CreateBitmap(Coord(32), Coord(32), nullptr, nullptr);
+            bmpIRC = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
             if (bmpIRC)
             {
-                bmpIRC->FillRectD(Dim(0), Dim(0), Dim(29), Dim(29), dark);  // bg
-                bmpIRC->FillRectD(Dim(9), Dim(4), Dim(3), Dim(21), light);  // left  vert bar
-                bmpIRC->FillRectD(Dim(17), Dim(4), Dim(3), Dim(21), light); // right vert bar
-                bmpIRC->FillRectD(Dim(5), Dim(9), Dim(19), Dim(3), light);  // top   horiz bar
-                bmpIRC->FillRectD(Dim(5), Dim(17), Dim(19), Dim(3), light); // bot   horiz bar
+                bmpIRC->FillRect(0, 0, 20, 20, dark, false);    // tile
+                bmpIRC->FillRect(6, 3, 2, 14, light, false);    // left vertical
+                bmpIRC->FillRect(12, 3, 2, 14, light, false);   // right vertical
+                bmpIRC->FillRect(3, 6, 14, 2, light, false);    // top horizontal
+                bmpIRC->FillRect(3, 12, 14, 2, light, false);   // bottom horizontal
             }
         }
+        // Music: a speaker cone with two arcs coming off it
+        if (!bmpMidi)
+        {
+            bmpMidi = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
+            if (bmpMidi)
+            {
+                bmpMidi->FillRect(0, 0, 20, 20, dark, false);  // tile
+                bmpMidi->FillRect(3, 8, 3, 4, light, false);   // the box
+                bmpMidi->FillRect(6, 6, 2, 8, light, false);   // cone, near
+                bmpMidi->FillRect(8, 4, 2, 12, light, false);  // cone, far
+                bmpMidi->FillRect(12, 7, 2, 6, light, false);  // inner arc
+                bmpMidi->FillRect(15, 5, 2, 10, light, false); // outer arc
+            }
+        }
+    }
+
+    void MakeWebBitmap(PlatformDrawingContext *dc)
+    {
+        // Web: a page with a link on it and the arrow pointing at the link
+        if (bmpWeb)
+            return;
+        bmpWeb = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
+        if (!bmpWeb)
+            return;
+        bmpWeb->FillRect(0, 0, 20, 20, dark, false);   // tile
+        bmpWeb->FillRect(2, 2, 16, 16, light, false);  // the page
+        bmpWeb->FillRect(2, 2, 16, 3, dark, false);    // its address bar
+        bmpWeb->FillRect(3, 3, 1, 1, light, false);    // back button
+        bmpWeb->FillRect(6, 3, 11, 1, light, false);   // the address
+        bmpWeb->FillRect(4, 7, 10, 1, dark, false);    // a line of text
+        bmpWeb->FillRect(4, 9, 7, 1, dark, false);     // the link
+        bmpWeb->FillRect(4, 10, 7, 1, dark, false);    //   and its underline
+        bmpWeb->FillRect(4, 12, 6, 1, dark, false);    // more text
+        bmpWeb->FillRect(9, 11, 1, 6, dark, false);    // the pointer: a stem
+        bmpWeb->FillRect(10, 12, 1, 4, dark, false);   //   widening
+        bmpWeb->FillRect(11, 13, 1, 2, dark, false);   //   to a tip
+        bmpWeb->FillRect(12, 14, 1, 1, dark, false);
     }
 
     void BlitIcon(PlatformBitmap *t, PlatformBitmap *bm, int ix, int iy, bool s)
     {
         if (s)
-            t->FillRectD(Dim(ix - 2), Dim(iy - 2), Dim(BSIZ + 4), Dim(BSIZ + 4), dark);
+            t->FillRect(ix - 2, iy - 2, BSIZ + 4, BSIZ + 4, dark, false);
         if (bm)
-            t->CopyBitmapD(Dim(ix), Dim(iy), Dim(BSIZ), Dim(BSIZ),
-                           bm, Dim(0), Dim(0), Dim(BSIZ), Dim(BSIZ), false, 255);
+            t->CopyBitmap(ix, iy, BSIZ, BSIZ, bm, 0, 0, false, false, false, 255);
     }
 
     void launchSel(int s)
     {
-        if (s == 0)
-            wantsClock = true;
-        if (s == 1)
+        if (s == APP_SHELL)
+        {
             wantsShell = true;
-        if (s == 2)
-            wantsNet = true;
-        if (s == 3)
-            wantsMount = true;
-        if (s == 4)
-            wantsTasks = true;
-        if (s == 5)
-            wantsChat = true;
-        if (s == 6)
-            wantsCalc = true;
-        if (s == 7)
-            wantsIRC = true;
-        wnd->Close();
+            wnd->Close();
+            return;
+        }
+        openApp(s);
+        wnd->Repaint();
     }
 
     void onEvent_(struct PlatformWindowInterfaceInputEvent *data)
@@ -267,6 +296,16 @@ private:
                     launchSel(7);
                     return;
                 }
+                if (mx >= IX3 && mx < IX3 + BSIZ)
+                {
+                    launchSel(8);
+                    return;
+                }
+                if (mx >= IX4 && mx < IX4 + BSIZ)
+                {
+                    launchSel(9);
+                    return;
+                }
             }
             return;
         }
@@ -282,13 +321,13 @@ private:
         }
         if (key->isArrowLeft || key->isArrowUp)
         {
-            sel = (sel + 7) % 8;
+            sel = (sel + 9) % 10;
             wnd->Repaint();
             return;
         }
         if (key->isArrowRight || key->isArrowDown)
         {
-            sel = (sel + 1) % 8;
+            sel = (sel + 1) % 10;
             wnd->Repaint();
             return;
         }
@@ -303,14 +342,15 @@ private:
         if (!target)
             return;
         if (!dark)
-            dark = dc->CreateColor(0xFF0A0A20, nullptr, nullptr);
+            dark = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
         if (!light)
             light = dc->CreateColor(0xFFE0E0FF, nullptr, nullptr);
         if (!font)
-            font = dc->CreateFont(12, nullptr, false, false, false, nullptr, nullptr);
+            font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         if (!dark || !light || !font)
             return;
         MakeBitmaps(dc);
+        MakeWebBitmap(dc);
 
         Coord W = target->GetWidth();
         Coord H = target->GetHeight();
@@ -318,14 +358,10 @@ private:
         target->FillRect(0, 0, W, H, dark, false);
         drawWallpaper(dc, target);
 
-        // Taskbar
-        target->FillRect(0, H - 14, W, 1, dark, false);
-        target->FillRect(0, H - 13, W, 13, light, false);
-
         // Dialog frame — centered, width FW, left edge at FX
-        target->FillRect(FX, 22, FW, 118, dark, false);
-        target->FillRect(FX + 2, 24, FW - 4, 114, light, false);
-        target->FillRect(FX + 2, 40, FW - 4, 1, dark, false); // title separator
+        target->FillRect(FX, FY, FW, FH, dark, false);
+        target->FillRect(FX + 2, FY + 2, FW - 4, FH - 4, light, false);
+        target->FillRect(FX + 2, FY + 2 + TITLE_H, FW - 4, 1, dark, false); // title separator
 
         PlatformDrawTextOptions opts{};
         opts.font = font;
@@ -333,8 +369,7 @@ private:
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
 
-        target->DrawText(FX + 2, 24, FW - 4, 16, "Desktop", &opts, false);
-        target->DrawText(0, H - 13, W, 13, "Desktop  -  r2", &opts, false);
+        target->DrawText(FX + 2, FY + 2, FW - 4, TITLE_H, "Desktop", &opts, false);
 
         // Row 1 icons (Clock, Shell, Net, Mount, Tasks)
         BlitIcon(target, bmpClock, IX0, IY, sel == 0);
@@ -346,6 +381,8 @@ private:
         BlitIcon(target, bmpChat, IX0, IY2, sel == 5);
         BlitIcon(target, bmpCalc, IX1, IY2, sel == 6);
         BlitIcon(target, bmpIRC, IX2, IY2, sel == 7);
+        BlitIcon(target, bmpMidi, IX3, IY2, sel == 8);
+        BlitIcon(target, bmpWeb, IX4, IY2, sel == 9);
 
         // Labels
         PlatformDrawTextOptions lo{};
@@ -354,13 +391,15 @@ private:
         lo.horizontalAlign = PlatformAlign::Middle;
         lo.verticalAlign = PlatformAlign::Middle;
         const int loff = (LW - BSIZ) / 2; // 7 px: centres LW box on BSIZ icon
-        target->DrawTextD(Dim(IX0 - loff), Dim(LY), Dim(LW), Dim(LH), "Clock", &lo);
-        target->DrawTextD(Dim(IX1 - loff), Dim(LY), Dim(LW), Dim(LH), "Shell", &lo);
-        target->DrawTextD(Dim(IX2 - loff), Dim(LY), Dim(LW), Dim(LH), "Net", &lo);
-        target->DrawTextD(Dim(IX3 - loff), Dim(LY), Dim(LW), Dim(LH), "Mount", &lo);
-        target->DrawTextD(Dim(IX4 - loff), Dim(LY), Dim(LW), Dim(LH), "Tasks", &lo);
-        target->DrawTextD(Dim(IX0 - loff), Dim(LY2), Dim(LW), Dim(LH), "Chat", &lo);
-        target->DrawTextD(Dim(IX1 - loff), Dim(LY2), Dim(LW), Dim(LH), "Calc", &lo);
-        target->DrawTextD(Dim(IX2 - loff), Dim(LY2), Dim(LW), Dim(LH), "IRC", &lo);
+        target->DrawText(IX0 - loff, LY, LW, LH, "Clock", &lo, false);
+        target->DrawText(IX1 - loff, LY, LW, LH, "Shell", &lo, false);
+        target->DrawText(IX2 - loff, LY, LW, LH, "Net", &lo, false);
+        target->DrawText(IX3 - loff, LY, LW, LH, "Mount", &lo, false);
+        target->DrawText(IX4 - loff, LY, LW, LH, "Tasks", &lo, false);
+        target->DrawText(IX0 - loff, LY2, LW, LH, "Chat", &lo, false);
+        target->DrawText(IX1 - loff, LY2, LW, LH, "Calc", &lo, false);
+        target->DrawText(IX2 - loff, LY2, LW, LH, "IRC", &lo, false);
+        target->DrawText(IX3 - loff, LY2, LW, LH, "Music", &lo, false);
+        target->DrawText(IX4 - loff, LY2, LW, LH, "Web", &lo, false);
     }
 };
