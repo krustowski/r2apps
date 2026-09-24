@@ -76,6 +76,11 @@ public:
             if (ret != 0)
             {
                 fileBytes = size;
+                // r2 stores every file it writes as a whole 512-byte sector,
+                // zero-padded (Turbo C++ saves that way): the padding is not
+                // part of the text, and would show as a line of dots.
+                while (fileBytes > 0 && content[fileBytes - 1] == 0)
+                    fileBytes--;
             }
             else
             {
@@ -180,6 +185,14 @@ private:
         if (key->isEscape || key->isEnter)
         {
             wnd->Close();
+            return;
+        }
+        // F4 edits the file in Turbo C++.  The viewer goes: what it shows
+        // would be out of date by the time the editor gives the screen back.
+        if (key->isF && key->f == 4)
+        {
+            if (openInEditor(filePath))
+                wnd->Close();
             return;
         }
         if (key->isArrowUp)
@@ -299,6 +312,8 @@ private:
         opts.foreground = dark;
         opts.horizontalAlign = PlatformAlign::Middle;
         target->DrawText(backX, backY, 80, 11, "Back", &opts, false);
+        opts.horizontalAlign = PlatformAlign::Begin;
+        target->DrawText(4, backY, 60, 11, "F4 Edit", &opts, false);
     }
 };
 

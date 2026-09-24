@@ -508,6 +508,20 @@ private:
             }
             return;
         }
+        // F4 edits it, in Turbo C++: the desktop steps aside for the editor and
+        // this window is here again when it is done.
+        if (key->isF && key->f == 4)
+        {
+            Pane &p = panes[active];
+            refreshPane(p);
+            if (!p.atMounts && p.sel > 0)
+            {
+                int ei = p.order[p.sel - 1];
+                if (ei < p.nEntries && !p.entries[ei].is_dir)
+                    openInEditor(entryPath(p, ei));
+            }
+            return;
+        }
         // F5 re-reads both panes: the floppy can change underneath them.
         if (key->isF && key->f == 5)
         {
@@ -688,7 +702,7 @@ private:
         opts.foreground = light;
         opts.horizontalAlign = PlatformAlign::Middle;
         target->DrawText(0, KEYS_Y, W, 11,
-                         "Tab Pane   Enter Open   Bksp Up   F3 View   F5 Rescan   Esc Close",
+                         "Tab Pane  Enter Open  Bksp Up  F3 View  F4 Edit  F5 Rescan  Esc Close",
                          &opts, false);
     }
 };

@@ -22,23 +22,27 @@ private:
     PlatformColor *dark = nullptr;
     PlatformColor *light = nullptr;
     PlatformFont *font = nullptr;
-    int sel = 0; // 0=Clock 1=Shell 2=Net 3=Mount 4=Tasks 5=Chat 6=Calc 7=IRC 8=Music 9=Web
+    int sel = 0; // 0=Clock 1=Shell 2=Net 3=Mount 4=Tasks 5=Chat 6=Calc 7=IRC 8=Music 9=Web 10=Editor
 
     // Everything here is sized around the 4x8 glyph: an icon is two text
     // lines tall, a label one, and the frame is what holds them.
-    // Row 1: 5 icons at 30-px spacing; Row 2: 5 icons (Chat, Calc, IRC, Music, Web).
+    // Row 1: 5 icons at 30-px spacing; Row 2: 5 icons (Chat, Calc, IRC, Music, Web);
+    // Row 3: the Editor, Turbo C++, which takes the whole screen when it runs.
     // Frame is FW=170 wide, centred on a 320px canvas: FX=(320-170)/2=75.
     static const int BSIZ = 20;
     static const int FW = 170; // dialog frame width
     static const int FX = 75;  // frame left edge (centered)
     static const int FY = 28;  // frame top
-    static const int FH = 92;  // frame height
+    static const int FH = 126; // frame height
     static const int TITLE_H = 11;
     static const int IX0 = 90, IX1 = 120, IX2 = 150, IX3 = 180, IX4 = 210;
     static const int IY = 46;   // row 1 icon top (below the title bar)
     static const int LY = 68;   // row 1 label top
     static const int IY2 = 80;  // row 2 icon top
     static const int LY2 = 102; // row 2 label top
+    static const int IY3 = 114; // row 3 icon top
+    static const int LY3 = 136; // row 3 label top
+    static const int ICONS = 11;
     static const int LW = 30;
     static const int LH = 9;
 
@@ -52,6 +56,7 @@ private:
     PlatformBitmap *bmpIRC = nullptr;
     PlatformBitmap *bmpMidi = nullptr;
     PlatformBitmap *bmpWeb = nullptr;
+    PlatformBitmap *bmpEditor = nullptr;
 
     //
     //  The icons are drawn for the size they are shown at: twenty logical
@@ -233,6 +238,25 @@ private:
         bmpWeb->FillRect(12, 14, 1, 1, dark, false);
     }
 
+    void MakeEditorBitmap(PlatformDrawingContext *dc)
+    {
+        // Editor: a page of indented code under a title bar, and the cursor
+        if (bmpEditor)
+            return;
+        bmpEditor = dc->CreateBitmap(Coord(BSIZ), Coord(BSIZ), nullptr, nullptr);
+        if (!bmpEditor)
+            return;
+        bmpEditor->FillRect(0, 0, 20, 20, dark, false);  // tile
+        bmpEditor->FillRect(2, 2, 16, 16, light, false); // the page
+        bmpEditor->FillRect(2, 2, 16, 2, dark, false);   // its menu bar
+        bmpEditor->FillRect(4, 6, 6, 1, dark, false);    // int main() {
+        bmpEditor->FillRect(6, 8, 8, 1, dark, false);    //   a line
+        bmpEditor->FillRect(6, 10, 5, 1, dark, false);   //   another
+        bmpEditor->FillRect(6, 12, 9, 1, dark, false);   //   a longer one
+        bmpEditor->FillRect(4, 14, 2, 1, dark, false);   // }
+        bmpEditor->FillRect(12, 10, 2, 3, dark, false);  // the cursor
+    }
+
     void BlitIcon(PlatformBitmap *t, PlatformBitmap *bm, int ix, int iy, bool s)
     {
         if (s)
@@ -307,6 +331,11 @@ private:
                     return;
                 }
             }
+            if (my >= IY3 && my < IY3 + BSIZ && mx >= IX0 && mx < IX0 + BSIZ)
+            {
+                launchSel(10);
+                return;
+            }
             return;
         }
         if (data->type != PlatformWindowInputEventType::OnKeyEvent)
@@ -321,13 +350,13 @@ private:
         }
         if (key->isArrowLeft || key->isArrowUp)
         {
-            sel = (sel + 9) % 10;
+            sel = (sel + ICONS - 1) % ICONS;
             wnd->Repaint();
             return;
         }
         if (key->isArrowRight || key->isArrowDown)
         {
-            sel = (sel + 1) % 10;
+            sel = (sel + 1) % ICONS;
             wnd->Repaint();
             return;
         }
@@ -351,6 +380,7 @@ private:
             return;
         MakeBitmaps(dc);
         MakeWebBitmap(dc);
+        MakeEditorBitmap(dc);
 
         Coord W = target->GetWidth();
         Coord H = target->GetHeight();
@@ -383,6 +413,8 @@ private:
         BlitIcon(target, bmpIRC, IX2, IY2, sel == 7);
         BlitIcon(target, bmpMidi, IX3, IY2, sel == 8);
         BlitIcon(target, bmpWeb, IX4, IY2, sel == 9);
+        // Row 3 icons (Editor)
+        BlitIcon(target, bmpEditor, IX0, IY3, sel == 10);
 
         // Labels
         PlatformDrawTextOptions lo{};
@@ -401,5 +433,10 @@ private:
         target->DrawText(IX2 - loff, LY2, LW, LH, "IRC", &lo, false);
         target->DrawText(IX3 - loff, LY2, LW, LH, "Music", &lo, false);
         target->DrawText(IX4 - loff, LY2, LW, LH, "Web", &lo, false);
+        target->DrawText(IX0 - loff, LY3, LW, LH, "Editor", &lo, false);
+
+        // A program that could not be started says so here, under the frame.
+        if (g_launchError[0])
+            target->DrawText(FX, FY + FH + 2, FW, LH, g_launchError, &lo, false);
     }
 };
