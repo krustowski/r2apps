@@ -92,8 +92,9 @@ func buffered() int {
 	return 0
 }
 
-// The kernel's clock (syscall 0x04) counts milliseconds since boot, at the
-// 10 ms resolution of the PIT, so a timeUnit here is one millisecond.
+// The kernel's clock (syscall 0x04) counts milliseconds since boot, to the
+// resolution of one PIT tick (1 ms at 1000 Hz), so a timeUnit here is one
+// millisecond.
 func ticks() timeUnit {
 	return timeUnit(r2syscall(sysGetTicks, 0, 0))
 }

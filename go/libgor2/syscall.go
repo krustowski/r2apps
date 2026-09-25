@@ -14,10 +14,18 @@
 //
 // # Pointers
 //
-// Every syscall that takes a pointer checks it against 0x600000..0xA00000 and
-// returns InvalidInput for anything outside.  All Go memory satisfies this:
-// the linker script puts globals, heap and stack inside the process's private
-// frame at 0x600000..0x7C0000, and goroutine stacks come from that heap.
+// Every syscall that takes a pointer checks that the whole buffer it is about
+// to use lies inside one user region --- the process's own frame
+// (0x600000..0xA00000) or the kernel's shared user heap (0xC00000..0x1000000)
+// --- and returns InvalidInput otherwise.  All Go memory satisfies this: the
+// linker script puts globals, heap and stack inside the private frame at
+// 0x600000..0x7C0000, and goroutine stacks come from that heap.  A block from
+// KMalloc satisfies it too, so it can be handed to any syscall directly; see
+// KBytes.
+//
+// The check is against the region, not against the Go slice: the kernel still
+// is not told how long a buffer is, so a slice shorter than what a syscall
+// writes is overrun into whatever follows it in the frame.
 package libgor2
 
 import "unsafe"
@@ -91,6 +99,7 @@ const (
 	ScReadFileAt  = 0x39
 	ScWriteFileAt = 0x3a
 	ScKillTask    = 0x3b
+	ScMemInfo     = 0x3c
 )
 
 // Errno is a kernel return code.  Zero means success; every other value is one

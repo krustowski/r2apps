@@ -26,7 +26,14 @@ var (
 	portCell  uint16
 	valueCell uint32
 	byteCell  uint32
+
+	// sendCell pads a short message for Send, which always reads 512 bytes.
+	sendCell [msgLen]byte
 )
+
+// msgLen is the size of a message between processes: Send reads exactly this
+// many bytes, and NewPacket clears this many of its buffer.
+const msgLen = 512
 
 // WritePort writes a byte to an I/O port (syscall 0x30).
 //
@@ -82,8 +89,11 @@ func SerialWrite(b byte) error {
 
 // NewPacket fills in the headers of a packet of the given kind, in place
 // (syscall 0x33).  buf must already hold a header skeleton.
+//
+// The kernel clears the first 512 bytes of buf before writing the packet it
+// built back, so anything shorter is refused here rather than written past.
 func NewPacket(kind uint8, buf []byte) error {
-	if len(buf) == 0 {
+	if len(buf) < msgLen {
 		return EInvalidInput
 	}
 
@@ -108,8 +118,12 @@ func SendPacket(kind uint8, buf []byte) error {
 // Receive waits for a frame and copies it into buf, returning its length
 // (syscall 0x35).
 //
-// The kernel copies a fixed 512 bytes when the queued message carries no
-// length, so buf should be at least that big.  When the queue is empty the
+// Every queued frame has a kernel buffer of its own until it is read, and up
+// to 64 wait in a process's queue, so frames that arrive while the process is
+// busy are kept rather than overwritten.  The kernel copies as many bytes as
+// the frame is long (up to 2048), or a fixed 512 when the queued message
+// carries no length, without being told how big buf is, so buf should be 2048
+// bytes.  When the queue is empty the
 // process is suspended; on being woken it returns 0, so a caller that must
 // have a frame should loop.
 func Receive(kind uint8, buf []byte) int {
@@ -137,9 +151,19 @@ func ReceiveNonBlocking(buf []byte) int {
 
 // Send pushes a 512-byte message onto another process's queue and wakes it
 // (syscall 0x36).  pid is the target process.
+//
+// The kernel always reads 512 bytes, so a shorter buf is padded with zeroes
+// and a longer one is cut to 512.
 func Send(pid uint64, buf []byte) error {
 	if len(buf) == 0 {
 		return EInvalidInput
+	}
+
+	if len(buf) < msgLen {
+		n := copy(sendCell[:], buf)
+		clear(sendCell[n:])
+
+		buf = sendCell[:]
 	}
 
 	return err(Syscall(ScSendPort, uintptr(pid), ptr(unsafe.Pointer(&buf[0]))))

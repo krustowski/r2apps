@@ -24,9 +24,9 @@
 // requests), advances every open connection's timers and sleeps a millisecond
 // when the wire is quiet.  That is a deliberate choice rather than a
 // limitation of what TinyGo can do: a goroutine on r2 commits 32 KiB of stack
-// before it runs once, the kernel delivers frames one at a time through a
-// single shared buffer, and a cooperative scheduler will not preempt a
-// goroutine that is spinning on a syscall anyway.  Connections can be open at
+// before it runs once, the kernel already queues frames for us while we are
+// busy, and a cooperative scheduler will not preempt a goroutine that is
+// spinning on a syscall anyway.  Connections can be open at
 // the same time --- the demultiplexer keys on the four-tuple --- but they are
 // driven from one place.
 //
@@ -83,7 +83,9 @@ var (
 
 // rxBudget is how many frames one turn of the loop takes off the queue before
 // the timers get a look in, so that a burst cannot starve a retransmission.
-const rxBudget = 8
+// It is the depth of the kernel's per-process message queue, so one turn can
+// empty a full one.
+const rxBudget = 64
 
 // Options configures a stack.  The zero value asks for Ethernet with
 // everything guessed, which is right on the machines this repository sets up
@@ -302,31 +304,28 @@ func (s *Stack) sendIP(dst IP, proto byte, payloadLen int) error {
 }
 
 // step is one turn of the stack: take what has arrived, run the timers, and
-// give the CPU back for a tick.
+// give the CPU back for a tick when there is nothing left to take.
 //
-// How much arrives per turn is not this loop's decision.  The kernel takes one
-// frame off the NIC per timer tick, copies it into a single global buffer and
-// queues a message pointing at that buffer, so a message that is not read
-// before the next tick hands back whatever frame arrived last instead of the
-// one it was queued for.  Meanwhile the scheduler is a strict round robin that
-// gives every runnable process exactly one tick, so how often this loop gets to
-// look is a property of how many other processes are running, and no amount of
-// spinning here changes it --- measured, spinning made a run slower, not
-// faster.
-//
-// So frames are lost in bursts, and the answer is not to poll harder but to
-// recover quickly: see signalGap in tcp.go, which turns a gap into three
-// duplicate acknowledgements and the peer's retransmission timer into one round
-// trip.  With that in place a sleep of one tick here costs nothing and leaves
-// the machine to everybody else.
+// The kernel takes up to sixteen frames a tick off the NIC and gives each a
+// buffer of its own until we read it; a frame it cannot queue for us stays in
+// the card's ring for the next tick.  So nothing is lost between the NIC and
+// this loop for being read late, and a quiet turn can sleep a tick without
+// costing a frame.  A turn that stopped at rxBudget left frames queued, so it
+// comes straight back for them instead.
 func (s *Stack) step() {
+	drained := false
+
 	for i := 0; i < rxBudget; i++ {
 		n := s.link.recv(s.rxBuf[:])
-		if n <= 0 {
+		if n < 0 {
+			drained = true
+
 			break
 		}
 
-		s.deliver(s.rxBuf[:n])
+		if n > 0 {
+			s.deliver(s.rxBuf[:n])
+		}
 	}
 
 	now := libgor2.Ticks()
@@ -335,7 +334,9 @@ func (s *Stack) step() {
 		c.tick(now)
 	}
 
-	libgor2.SleepMS(1)
+	if drained {
+		libgor2.SleepMS(1)
+	}
 }
 
 // waitUntil turns the loop until cond is true or the deadline passes.

@@ -237,9 +237,12 @@ too), but Go leans on it harder.  The fix belongs in the kernel's
 
 Processes share a single address space above their own 2 MiB frame, and the
 kernel's userland heap is 4 MiB shared by all ten process slots.  A Go program
-holds its own heap inside its own frame and never touches the shared one, which
-is why `libgor2.KMalloc` returns a `uintptr` rather than a pointer: memory from
-there is invisible to the collector and must be freed by hand.
+holds its own heap inside its own frame, which is why `libgor2.KMalloc` returns
+a `uintptr` rather than a pointer: memory from there is invisible to the
+collector and must be freed by hand --- or is freed by the kernel when the
+process ends, since every block is tagged with its owner.  Syscalls accept
+shared-heap addresses as buffers, so `libgor2.KBytes` makes a block usable as
+a plain `[]byte` for anything too big for the ~1.5 MiB Go heap.
 
 ## Things found in the ABI along the way
 

@@ -14,7 +14,9 @@ func Exit(code int) {
 	}
 }
 
-// ReadSysInfo fills info with the kernel's system information block.
+// ReadSysInfo fills info with the kernel's system information block.  EBusy
+// means the kernel's configuration was locked for longer than it would wait;
+// info is left untouched then, so ask again rather than read it.
 func ReadSysInfo(info *SysInfo) error {
 	return err(Syscall(ScSysInfo, 0x01, ptr(unsafe.Pointer(info))))
 }
@@ -30,8 +32,8 @@ func ReadRTC(t *RTC) error {
 	return err(Syscall(ScRTC, 0x01, ptr(unsafe.Pointer(t))))
 }
 
-// Ticks is the number of milliseconds since boot, at the 10 ms resolution of
-// the PIT (syscall 0x04).
+// Ticks is the number of milliseconds since boot, to the resolution of one PIT
+// tick, which is 1 ms at the kernel's 1000 Hz (syscall 0x04).
 func Ticks() uint64 {
 	return uint64(Syscall(ScGetTicks, 0, 0))
 }

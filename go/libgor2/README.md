@@ -23,7 +23,7 @@ if err := libgor2.ReadSysInfo(&info); err != nil {
 | `audio.go` | Speaker and MIDI. |
 | `net.go` | Ports, serial, packets, driver registration. |
 | `input.go` | Keyboard and mouse pipes. |
-| `mem.go` | The kernel's shared heap. |
+| `mem.go` | The kernel's shared heap, `KBytes`, memory info. |
 
 ## Calling convention
 
@@ -32,9 +32,23 @@ RSI; the result comes back in RAX.  The kernel's dispatcher --- `syscall_inner(a
 arg2, syscall_no)` --- takes exactly two arguments, so there is no third one,
 whatever `c/libcr2`'s four-argument `syscall()` prototype suggests.
 
-Every syscall that takes a pointer checks it against `0x600000..0xA00000`.  All
-Go memory satisfies this: globals, heap and stack all live inside the process's
-private frame, and goroutine stacks come from that heap.
+Every syscall that takes a pointer checks that the whole buffer it uses lies
+inside one user region: the process's own frame (`0x600000..0xA00000`) or the
+kernel's shared user heap (`0xC00000..0x1000000`).  All Go memory satisfies
+this --- globals, heap and stack all live inside the private frame, and
+goroutine stacks come from that heap --- and so does a block from `KMalloc`,
+which `KBytes` turns into a slice any call here will take:
+
+```go
+addr := libgor2.KMalloc(1 << 20) // 1 MiB the collector never sees
+defer libgor2.KFree(addr)
+
+n, err := libgor2.ReadFileAt("/mnt/fat/BIG.DAT", libgor2.KBytes(addr, 1<<20), 0)
+```
+
+The check is against the region, not the slice: the kernel is still not told
+how long most buffers are, so a slice shorter than what a syscall writes is
+overrun into whatever follows it.
 
 ## Structure layouts
 

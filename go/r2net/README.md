@@ -91,29 +91,25 @@ goroutine commits 32 KiB of stack before it runs once, about thirty fit in the
 heap, and the cooperative scheduler will not take one off a syscall loop
 anyway.
 
-## What the kernel loses, and what this does about it
+## How frames reach this loop
 
-The kernel takes **one frame per timer tick** off the NIC, copies it into a
-single global buffer, and queues a message pointing at that buffer.  A message
-that is not read before the next tick hands back whatever frame arrived last
-instead of the one it was queued for.  The scheduler is a strict round robin
-that gives each runnable process exactly one tick, so how often a program gets
-to look is a property of how many other processes are running --- and spinning
-does not buy a single extra look.  Measured, it made runs slower.
+The kernel takes up to **sixteen frames per timer tick** off the NIC and
+copies each into a 2 KiB buffer of its own, held for the receiving process
+until it reads the frame with syscall `0x35`; up to 64 frames wait in one
+process's queue.  A frame the kernel cannot queue --- no free buffer, the queue
+full --- stays in the NIC's ring and is tried again next tick, so nothing is
+lost between the card and this loop for being read late.  Only a receiver that
+takes nothing for 200 ticks has frames dropped in front of it.
 
-So frames are lost in bursts, and a three-frame HTTP response (head, body,
-FIN) routinely arrives as one frame plus a hole.  The answer is not to poll
-harder but to recover in one round trip instead of waiting out the peer's
-retransmission timer: when a segment arrives out of order, `signalGap` sends
-**three duplicate acknowledgements at once** rather than the one per
-out-of-order segment the RFC describes, because the segments that would have
-produced the other two are exactly the ones that were lost.  Three is the
-sender's fast-retransmit threshold.  On the measurements that produced this
-code, that took a four-check `dish` run from seven seconds to under one.
+So each turn of the loop drains the queue (up to its full depth of 64) before
+running the timers, and sleeps a tick only when the queue came up empty.
 
-It is the one place this stack knowingly does something a stack on a reliable
-link should not, and it is worth remembering if the kernel's frame delivery
-ever grows a per-message buffer.
+It used to be one frame per tick through **one shared buffer**, overwritten by
+the next frame whether or not the last had been read, so bursts were lost
+wholesale and this stack answered a gap with three duplicate
+acknowledgements at once to force a fast retransmit.  With per-frame buffers
+the segments behind a gap arrive and produce those duplicates themselves, so
+`signalGap` is back to the RFC's one per out-of-order segment.
 
 ## What TCP here is and is not
 
@@ -151,6 +147,6 @@ when there is one.  Anything that runs outside this setup should pass its own.
   See "Taking the address of a local costs an allocation" in
   [../README.md](../README.md).
 - **A frame longer than 2048 bytes is dropped by the kernel**, so every buffer
-  here is that size and the advertised MSS is 1024.
+  here is that size.  The advertised MSS is 1460, a full Ethernet frame.
 - **Floating point is not saved across a context switch.**  Nothing here uses
   it; a program that does should read the same note.

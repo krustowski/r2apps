@@ -207,6 +207,34 @@ const (
 	MouseMiddle = 1 << 2
 )
 
+// MemInfo is the memory report (syscall 0x3c).  Every figure is in bytes.
+type MemInfo struct {
+	Version  uint64
+	TotalRAM uint64 // usable RAM the boot loader reported
+
+	// The user heap (KMalloc), shared by every process.
+	HeapStart       uint64
+	HeapSize        uint64
+	HeapUsed        uint64
+	HeapFree        uint64
+	HeapLargestFree uint64 // the largest block one allocation can still get
+	HeapBlocks      uint64
+	HeapFreeBlocks  uint64
+
+	// Used bytes by process slot; [16] is untagged (kernel staging, blocks
+	// with no owner).  SlotTask says which task sits in each slot.
+	HeapBySlot [17]uint64
+
+	// Slot n's private frame is FrameBase + n*FrameSize physically, mapped
+	// at FrameVirt in that process.
+	FrameBase uint64
+	FrameSize uint64
+	FrameVirt uint64
+
+	Slots    uint64   // process slots there are
+	SlotTask [16]byte // the task id ListTasks reports, 0xFF for a free slot
+}
+
 // fileRange is the argument block for the ranged read and write syscalls
 // (0x39, 0x3a).
 type fileRange struct {
@@ -247,6 +275,9 @@ const (
 
 	_ = uint(unsafe.Sizeof(MousePacket{}) - 3)
 	_ = uint(3 - unsafe.Sizeof(MousePacket{}))
+
+	_ = uint(unsafe.Sizeof(MemInfo{}) - 256)
+	_ = uint(256 - unsafe.Sizeof(MemInfo{}))
 
 	_ = uint(unsafe.Sizeof(fileRange{}) - 24)
 	_ = uint(24 - unsafe.Sizeof(fileRange{}))

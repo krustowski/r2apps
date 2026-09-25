@@ -33,15 +33,15 @@ const (
 const (
 	tcpHeaderLen = 20
 
-	// mss is what we tell the peer it may send us in one segment.  The
-	// kernel drops a frame longer than 2048 bytes before we see it, so
-	// there is room to spare here, and a smaller segment is also less to
-	// lose when one goes missing under stop-and-wait.
-	mss = 1024
+	// mss is what we tell the peer it may send us in one segment: a full
+	// Ethernet frame's worth, 1514 bytes on the wire, which fits the
+	// kernel's 2048-byte frame buffers with room to spare.
+	mss = 1460
 
 	// rxCap is how much unread data a connection will hold.  The window we
 	// advertise is whatever is left of it, so a peer that respects the
-	// window cannot overrun us.
+	// window cannot overrun us.  A full window is about eleven segments,
+	// well inside the 64 frames the kernel will queue for one process.
 	rxCap = 16 * 1024
 
 	// ephemeralBase is where local port numbers start.  Ports below it are
@@ -56,11 +56,6 @@ const (
 	initialRTO = 400 // ms
 	maxRTO     = 3200
 	maxRetries = 5
-
-	// dupACKs is how many duplicate acknowledgements go out when a segment
-	// arrives out of order --- which here nearly always means the one before
-	// it was lost on the way in.  See signalGap.
-	dupACKs = 3
 
 	// How long Close waits for the peer to acknowledge the FIN before
 	// giving up on a tidy shutdown.  A one-shot program cannot afford to
@@ -617,25 +612,17 @@ func (c *Conn) onAck(ack uint32) {
 	}
 }
 
-// signalGap tells the peer that something it sent never arrived.
+// signalGap tells the peer that something it sent never arrived, with one
+// duplicate acknowledgement per out-of-order segment, as RFC 5681 has it.
 //
-// The only vocabulary TCP gives a receiver for this is the duplicate
-// acknowledgement, and the sender does not act on one until it has seen three
-// (RFC 5681's fast retransmit threshold).  A receiver is supposed to emit one
-// per out-of-order segment and so reach three by itself --- but that assumes
-// the segments after the gap keep arriving, and here they usually do not: the
-// kernel hands over one frame per timer tick through a single global buffer, so
-// a burst is lost wholesale rather than arriving with one hole in it.  Left to
-// the rules, the exchange stalls until the sender's own retransmission timer
-// expires, which cost between one and two seconds per HTTP response in
-// measurement.  Sending the three at once collapses that to one round trip.
-//
-// This is the one place where this stack knowingly does something a stack on a
-// reliable link should not.
+// The segments behind a gap do arrive now --- the kernel queues every frame in
+// a buffer of its own instead of overwriting one shared buffer each tick --- so
+// they produce the sender's three duplicates by themselves and it retransmits
+// in one round trip.  This used to send all three at once, because behind a
+// gap there was usually nothing: a burst was lost wholesale.  On a link that
+// only reorders, that forced a retransmission nobody needed.
 func (c *Conn) signalGap() {
-	for i := 0; i < dupACKs; i++ {
-		_ = c.send(flagACK, c.snd, nil)
-	}
+	_ = c.send(flagACK, c.snd, nil)
 }
 
 // onData takes in-order data and acknowledges it, and tells the peer about the

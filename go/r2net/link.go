@@ -12,9 +12,9 @@ import (
 // be built here because the kernel's send syscall takes it ready-made.
 
 // frameLen is the size of every receive buffer in this package.  The kernel
-// drops a frame longer than 2048 bytes before we ever see it, and its own
-// receive syscall copies as many bytes as the frame is long without being told
-// how much room we have, so nothing shorter is safe.
+// queues a frame in a 2048-byte buffer of its own and drops anything longer,
+// and its receive syscall copies as many bytes as the frame is long without
+// being told how much room we have, so nothing shorter is safe.
 const frameLen = 2048
 
 type link interface {
@@ -25,9 +25,10 @@ type link interface {
 	send(pkt []byte, nextHop IP) error
 
 	// recv copies the next IPv4 packet into buf and returns its length, or
-	// 0 when nothing has arrived.  It never blocks.  Anything that belongs
-	// to the link itself --- an ARP request, say --- is dealt with here and
-	// reported as 0.
+	// -1 when nothing has arrived.  It never blocks.  A frame that belongs
+	// to the link itself --- an ARP request, say --- or that is not for us
+	// is dealt with here and reported as 0, so the caller knows there may
+	// be more behind it.
 	recv(buf []byte) int
 
 	name() string
@@ -69,7 +70,7 @@ func (l *slipLink) recv(buf []byte) int {
 	for {
 		b, ok := libgor2.SerialRead()
 		if !ok {
-			return 0
+			return -1
 		}
 
 		if n := l.dec.feed(b, buf); n > 0 {
@@ -155,7 +156,9 @@ func (l *ethLink) send(pkt []byte, nextHop IP) error {
 	return libgor2.SendPacket(libgor2.PacketEth, l.txFrame[:ethHeaderLen+len(pkt)])
 }
 
-// recv takes one frame from the kernel's queue for this process.
+// recv takes one frame from the kernel's queue for this process.  Each queued
+// frame is its own, held by the kernel until this reads it, so a frame is
+// never overwritten by the next one for being read late.
 //
 // ARP is answered and learned from here rather than passed up, because it
 // belongs to the link and because the process that holds the NIC is the only
@@ -164,6 +167,10 @@ func (l *ethLink) send(pkt []byte, nextHop IP) error {
 // the network it is trying to measure.
 func (l *ethLink) recv(buf []byte) int {
 	n := libgor2.ReceiveNonBlocking(l.rxFrame[:])
+	if n == 0 {
+		return -1
+	}
+
 	if n < ethHeaderLen || n > len(l.rxFrame) {
 		return 0
 	}

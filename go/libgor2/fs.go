@@ -74,10 +74,12 @@ func ReadFileAt(name string, buf []byte, offset uint64) (int, error) {
 
 // ReadFileInto reads the whole of name into buf using syscall 0x20.
 //
-// The kernel is never told how big buf is and will write the entire file
-// wherever the pointer leads, so buf has to be big enough for the largest file
-// this will ever be handed.  ReadFile is the one to reach for; this is here
-// because the syscall is part of the ABI.
+// The kernel is never told how big buf is.  It refuses a file that would run
+// past the end of the memory region buf is in, but not one that runs past the
+// end of buf, so buf has to be big enough for the largest file this will ever
+// be handed --- rounded up to whole 512-byte sectors on the floppy.  ReadFile
+// is the one to reach for; this is here because the syscall is part of the
+// ABI.
 func ReadFileInto(name string, buf []byte) error {
 	if len(buf) == 0 {
 		return EInvalidInput
@@ -140,11 +142,21 @@ func Rename(oldName, newName string) error {
 		ptr(unsafe.Pointer(&n[0]))))
 }
 
-// Delete removes a directory entry (syscall 0x23).
+// Delete removes a file (syscall 0x23).  EFileNotFound means nothing was
+// deleted.
 func Delete(name string) error {
 	b := cstring(name)
 
 	return err(Syscall(ScDeleteFile, ptr(unsafe.Pointer(&b[0])), 0))
+}
+
+// RemoveDir removes a directory, which has to be empty (syscall 0x23 with
+// arg2 = 1).  A missing directory, a file, and a directory with anything in it
+// are all refused with EFileNotFound, and nothing is deleted.
+func RemoveDir(name string) error {
+	b := cstring(name)
+
+	return err(Syscall(ScDeleteFile, ptr(unsafe.Pointer(&b[0])), 1))
 }
 
 // Mkdir creates a subdirectory called name inside parent, an absolute VFS path
