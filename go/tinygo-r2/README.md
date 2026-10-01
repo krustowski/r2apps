@@ -1,8 +1,8 @@
 # The `r2` TinyGo target
 
 TinyGo reads its standard library and target definitions from `TINYGOROOT` at
-compile time rather than baking them into the binary, so a new target is five
-files dropped into the stock image.  There is no LLVM rebuild and `make image`
+compile time rather than baking them into the binary, so a new target is a
+few files dropped into the stock image.  There is no LLVM rebuild and `make image`
 takes seconds.
 
 ```shell
@@ -16,6 +16,7 @@ make image     # docker build -t tinygo-r2:0.38.0 .
 | `r2.S` | `targets/r2.S` | `_start`, the syscall trampoline, the argv stash. |
 | `runtime_r2.go` | `src/runtime/runtime_r2.go` | The runtime's board-support layer. |
 | `interrupt_r2.go` | `src/runtime/interrupt/interrupt_r2.go` | No-op interrupt shims. |
+| `task_stack_r2.go` | `src/internal/task/task_stack_r2.go` | Goroutine stacks: painted for measurement, reused after exit. Replaces the stock `task_stack.go`, which the Dockerfile excludes with a `!r2` build constraint. |
 
 ## Why a target and not just a linker script
 
@@ -60,4 +61,7 @@ rebuild.  The things most likely to need attention are the set of functions
 the runtime expects (compare against a `runtime_*.go` for another baremetal
 target, `runtime_arm7tdmi.go` is the smallest) and the build tag on
 `runtime/interrupt/interrupt_none.go`, which is what decides whether this
-target has to supply its own.
+target has to supply its own.  `task_stack_r2.go` is a copy of the stock
+`internal/task/task_stack.go` with painting and reuse added, so diff the new
+version's file against it; the image build fails if the build-constraint line
+the Dockerfile edits has changed.

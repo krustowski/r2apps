@@ -5,7 +5,8 @@
 // reaches a yield point, and every one of them carries a fixed stack cut out of
 // a heap that is about a megabyte and a half.  Neither of those is visible from
 // the Go side, and both decide whether a design will work here, so this program
-// measures them rather than asserting them.
+// measures them rather than asserting them --- including how deep goroutines
+// really go, which is what the stack size should be chosen from.
 //
 //	routtest          run every check
 //	routtest 24       park 24 goroutines for the capacity measurement
@@ -29,7 +30,7 @@ const (
 	// Goroutines are created in batches, because a `go` statement allocates
 	// the whole stack there and then: a loop that starts three hundred of them
 	// before any of them runs needs three hundred stacks at once, and the heap
-	// has room for about thirty.  That is not a hypothetical --- it is what the
+	// has room for about eighty.  That is not a hypothetical --- it is what the
 	// first version of this program did, and it died with "out of memory"
 	// instead of reporting a number.
 	spawnBatches  = 24
@@ -51,6 +52,7 @@ func main() {
 
 	checkBasic()
 	checkStacks(parked)
+	checkDepth()
 	checkChurn()
 	checkSpawn()
 	checkChannel()
@@ -58,6 +60,12 @@ func main() {
 	checkSync()
 	checkYield()
 	checkSleep()
+
+	st := libgor2.ReadStackStats()
+	report("totals", "%d stacks allocated, %d reused, %d goroutines finished",
+		st.Allocated, st.Reused, st.Exited)
+	report("", "deepest finished goroutine used %d of %d bytes",
+		st.Peak, st.Size)
 
 	fmt.Printf("\nrouttest: done\n")
 }
@@ -69,7 +77,7 @@ func report(name, format string, a ...any) {
 // stackBytes is what one goroutine costs, filled in by checkStacks.  Every
 // later check sizes itself against it, so that this program measures the
 // ceiling instead of walking into it.
-var stackBytes uint64 = 33000
+var stackBytes uint64 = 16500
 
 // affordable caps want at the number of goroutines the free heap can hold,
 // keeping a quarter of it back as margin.
@@ -110,8 +118,8 @@ func checkBasic() {
 // checkStacks measures what a goroutine costs by parking a known number of them
 // and watching the heap, then works out how many could ever be alive at once.
 //
-// This is the number that decides designs here.  A goroutine per connection is
-// an ordinary thing to write in Go and is not affordable on r2.
+// This is the number that decides designs here: the heap divided by it is how
+// many goroutines a program can have alive at once.
 func checkStacks(n int) {
 	var before, after runtime.MemStats
 
@@ -119,6 +127,11 @@ func checkStacks(n int) {
 		report("stacks", "asked for %d, the heap holds %d --- using that", n, capped)
 		n = capped
 	}
+
+	// Every `go` below must take a fresh stack from the heap for the growth to
+	// mean anything, so the cache of finished stacks is emptied first.
+	cache := libgor2.SetStackCache(0)
+	defer libgor2.SetStackCache(cache)
 
 	runtime.GC()
 	runtime.ReadMemStats(&before)
@@ -153,73 +166,128 @@ func checkStacks(n int) {
 		stackBytes = per
 	}
 
-	report("stacks", "%d parked, %d bytes each (%d KiB), committed at `go`",
-		n, per, per/1024)
+	report("stacks", "%d parked, %d bytes each (%d KiB, stack size %d), committed at `go`",
+		n, per, per/1024, libgor2.ReadStackStats().Size)
 	report("heap", "%d KiB total, %d KiB free -> about %d live goroutines",
 		after.Sys/1024, after.HeapIdle/1024, after.HeapIdle/stackBytes)
 }
 
-// checkChurn is the finding that decides how a long-running Go service has to
-// be written here.
+// checkDepth measures how much stack goroutines doing ordinary work actually
+// write.  The runtime paints every stack before the goroutine runs, so what is
+// left of the pattern afterwards is the high-water mark.  The deepest of these
+// is a floor for default-stack-size; leave room on top for whatever the
+// program itself does.
+func checkDepth() {
+	type probe struct {
+		name string
+		work func()
+	}
+
+	probes := []probe{
+		{"empty", func() {}},
+		{"chan", func() {
+			ch := make(chan int, 1)
+			ch <- 1
+			<-ch
+		}},
+		{"map", func() {
+			m := make(map[string]int)
+			for i := 0; i < 64; i++ {
+				m[strconvItoa(i)] = i
+			}
+		}},
+		{"sprintf", func() {
+			_ = fmt.Sprintf("%d %s %x", 42, "str", 0xbeef)
+		}},
+		{"float", func() {
+			_ = fmt.Sprintf("%v %.3f %g", struct{ A, B int }{1, 2}, 3.14159, 2.5e-7)
+		}},
+		{"sleep", func() {
+			time.Sleep(time.Millisecond)
+		}},
+	}
+
+	var line string
+
+	for _, p := range probes {
+		done := make(chan uintptr)
+
+		go func() {
+			p.work()
+			used, _ := libgor2.StackUsed()
+			done <- used
+		}()
+
+		line += fmt.Sprintf("%s %d  ", p.name, <-done)
+	}
+
+	report("depth", "bytes written: %s", line)
+}
+
+// strconvItoa keeps strconv out of the map probe's own frame count.
+func strconvItoa(i int) string {
+	return string(rune('a'+i%26)) + string(rune('a'+i/26))
+}
+
+// checkChurn shows what happens to the stacks of goroutines that finish.
 //
-// Goroutine stacks are ordinary heap objects, and the collector does not run
-// until an allocation asks it to.  A loop that starts short-lived goroutines
-// therefore grows the heap steadily even though every one of them has already
-// finished --- and because a stack is 32 KiB of *contiguous* heap, it runs out
-// of room sooner than the free byte count suggests.
+// Goroutine stacks are heap objects, and the collector does not run until an
+// allocation asks it to.  The r2 runtime therefore keeps the stacks of finished
+// goroutines in a small cache (libgor2.SetStackCache) and hands them to the next
+// `go` statement, so a loop of short-lived goroutines settles at one batch's
+// worth of stacks instead of growing the heap by a stack per goroutine.
 func checkChurn() {
 	const (
 		rounds = 4
 		each   = 4
 	)
 
-	var before, after, collected runtime.MemStats
+	var before, after runtime.MemStats
 
 	runtime.GC()
 	runtime.ReadMemStats(&before)
+	st0 := libgor2.ReadStackStats()
 
 	for r := 0; r < rounds; r++ {
 		spawnBatch(each)
 	}
 	runtime.ReadMemStats(&after)
+	st1 := libgor2.ReadStackStats()
 
-	runtime.GC()
-	runtime.ReadMemStats(&collected)
+	grew := int64(after.HeapInuse) - int64(before.HeapInuse)
 
-	report("churn", "%d finished goroutines grew the heap %d KiB, %d frees",
-		rounds*each, (after.HeapInuse-before.HeapInuse)/1024, after.Frees-before.Frees)
-	report("", "runtime.GC() returned %d KiB --- nothing else will",
-		(after.HeapInuse-collected.HeapInuse)/1024)
+	report("churn", "%d finished goroutines grew the heap %d KiB: %d stacks reused, %d allocated",
+		rounds*each, grew/1024, st1.Reused-st0.Reused, st1.Allocated-st0.Allocated)
+	report("", "%d stacks cached for the next `go` (limit %d)", st1.Cached, st1.CacheMax)
 }
 
-// checkSpawn times creating goroutines and running them to completion.
+// checkSpawn times creating goroutines and running them to completion.  The
+// batch fits in the stack cache, so after the first one no `go` statement
+// touches the heap and no collection is needed.
 func checkSpawn() {
 	batch := affordable(spawnPerBatch)
 
 	var (
-		total         int
-		spawnMS, gcMS uint64
+		total int
+		heap0 runtime.MemStats
+		heap1 runtime.MemStats
 	)
 
+	runtime.GC()
+	runtime.ReadMemStats(&heap0)
+
+	t0 := libgor2.Ticks()
 	for b := 0; b < spawnBatches; b++ {
-		t0 := libgor2.Ticks()
 		spawnBatch(batch)
-
-		// Not tidiness: see checkChurn.  Without this the heap only grows, and
-		// a long enough loop stops with "out of memory".
-		t1 := libgor2.Ticks()
-		runtime.GC()
-		t2 := libgor2.Ticks()
-
-		spawnMS += t1 - t0
-		gcMS += t2 - t1
 		total += batch
 	}
+	elapsed := libgor2.Ticks() - t0
 
-	report("spawn", "%d goroutines, %d at a time: %d ms running, %d ms collecting",
-		total, batch, spawnMS, gcMS)
-	report("", "%d collections of a %d KiB heap dominate the cost",
-		spawnBatches, heapKiB())
+	runtime.ReadMemStats(&heap1)
+
+	report("spawn", "%d goroutines, %d at a time: %d ms", total, batch, elapsed)
+	report("", "heap grew %d KiB over the run, no collection needed",
+		(int64(heap1.HeapInuse)-int64(heap0.HeapInuse))/1024)
 }
 
 func spawnBatch(n int) {
@@ -434,13 +502,6 @@ func checkSleep() {
 // perOp turns a total in milliseconds into a per-operation figure.  The clock
 // only moves every 10 ms, so a run too short to measure says so rather than
 // reporting a confident zero.
-func heapKiB() uint64 {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-
-	return m.Sys / 1024
-}
-
 func perOp(ms uint64, n int) string {
 	if ms < 20 {
 		return "too little to measure against a 10 ms clock"

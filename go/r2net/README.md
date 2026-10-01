@@ -86,10 +86,13 @@ drain what has arrived, answer what the link owns, advance every open
 connection's timers, sleep a tick.  Connections can be open at once (the
 demultiplexer keys on the four-tuple) but they are driven from one place.
 
-That is a choice about this machine rather than a limitation of TinyGo.  A
-goroutine commits 32 KiB of stack before it runs once, about thirty fit in the
-heap, and the cooperative scheduler will not take one off a syscall loop
-anyway.
+That is a choice about this machine rather than a limitation of TinyGo.  The
+kernel already queues frames for us while we are busy, and the cooperative
+scheduler will not take a goroutine off a syscall loop anyway.  Goroutines
+themselves are affordable now --- 16 KiB each, and a whole `dish` run over this
+stack writes about 7 KiB of one --- so a goroutine-per-connection API would
+need a single goroutine owning the link and channels to the rest, not cheaper
+stacks.
 
 ## How frames reach this loop
 

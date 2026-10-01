@@ -23,10 +23,9 @@
 // drains what has arrived, answers what the link itself owns (ARP, echo
 // requests), advances every open connection's timers and sleeps a millisecond
 // when the wire is quiet.  That is a deliberate choice rather than a
-// limitation of what TinyGo can do: a goroutine on r2 commits 32 KiB of stack
-// before it runs once, the kernel already queues frames for us while we are
-// busy, and a cooperative scheduler will not preempt a goroutine that is
-// spinning on a syscall anyway.  Connections can be open at
+// limitation of what TinyGo can do: the kernel already queues frames for us
+// while we are busy, and a cooperative scheduler will not preempt a goroutine
+// that is spinning on a syscall anyway.  Connections can be open at
 // the same time --- the demultiplexer keys on the four-tuple --- but they are
 // driven from one place.
 //
@@ -73,9 +72,10 @@ var (
 // It is only used when the kernel cannot tell us the real one.
 var defaultMAC = MAC{0x52, 0x54, 0x00, 0x12, 0x34, 0x56}
 
-// defaultIP is the address this repository's Ethernet setup gives the guest,
-// and what c/libcr2 compiles in.  r2 has no DHCP client of its own and no
-// netmask anywhere in the ABI, so something has to be assumed.
+// defaultIP and defaultNetmask are what this repository's Ethernet setup gives
+// the guest.  They are only used when nobody has published a configuration:
+// the eth driver does (syscall 0x3d), from DHCP or its own options, and when
+// it runs that is what every stack uses.
 var (
 	defaultIP      = IP{10, 3, 4, 2}
 	defaultNetmask = IP{255, 255, 255, 0}
@@ -95,20 +95,21 @@ type Options struct {
 	// Link is "eth" (the default) or "slip".
 	Link string
 
-	// LocalIP is this machine's address.  When it is zero the kernel's
-	// system information block is consulted, and failing that 10.3.4.2 is
-	// assumed.
+	// LocalIP is this machine's address.  When it is zero the configuration
+	// the eth driver published (syscall 0x3d) is used, then the kernel's
+	// system information block, and failing both 10.3.4.2.
 	LocalIP IP
 
 	// Netmask decides which destinations are on the local link.  Zero means
-	// 255.255.255.0.
+	// the published one, else 255.255.255.0.
 	Netmask IP
 
 	// Gateway is where packets for everywhere else are sent.  Zero means
-	// the .1 of the local network.
+	// the published one, else the .1 of the local network.
 	Gateway IP
 
-	// DNS is the resolver Resolve should ask.  Zero disables resolution.
+	// DNS is the resolver Resolve should ask.  Zero means the published one;
+	// with none published, resolution is disabled.
 	DNS IP
 
 	// Trace, when set, is called with one line per packet sent or
@@ -161,6 +162,28 @@ func Open(opts Options) (*Stack, error) {
 		ipID:     uint16(libgor2.Ticks()),
 		nextPort: ephemeralBase,
 		bound:    make(map[uint16]bool),
+	}
+
+	// What the eth driver published, for whatever the caller left zero.
+	var kcfg libgor2.NetConfig
+	haveCfg := libgor2.ReadNetConfig(&kcfg) == nil
+
+	if haveCfg {
+		if s.localIP.IsZero() {
+			s.localIP = IP(kcfg.IP)
+		}
+
+		if s.netmask.IsZero() {
+			s.netmask = IP(kcfg.Netmask)
+		}
+
+		if s.gateway.IsZero() {
+			s.gateway = IP(kcfg.Gateway)
+		}
+
+		if s.dns.IsZero() {
+			s.dns = IP(kcfg.DNS)
+		}
 	}
 
 	if s.netmask.IsZero() {
@@ -218,11 +241,19 @@ func Open(opts Options) (*Stack, error) {
 		}
 
 		mac := MAC(ns.MAC)
-		if mac.IsZero() {
+		fromKernel := !mac.IsZero()
+		if !fromKernel {
 			mac = defaultMAC
 		}
 
 		eth := newEthLink(mac, s.localIP)
+		eth.macKnown = fromKernel
+
+		// The gateway's MAC as the driver resolved it: a process that is
+		// not the driver never sees an ARP reply.
+		if haveCfg && IP(kcfg.Gateway) == s.gateway && !MAC(kcfg.GatewayMAC).IsZero() {
+			eth.remember(s.gateway, MAC(kcfg.GatewayMAC))
+		}
 
 		s.eth = eth
 		s.link = eth

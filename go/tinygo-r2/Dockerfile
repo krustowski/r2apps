@@ -12,3 +12,13 @@ COPY interrupt_r2.go  /usr/local/tinygo/src/runtime/interrupt/interrupt_r2.go
 COPY r2.S             /usr/local/tinygo/targets/r2.S
 COPY r2.ld            /usr/local/tinygo/targets/r2.ld
 COPY r2.json          /usr/local/tinygo/targets/r2.json
+
+# Goroutine stacks: task_stack_r2.go paints and reuses them.  It replaces the
+# stock task_stack.go, which is excluded for r2 by its build constraint --- the
+# grep fails the build if a TinyGo bump has changed the line being edited.
+COPY task_stack_r2.go /usr/local/tinygo/src/internal/task/task_stack_r2.go
+USER root
+RUN f=/usr/local/tinygo/src/internal/task/task_stack.go && \
+    sed -i '1s#^//go:build scheduler.tasks || scheduler.cores$#//go:build (scheduler.tasks || scheduler.cores) \&\& !r2#' $f && \
+    head -1 $f | grep -qF '&& !r2'
+USER tinygo

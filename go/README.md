@@ -61,6 +61,7 @@ and `make image` finishes in seconds.  `tinygo-r2/` holds them:
 | `r2.S` | `_start`, the `int 0x7f` trampoline, and the argv stash. |
 | `runtime_r2.go` | `putchar`, `ticks`, `sleepTicks`, `exit` --- what the runtime cannot do without. |
 | `interrupt_r2.go` | The no-op interrupt shims the scheduler needs in ring 3. |
+| `task_stack_r2.go` | Goroutine stacks: painted so their depth can be measured, cached for reuse when a goroutine exits. |
 
 ### Memory
 
@@ -139,24 +140,35 @@ different from real Go is the cost and the scheduling, and `routtest` measures
 both rather than asserting them. A run on the text kernel:
 
 ```
-  stacks    16 parked, 32874 bytes each (32 KiB), committed at `go`
-  heap      1588 KiB total, 1029 KiB free -> about 32 live goroutines
-  churn     16 finished goroutines grew the heap 513 KiB, 0 frees
-            runtime.GC() returned 481 KiB --- nothing else will
-  spawn     192 goroutines, 8 at a time: 204 ms running, 165 ms collecting
-  chan      50000 round trips in 183 ms, 3 us per trip
+  stacks    16 parked, 16490 bytes each (16 KiB, stack size 16384), committed at `go`
+  heap      1584 KiB total, 1297 KiB free -> about 80 live goroutines
+  depth     bytes written: empty 72  chan 224  map 224  sprintf 544  float 1424  sleep 120
+  churn     16 finished goroutines grew the heap 49 KiB: 13 stacks reused, 3 allocated
+            4 stacks cached for the next `go` (limit 8)
+  spawn     192 goroutines, 8 at a time: 3 ms
+            heap grew 82 KiB over the run, no collection needed
+  chan      50000 round trips in 30 ms, 600 ns per trip
   yield     without Gosched: "aaaaaaaabbbb"
             with Gosched:    "abcabcabcabc"
-  sleep     slept 51 ms (asked 50), other goroutine ran 10530 times
+  sleep     slept 51 ms (asked 50), other goroutine ran 35566 times
 ```
 
-Three things follow from that, and they are the difference between a design
-that works here and one that dies in the field:
-
-**A goroutine costs 32 KiB, and about thirty can be alive at once.** The stack
+**A goroutine costs 16 KiB, and about eighty can be alive at once.** The stack
 size comes from `default-stack-size` in `tinygo-r2/r2.json`; the ceiling is that
-divided into the heap. A goroutine per connection is an ordinary thing to write
-in Go and is not affordable on r2 --- use a loop, or a small fixed worker pool.
+divided into the heap. It was 32 KiB until the stacks were measured: the r2
+runtime paints every goroutine stack before it runs (`tinygo-r2/task_stack_r2.go`),
+so what a goroutine actually wrote can be read back afterwards with
+`libgor2.StackUsed` or `libgor2.ReadStackStats`. The deepest goroutine routtest
+runs writes 1.4 KiB; the whole of `dish` --- flags, JSON, r2net's ICMP, DNS, TCP
+and HTTP, results POSTed back --- run inside one goroutine wrote 7 KiB. 16 KiB
+is twice the deepest thing measured.
+
+**A program can choose smaller stacks.** `-stack-size=8KB` in the app's
+`TINYGO_FLAGS` overrides the default for that program only, and doubles the
+ceiling again. Check `ReadStackStats().Peak` after a representative run before
+doing so: there is no guard page, and an overflow is caught only when the
+goroutine next yields, by a canary at the bottom of the stack --- after it has
+written over whatever heap object sat below.
 
 **`go` commits the whole stack before the goroutine runs once.** So what limits
 a burst is not how long the goroutines live but how many are outstanding before
@@ -165,12 +177,13 @@ goroutines needs three hundred stacks at the same time; the first version of
 `routtest` did exactly that and died with `out of memory`. Spawn in batches and
 wait for each.
 
-**The collector does not run on its own.** Sixteen goroutines that have already
-finished still held 513 KiB until `runtime.GC()` was called, with zero frees in
-between. Worse, a stack is 32 KiB of *contiguous* heap, so churn fragments the
-arena and allocation fails earlier than the free byte count suggests. Anything
-long-running that creates goroutines should call `runtime.GC()` at a natural
-quiet point.
+**Finished goroutines give their stacks to the next `go`.** The collector does
+not run on its own, so on stock TinyGo every finished goroutine's stack stays on
+the heap until something calls `runtime.GC()`, and churn fragments the arena.
+The r2 runtime keeps up to eight finished stacks in a cache instead
+(`libgor2.SetStackCache` changes the limit, up to 32), so a loop of short-lived
+goroutines settles at one batch's worth of stacks and needs no collection.
+A burst wider than the cache still leaves the surplus to the collector.
 
 Two smaller notes: `runtime.NumGoroutine()` is a TinyGo stub that always returns
 1, so do not trust it; and `runtime.ReadMemStats` *is* real on this collector,

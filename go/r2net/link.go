@@ -112,6 +112,26 @@ type ethLink struct {
 	// local costs an allocation" in ../README.md.
 	rxFrame [frameLen]byte
 	txFrame [frameLen]byte
+
+	// For publishedGatewayMAC and syncMAC, a field for the same reason.
+	cfg libgor2.NetConfig
+
+	// macKnown is false while mac is the built-in default: a program
+	// started just after eth can come up while eth is still bringing the
+	// card up, before the kernel knows its address.
+	macKnown bool
+}
+
+// syncMAC takes the card's MAC from the kernel once it has one.
+func (l *ethLink) syncMAC() {
+	if l.macKnown || libgor2.ReadNetConfig(&l.cfg) != nil {
+		return
+	}
+
+	if mac := MAC(l.cfg.MAC); !mac.IsZero() {
+		l.mac = mac
+		l.macKnown = true
+	}
 }
 
 func newEthLink(mac MAC, localIP IP) *ethLink {
@@ -132,7 +152,12 @@ func (l *ethLink) setLocalIP(ip IP) { l.localIP = ip }
 // broadcast frame carrying a unicast IP packet still processes it.  The reply
 // fills the cache, so only the first frame of a run is ever broadcast.
 func (l *ethLink) send(pkt []byte, nextHop IP) error {
+	l.syncMAC()
+
 	dst, known := l.lookup(nextHop)
+	if !known {
+		dst, known = l.publishedGatewayMAC(nextHop)
+	}
 	if !known {
 		dst = broadcastMAC
 
@@ -282,6 +307,25 @@ func (l *ethLink) sendARP(op uint16, targetIP IP, targetMAC MAC) {
 
 	// The kernel knows an ARP frame is 42 bytes and sends exactly that.
 	_ = libgor2.SendPacket(libgor2.PacketEth, l.txFrame[:ethHeaderLen+arpPacketLen])
+}
+
+// publishedGatewayMAC is the MAC the eth driver resolved for ip, when ip is
+// the gateway it published (syscall 0x3d).  The driver takes every ARP reply,
+// so while another process holds that job this is the only way to learn it;
+// it may also have been published only since the stack came up.
+func (l *ethLink) publishedGatewayMAC(ip IP) (MAC, bool) {
+	if libgor2.ReadNetConfig(&l.cfg) != nil {
+		return MAC{}, false
+	}
+
+	mac := MAC(l.cfg.GatewayMAC)
+	if IP(l.cfg.Gateway) != ip || mac.IsZero() {
+		return MAC{}, false
+	}
+
+	l.remember(ip, mac)
+
+	return mac, true
 }
 
 func (l *ethLink) lookup(ip IP) (MAC, bool) {

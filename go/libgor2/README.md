@@ -24,6 +24,7 @@ if err := libgor2.ReadSysInfo(&info); err != nil {
 | `net.go` | Ports, serial, packets, driver registration. |
 | `input.go` | Keyboard and mouse pipes. |
 | `mem.go` | The kernel's shared heap, `KBytes`, memory info. |
+| `stack.go` | Goroutine stack depth and reuse counters, the stack cache limit. |
 
 ## Calling convention
 

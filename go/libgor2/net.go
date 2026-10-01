@@ -186,6 +186,13 @@ func NetBindPort(port uint16) error {
 	return err(Syscall(ScNetRegister, uintptr(port), 0))
 }
 
+// ReadNetConfig fills cfg with the network configuration the Ethernet driver
+// published: address, netmask, gateway and its MAC, DNS (syscall 0x3d).  An
+// error on a kernel without the syscall.
+func ReadNetConfig(cfg *NetConfig) error {
+	return err(Syscall(ScNetConfig, 0x01, ptr(unsafe.Pointer(cfg))))
+}
+
 // ReadNetStatus fills ns with the MAC, the IP, whether the driver is up and
 // the table of bound ports (syscall 0x38).
 func ReadNetStatus(ns *NetStatus) error {

@@ -9,7 +9,7 @@
 	"linker": "ld.lld",
 	"rtlib": "compiler-rt",
 	"libc": "picolibc",
-	"default-stack-size": 32768,
+	"default-stack-size": 16384,
 	"cflags": [
 		"-target", "x86_64-unknown-none",
 		"-mno-red-zone",

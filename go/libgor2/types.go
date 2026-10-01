@@ -145,6 +145,30 @@ type NetStatus struct {
 	Ports     [16]uint16
 }
 
+// NetConfig is the machine's network configuration (syscall 0x3d): what the
+// Ethernet driver got by DHCP or was given.  Unset fields are zero.
+// GatewayMAC is the gateway's hardware address as the driver resolved it; a
+// process that is not the driver cannot ARP for it, the replies go to the
+// driver.
+type NetConfig struct {
+	IP         [4]byte
+	Netmask    [4]byte
+	Gateway    [4]byte
+	DNS        [4]byte
+	MAC        [6]byte
+	GatewayMAC [6]byte
+	Source     uint8 // NetSource*
+	Reserved   uint8
+}
+
+// Where a NetConfig came from.
+const (
+	NetSourceNone     = 0
+	NetSourceStatic   = 1
+	NetSourceDHCP     = 2
+	NetSourceFallback = 3
+)
+
 // Task modes and statuses, as reported by TaskInfo.
 const (
 	ModeKernel = 0
@@ -269,6 +293,9 @@ const (
 
 	_ = uint(unsafe.Sizeof(NetStatus{}) - 44)
 	_ = uint(44 - unsafe.Sizeof(NetStatus{}))
+
+	_ = uint(unsafe.Sizeof(NetConfig{}) - 30)
+	_ = uint(30 - unsafe.Sizeof(NetConfig{}))
 
 	_ = uint(unsafe.Sizeof(TaskInfo{}) - 28)
 	_ = uint(28 - unsafe.Sizeof(TaskInfo{}))

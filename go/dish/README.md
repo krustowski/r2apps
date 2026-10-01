@@ -165,8 +165,8 @@ accepted and ignored; the source is fetched on every run.
 
 **The checks run one after another, not concurrently.**  Upstream starts a
 goroutine per socket.  Here the whole TCP/IP stack is one cooperatively
-scheduled object in this process, a goroutine commits 32 KiB of stack before it
-runs once, and the kernel delivers frames one at a time through a single shared
+scheduled object in this process that is not safe to drive from two
+goroutines, and the kernel delivers frames one at a time through a single shared
 buffer.  A list where several hosts are down takes as long as the sum of their
 timeouts.
 
