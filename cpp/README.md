@@ -4,7 +4,10 @@
 | ------------ | ------- | ----- |
 | `libc++r2` | C++23 runtime and standard library for `r2`: containers, strings, formatted output, `expected`, coroutines, filesystem, graphics, input, and the kernel ABI. | usable |
 | `example-print` | The minimal C++ program: a hand-written syscall wrapper and nothing else. | stable |
-| `memento-hello` | The Memento GUI framework on `r2`, linked against the host libstdc++. | unstable |
+| `memento-hello` | The Memento GUI framework on `r2`: a desktop with a file manager, web browser, Telegram client, video player and DOS programs (through `c/them`) in windows. | unstable |
+| `memento-hello/web` | The engine of Memento's Web window: TCP/IP, TLS 1.2 (BearSSL), HTTP/1.1, HTML layout, pictures. See its [README](memento-hello/web/README.md). | unstable |
+| `third_party/bearssl` | BearSSL, vendored unmodified for the Web window's TLS. | upstream |
+| `third_party/stb` | stb_image 2.30 (public domain), vendored unmodified for the pictures in the Web and Telegram windows. | upstream |
 
 ## libc++r2
 
@@ -23,7 +26,7 @@ not ready to move (`make STD=c++17`).
 cd libc++r2
 make            # libc++r2.a, libc++r2compat.a, _crt0.o
 make check      # host-side tests
-make examples   # examples/hello, examples/gfxdemo
+make examples   # examples/hello, examples/gfxdemo, examples/snake
 ```
 
 An application needs a two-line Makefile:
