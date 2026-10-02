@@ -3,7 +3,8 @@
  *
  *  GCC's own <limits.h> reaches for the system's with #include_next, which
  *  -nostdinc takes away, so the few limits that matter on x86-64 are here.
- *  BearSSL itself only asks for ULONG_MAX (to tell a 64-bit long).
+ *  BearSSL itself only asks for ULONG_MAX (to tell a 64-bit long); stb_image
+ *  for SHRT_MIN and INT_MAX.
  */
 #ifndef WEB_LIBC_LIMITS_H
 #define WEB_LIBC_LIMITS_H
@@ -12,6 +13,7 @@
 #define SCHAR_MAX 127
 #define UCHAR_MAX 255
 #define SHRT_MAX 32767
+#define SHRT_MIN (-SHRT_MAX - 1)
 #define USHRT_MAX 65535
 #define INT_MAX 2147483647
 #define INT_MIN (-INT_MAX - 1)

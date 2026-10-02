@@ -13,11 +13,11 @@
  *    a context switch, and crypto is the last place to find that out.
  *
  *  - Certificates are checked against the roots in a file the platform
- *    supplies (on r2, /mnt/iso/opt/memento/cacerts.bin), read on the first
- *    handshake: they live on the CD, not in a 2 MiB process.  A chain that
- *    ends elsewhere is refused unless the user asks for the insecure retry,
- *    which accepts an unknown root and nothing else: names and dates are
- *    still checked.
+ *    supplies (on r2, /mnt/tar/opt/memento/cacerts.bin), read on the first
+ *    handshake: they live on the USB stick, not in a 2 MiB process.  A
+ *    chain that ends elsewhere is refused unless the user asks for the
+ *    insecure retry, which accepts an unknown root and nothing else: names
+ *    and dates are still checked.
  */
 
 #include <string.h>

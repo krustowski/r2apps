@@ -425,6 +425,11 @@ class IRCWindow
                 disp[i++] = *t++;
             disp[i] = '\0';
             addLine(disp);
+            // A message while the window is behind others: its title bar and
+            // its taskbar button go red until it is looked at. (The root
+            // ignores this for the window in front.) Joins, parts and server
+            // notices are not worth the interruption.
+            wnd->SetAttention(true);
             wnd->Repaint();
             return;
         }
@@ -676,12 +681,11 @@ class IRCWindow
             unsigned char f[42];
             for (int i = 0; i < 6; i++)
                 f[i] = 0xFF;
-            f[6] = 0x52;
-            f[7] = 0x54;
-            f[8] = 0x00;
-            f[9] = 0x12;
-            f[10] = 0x34;
-            f[11] = 0x56;
+            // Our own MAC: the card's, as the kernel reports it.
+            unsigned char my_mac[6];
+            net_get_local_mac(my_mac);
+            for (int i = 0; i < 6; i++)
+                f[6 + i] = my_mac[i];
             f[12] = 0x08;
             f[13] = 0x06;
             f[14] = 0x00;
@@ -692,12 +696,8 @@ class IRCWindow
             f[19] = 0x04;
             f[20] = 0x00;
             f[21] = 0x01;
-            f[22] = 0x52;
-            f[23] = 0x54;
-            f[24] = 0x00;
-            f[25] = 0x12;
-            f[26] = 0x34;
-            f[27] = 0x56;
+            for (int i = 0; i < 6; i++)
+                f[22 + i] = my_mac[i];
             f[28] = my_ip[0];
             f[29] = my_ip[1];
             f[30] = my_ip[2];
@@ -716,13 +716,11 @@ class IRCWindow
             net_get_local_ip(my_ip);
         }
 
-        // Pre-seed the ARP cache so the SYN goes out as unicast.
-        // tap0's MAC is pinned to 52:54:00:12:34:57 in run_iso_net.
-        // Without this, bind_port mode never receives ARP replies (eth.elf
-        // handles them), so eth_drv_send falls back to FF:FF:FF:FF:FF:FF and
-        // Linux drops the SYN in tcp_v4_rcv before even counting it in InSegs.
-        static const unsigned char gw_mac[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x57};
-        net_arp_set(server_ip, gw_mac);
+        // No ARP pre-seeding: in bind_port mode the ARP replies go to eth.elf,
+        // not here, but libcr2 sends a frame for a server off the local
+        // network to the gateway's MAC, which eth.elf resolves and publishes
+        // (syscall 0x3d).  (This used to pin the tap's 52:54:00:12:34:57,
+        // which only ever worked under run_iso_net.)
 
         memset(sockets, 0, sizeof(sockets));
         sock = tcp_connect(sockets, server_ip, server_port, LOCAL_PORT, my_ip);

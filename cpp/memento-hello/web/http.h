@@ -15,14 +15,18 @@ namespace web {
 
 //  The request for u.  With a body it is a POST of a urlencoded form, without
 //  one a GET.  False when there was no memory for it.
-bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool post, Buf &out);
+//  `contentType` is the POST body's; urlencoded form data when null.
+bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool post, Buf &out,
+                      const char *contentType = nullptr);
 
 class HttpResponse
 {
 public:
     //  Bigger pages are cut here and marked truncated.  The body lives in the
-    //  big pool; the arena could not hold this much next to everything else.
-    static const size_t MAX_BODY = 768 * 1024;
+    //  big pool (the user heap, which grows past its first 4 MiB); the arena
+    //  could not hold this much next to everything else.  4 MiB: an HD film's
+    //  HLS segment of a few seconds.
+    static const size_t MAX_BODY = 4 * 1024 * 1024;
     static const size_t MAX_HEAD = 16 * 1024;
 
     int status = 0;

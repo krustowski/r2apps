@@ -12,20 +12,39 @@
 //   Backspace, Alt+Left / Alt+Right        back, forward
 //   Ctrl+L or F6                           edit the address
 //   F5 or Ctrl+R                           reload
+//   Ctrl+D                                 dark mode on/off (the "D"/"L" button too)
+//   Ctrl+C                                 copy the focused link's address, or
+//                                          the page's when no link is focused
+//   Ctrl+V                                 paste, in the address bar, the find
+//                                          box and a form's text field
+//   Ctrl+Space, Shift+F10, right click     the menu: open, open in a new window
+//                                          or copy the link, paste, back, ...
+//                                          Arrows and Enter or the underlined
+//                                          letter pick, Esc closes it.
 //   / then n                               find on the page, find again
 //   Esc                                    stop loading; close the window
 // On a form field, Enter (or a click) starts typing into it; Enter again
 // submits the form, Esc stops, Tab moves on.  Space or Enter ticks a box,
 // picks a radio button, steps through a list's options (Shift: backwards)
 // and presses a button.
-// The address bar also takes ":dns <ip>", ":gw <ip>", ":css on|off", and
-// "about:" pages.
+// The address bar also takes ":dns <ip>", ":gw <ip>", ":css on|off",
+// ":img on|off", ":dark on|off", "about:" pages, and "file:/mnt/..." (or just
+// "/mnt/...") for a picture, an .htm(l) page (its relative pictures and links
+// are files beside it) or text on a disk.
+//
+// Pictures (PNG, JPEG, GIF, BMP; web/image.h) are fetched one at a time
+// after the page and its style sheets, and each takes the place of its alt
+// text once it is in: a line of its own, as wide as it is or as the page,
+// in the screen's colours.  A page shows its first MAX_PICS.  An address
+// that answers with a picture shows the picture.
 //
 
 #include "../web/css.h"
 #include "../web/doc.h"
+#include "../web/image.h"
 #include "../web/loader.h"
 #include "../web/net_r2.h"
+#include "ui/platform/impl/r2/R2_BitmapImpl.h"
 
 class BrowserWindow
 {
@@ -36,6 +55,8 @@ public:
             b.big = true;
     }
 
+    ~BrowserWindow() { clearPics(); }
+
     static void onEvent(void *instance, struct PlatformWindowInterfaceInputEvent *data)
     {
         reinterpret_cast<BrowserWindow *>(instance)->onEvent_(data);
@@ -44,13 +65,18 @@ public:
     void SetWindow(PlatformWindow *w)
     {
         wnd = w;
-        navigate("about:home", true);
+        //  A window opened from another one's menu starts at the link.
+        char first[ADDR_CAP];
+        web::scopy(first, openNext[0] ? openNext : "about:home", sizeof(first));
+        openNext[0] = 0;
+        navigate(first, true);
     }
 
 private:
     static const int ADDR_CAP = 1200;
     static const int HIST_CAP = 16;
     static const int SCROLL_W = 5;
+    static const int BUTTONS = 4; // back, forward, reload/stop, dark/light
 
     PlatformWindow *wnd = nullptr;
 
@@ -99,6 +125,26 @@ private:
     web::Buf sheetBody[MAX_SHEETS];
     int nSheets = 0;
     int sheetNext = -1; // the stylesheet href being fetched; -1 when none is
+
+    //  Pictures, kept by address so that the page read again (its style
+    //  sheets came, CSS on or off) finds the ones it had.  One that could not
+    //  be had stays here without pixels, so it is not asked for again.
+    struct Pic
+    {
+        char url[ADDR_CAP];
+        web::Picture pic;
+    };
+    static const int MAX_PICS = 16;
+    static const int PIC_MAX_H = 480; // pixels; a taller one is made smaller
+    static const int MAX_DOC_IMAGES = 256;
+    Pic pics[MAX_PICS];
+    int nPics = 0;
+    int imgNext = -1; // the page's picture being fetched; -1 when none is
+    bool imagesOn = true;
+    int16_t picOf[MAX_DOC_IMAGES]; // the page's picture i is pics[picOf[i]], or -1
+    bool pageIsFile = false;       // the page came from a disk: file:...
+    char pageDir[ADDR_CAP] = {};   // and this is its directory, ending in '/'
+    double pxPerUnit = 2;          // screen pixels a unit, as last painted
     char pageTiming[96] = {};
     char editBuf[ADDR_CAP] = {};
     int editLen = 0;
@@ -108,16 +154,70 @@ private:
     size_t findLine = (size_t)-1, findRun = 0;
 
     char message[96] = {};    // one-off status text ("not found", ...)
+    //  The message was just set by something the user did ("Copied: ..."):
+    //  it goes before the link under the pointer until the next key or move.
+    bool messageFirst = false;
+
+    //  Where the next BrowserWindow goes first; "Open in new window" sets it
+    //  just before asking main.cpp for the window.
+    static inline char openNext[ADDR_CAP] = {};
+
+    //  The context menu.  Its items are made when it opens, from what it was
+    //  opened on; its geometry when it is painted, and kept for the mouse.
+    enum Action : uint8_t
+    {
+        A_SEP,
+        A_OPEN,
+        A_OPEN_NEW,
+        A_COPY_LINK,
+        A_COPY_TEXT,
+        A_PASTE_FIELD,
+        A_BACK,
+        A_FORWARD,
+        A_RELOAD,
+        A_STOP,
+        A_COPY_PAGE,
+        A_PASTE_GO,
+        A_FIND,
+        A_DARK,
+    };
+    struct MenuItem
+    {
+        Action action;
+        bool enabled;
+        const char *label; // '&' before the letter that picks it
+        const char *keys;  // the shortcut, shown on the right
+    };
+    static const int MENU_CAP = 16;
+    MenuItem menu[MENU_CAP];
+    int menuLen = 0;
+    bool menuOpen = false;
+    int menuSel = -1;
+    int menuLink = -1;         // the link it was opened on, or -1 for the page
+    double menuX = 0, menuY = 0; // where it was asked for
+    double menuL = 0, menuT = 0, menuW = 0; // where it is drawn
+    double winH = 0;
     char lastStatus[96] = {}; // what the loader said last time we painted
     bool imEnabled = false;
     uint64_t idleSince = 0;
     uint64_t lastRepaint = 0;
 
-    // Colours and fonts, made on the first paint.
-    PlatformColor *cBg = nullptr, *cText = nullptr, *cLink = nullptr, *cFaint = nullptr, *cCode = nullptr;
-    PlatformColor *cChrome = nullptr, *cChromeDark = nullptr, *cWhite = nullptr, *cMark = nullptr;
-    PlatformColor *cFocus = nullptr, *cHead = nullptr;
-    PlatformColor *cPal[16] = {}; // the EGA palette, for the page's own colours
+    //  Light or dark: which of the 16 EGA colours the window's own parts are
+    //  drawn in.  The page's colours are not in here; see pageColour().
+    struct Theme
+    {
+        uint8_t bg, text, faint, chrome, chromeDark, field, onFocus, mark, focus;
+    };
+    static constexpr Theme LIGHT = {15, 0, 8, 7, 8, 15, 15, 14, 1};
+    static constexpr Theme DARK = {0, 15, 7, 8, 7, 0, 15, 6, 1};
+    bool dark = false;
+
+    // Colours and fonts, made on the first paint; the theme picks from cPal.
+    PlatformColor *cBg = nullptr, *cText = nullptr, *cFaint = nullptr;
+    PlatformColor *cChrome = nullptr, *cChromeDark = nullptr, *cMark = nullptr, *cFocus = nullptr;
+    PlatformColor *cField = nullptr;   // the buttons and the address box
+    PlatformColor *cOnFocus = nullptr; // text on cFocus
+    PlatformColor *cPal[16] = {};      // the EGA palette, for the page's own colours
     PlatformFont *font = nullptr, *bigFont = nullptr;
     double cw = 3, ch = 6;     // one cell of the small font, in window units
     double rowH = 7;           // a row of text, with a unit of leading
@@ -175,6 +275,7 @@ private:
         web::scopy(current, addr, sizeof(current));
         scrollRow = scroll;
         focusedLink = hoverLink = -1;
+        menuOpen = false;
         findLine = (size_t)-1;
         doc.layout(0); // laid out again, for the real width, at the next paint
         setTitle(doc.title());
@@ -211,15 +312,23 @@ private:
                         "<p>A small web browser for rou2exOS: HTTP/1.1, TLS 1.2 by BearSSL, and HTML "
                         "without scripts or style sheets, in the kernel's own font.</p><h3>Network</h3><p>");
             escapeInto(b, net);
-            b.appendStr("</p><p>Change with <code>:dns 9.9.9.9</code> or <code>:gw 10.3.4.1</code> in "
-                        "the address bar; <code>:css off</code> shows pages without their style sheets. The guest needs a route to the internet: NAT on the host "
-                        "for 10.3.4.0/24.</p>"
+            b.appendStr("</p><p>Address, gateway and DNS are the ones the eth driver got by DHCP (or was "
+                        "given). Override with <code>:dns 9.9.9.9</code> or <code>:gw 192.168.1.1</code> in "
+                        "the address bar; <code>:css off</code> shows pages without their style sheets, "
+                        "<code>:img off</code> without their pictures (PNG, JPEG, GIF and BMP, the first "
+                        "16 on a page), and "
+                        "<code>:dark on</code> (or Ctrl+D) draws them light on dark. Under "
+                        "QEMU with a tap, the guest needs NAT on the host for its network.</p>"
                         "<h3>Keys</h3><pre>"
                         "Up/Down PgUp/PgDn Space Home/End   scroll\n"
                         "Tab / Shift+Tab, Enter             walk links, follow\n"
                         "Backspace, Alt+Left / Alt+Right    back, forward\n"
                         "Ctrl+L or F6                       edit the address\n"
                         "F5 or Ctrl+R                       reload\n"
+                        "Ctrl+D                             dark mode on/off\n"
+                        "Ctrl+C                             copy the link's (or page's) address\n"
+                        "Ctrl+V                             paste\n"
+                        "Ctrl+Space, Shift+F10, right click the menu\n"
                         "Enter on a field, then type        fill in a form\n"
                         "Space on a box, list or button     tick, pick, press\n"
                         "/  then  n                         find, find again\n"
@@ -267,6 +376,7 @@ private:
         web::scopy(current, attempted, sizeof(current));
         scrollRow = 0;
         focusedLink = hoverLink = -1;
+        menuOpen = false;
         doc.layout(0);
         setTitle("Problem loading page");
         wnd->Repaint();
@@ -280,6 +390,7 @@ private:
         scrollOnLoad = scroll;
         message[0] = 0;
         sheetNext = -1;
+        imgNext = -1;
         if (edit == EDIT_FIELD)
             edit = EDIT_NONE;
         if (post)
@@ -320,6 +431,19 @@ private:
             showAbout(text, push);
             return;
         }
+        if (web::istarts(text, "file:"))
+        {
+            openFile(text, push, scroll);
+            return;
+        }
+        if (text[0] == '/')
+        {
+            //  A path, as the shell would take it: a file on a disk.
+            char addr[ADDR_CAP] = "file:";
+            web::scat(addr, text, sizeof(addr));
+            openFile(addr, push, scroll);
+            return;
+        }
         web::Url u;
         if (!web::urlFromInput(text, u))
         {
@@ -358,7 +482,31 @@ private:
                 }
             }
         }
-        web::scopy(message, ok ? "Setting changed." : "Unknown command; try :dns <ip>, :gw <ip> or :css on|off",
+        else if (web::istarts(cmd, "img "))
+        {
+            ok = web::ieq(cmd + 4, "on") || web::ieq(cmd + 4, "off");
+            if (ok && imagesOn != web::ieq(cmd + 4, "on"))
+            {
+                imagesOn = !imagesOn;
+                if (imgNext >= 0)
+                {
+                    loader.cancel();
+                    imgNext = -1;
+                }
+                applyPictures();
+                if (imagesOn)
+                    startImages();
+                wnd->Repaint();
+            }
+        }
+        else if (web::istarts(cmd, "dark "))
+        {
+            ok = web::ieq(cmd + 5, "on") || web::ieq(cmd + 5, "off");
+            if (ok)
+                setDark(web::ieq(cmd + 5, "on"));
+        }
+        web::scopy(message,
+                   ok ? "Setting changed." : "Unknown command; try :dns <ip>, :gw <ip>, :css on|off, :img on|off or :dark on|off",
                    sizeof(message));
         wnd->Repaint();
     }
@@ -383,6 +531,12 @@ private:
         if (href[0] == '#')
         {
             //  An anchor on this page; there is nowhere to scroll to.
+            return;
+        }
+        char local[ADDR_CAP];
+        if (localAddress(href, local, sizeof(local)))
+        {
+            navigate(local, true);
             return;
         }
         web::Url base;
@@ -503,7 +657,9 @@ private:
     {
         doc.loadHtml(pageBody.data, pageBody.len, pageCharset, sheets, n, cssOn);
         doc.layout(0);
+        applyPictures();
         focusedLink = hoverLink = -1;
+        menuOpen = false;
         findLine = (size_t)-1;
         formsTouched = false;
         setTitle(doc.title());
@@ -559,6 +715,7 @@ private:
             sheetNext++;
         }
         applySheets();
+        startImages();
     }
 
     void onSheetLoaded()
@@ -584,11 +741,302 @@ private:
         fetchNextSheet();
     }
 
+    // ── Pictures ──────────────────────────────────────────────────────────────
+
+    void clearPics()
+    {
+        for (int k = 0; k < nPics; k++)
+            pics[k].pic.release();
+        nPics = 0;
+        imgNext = -1;
+    }
+
+    int findPic(const char *url) const
+    {
+        for (int k = 0; k < nPics; k++)
+            if (!strcmp(pics[k].url, url))
+                return k;
+        return -1;
+    }
+
+    //  An address on a page from a disk made into a file: one, when it is
+    //  one: "file:..." as it is, and a relative one beside the page.
+    bool localAddress(const char *ref, char *out, size_t cap)
+    {
+        if (web::istarts(ref, "file:"))
+        {
+            web::scopy(out, ref, cap);
+            return true;
+        }
+        if (!pageIsFile || strstr(ref, "://") || web::istarts(ref, "about:") || !ref[0])
+            return false;
+        web::scopy(out, "file:", cap);
+        if (ref[0] != '/')
+            web::scat(out, pageDir, cap);
+        web::scat(out, ref, cap);
+        return true;
+    }
+
+    //  The address of the page's picture i, made whole; `local` when it is
+    //  a file.
+    bool imageUrl(int i, web::Url &u, char *out, size_t cap, bool *local = nullptr)
+    {
+        bool isFile = localAddress(doc.imageSrc(i), out, cap);
+        if (local)
+            *local = isFile;
+        if (isFile)
+            return true;
+        if (!web::urlResolve(pageUrl, doc.imageSrc(i), u))
+            return false;
+        web::urlFormat(u, out, cap);
+        return true;
+    }
+
+    //  A file from a disk into `out` (big pool), as much as a response may be.
+    bool readLocal(const char *addr, web::Buf &out, bool &tooBig)
+    {
+        const char *path = addr + 5; // past "file:"
+        while (path[0] == '/' && path[1] == '/')
+            path++;
+        tooBig = false;
+        auto size = r2::fs::size_of(path);
+        if (!size || !*size)
+            return false;
+        if (*size > web::HttpResponse::MAX_BODY)
+        {
+            tooBig = true;
+            return false;
+        }
+        out.release();
+        out.big = true;
+        if (!out.reserve(*size))
+            return false;
+        int64_t got = r2::fs::read_at(path, r2::byte_span(out.data, *size), 0);
+        if (got <= 0)
+            return false;
+        out.len = (size_t)got;
+        return true;
+    }
+
+    static bool hasExt(const char *s, const char *ext)
+    {
+        size_t n = strlen(s), e = strlen(ext);
+        return n >= e && web::ieq(s + n - e, ext);
+    }
+
+    static bool isPictureName(const char *s)
+    {
+        return hasExt(s, ".png") || hasExt(s, ".jpg") || hasExt(s, ".jpeg") || hasExt(s, ".gif") ||
+               hasExt(s, ".bmp");
+    }
+
+    void openFile(const char *addr, bool push, int scroll)
+    {
+        loader.cancel();
+        sheetNext = imgNext = -1;
+        web::scopy(attempted, addr, sizeof(attempted));
+        web::Buf data{true};
+        bool tooBig;
+        if (!readLocal(addr, data, tooBig))
+        {
+            showError("Could not open the file", tooBig ? "It is too big (768 KiB at most)." : "It is not there, or cannot be read.", false);
+            return;
+        }
+        pageBody.release();
+        for (web::Buf &b : sheetBody)
+            b.release();
+        nSheets = 0;
+        clearPics();
+        pageIsFile = true;
+        const char *path = addr + 5;
+        while (path[0] == '/' && path[1] == '/')
+            path++;
+        web::scopy(pageDir, path, sizeof(pageDir));
+        char *slash = strrchr(pageDir, '/');
+        if (slash)
+            slash[1] = 0;
+        else
+            web::scopy(pageDir, "/", sizeof(pageDir));
+
+        bool html = hasExt(addr, ".htm") || hasExt(addr, ".html");
+        if (isPictureName(addr))
+            showPicture(addr, data.data, data.len, false);
+        else if (html)
+        {
+            pageBody.data = data.data; // taken over
+            pageBody.len = data.len;
+            pageBody.cap = data.cap;
+            data.data = nullptr;
+            data.len = data.cap = 0;
+            pageCharset[0] = 0;
+            renderPage(nullptr, 0);
+        }
+        else
+            doc.loadText(data.data, data.len, "");
+        web::scopy(message, "From the disk, ", sizeof(message));
+        web::scatInt(message, (long)((pageBody.len + data.len + 1023) / 1024), sizeof(message));
+        web::scat(message, " KiB.", sizeof(message));
+        web::scopy(pageTiming, message, sizeof(pageTiming));
+        showDocument(addr, push, scroll);
+        if (html)
+            startImages();
+    }
+
+    //  Tells the page how big each picture it has is (0 for those it has
+    //  not), which lays it out again at the next paint.
+    void applyPictures()
+    {
+        for (int i = 0; i < doc.imageCount(); i++)
+        {
+            int k = -1;
+            web::Url u;
+            char url[ADDR_CAP];
+            if (imagesOn && i < MAX_DOC_IMAGES && imageUrl(i, u, url, sizeof(url)))
+                k = findPic(url);
+            if (k >= 0 && !pics[k].pic.px)
+                k = -1;
+            if (i < MAX_DOC_IMAGES)
+                picOf[i] = (int16_t)k;
+            doc.setImageSize(i, k >= 0 ? pics[k].pic.w : 0, k >= 0 ? pics[k].pic.h : 0);
+        }
+    }
+
+    void startImages()
+    {
+        if (!imagesOn || !doc.imageCount() || loader.busy())
+            return;
+        imgNext = 0;
+        fetchNextImage();
+    }
+
+    //  The next picture the page has and this window has not, the first
+    //  MAX_PICS of them.
+    void fetchNextImage()
+    {
+        while (imgNext >= 0 && imgNext < doc.imageCount() && imgNext < MAX_DOC_IMAGES)
+        {
+            web::Url u;
+            char url[ADDR_CAP];
+            bool local = false;
+            if (imageUrl(imgNext, u, url, sizeof(url), &local) && findPic(url) < 0)
+            {
+                if (nPics == MAX_PICS)
+                    break;
+                Pic &p = pics[nPics++];
+                web::scopy(p.url, url, sizeof(p.url));
+                p.pic.release();
+                if (local)
+                {
+                    //  From the disk: no waiting, so at once.
+                    web::Buf data{true};
+                    bool tooBig;
+                    if (readLocal(url, data, tooBig))
+                        decodeInto(p.pic, data.data, data.len);
+                    applyPictures();
+                    imgNext++;
+                    continue;
+                }
+                loader.start(u, false);
+                ensureIdleLoop(true);
+                web::scopy(message, "Picture ", sizeof(message));
+                web::scatInt(message, imgNext + 1, sizeof(message));
+                web::scat(message, " of ", sizeof(message));
+                web::scatInt(message, doc.imageCount(), sizeof(message));
+                web::scat(message, "...", sizeof(message));
+                wnd->Repaint();
+                return;
+            }
+            imgNext++;
+        }
+        imgNext = -1;
+        int shown = 0;
+        for (int k = 0; k < nPics; k++)
+            shown += pics[k].pic.px != nullptr;
+        web::scopy(message, pageTiming, sizeof(message));
+        if (shown)
+        {
+            size_t ml = strlen(message);
+            if (ml && message[ml - 1] == '.')
+                message[ml - 1] = 0;
+            web::scat(message, ml ? ", " : "", sizeof(message));
+            web::scatInt(message, shown, sizeof(message));
+            web::scat(message, shown == 1 ? " picture" : " pictures", sizeof(message));
+        }
+        wnd->Repaint();
+    }
+
+    //  Into the screen's colours, as wide as the page is now at most, over
+    //  the page's background where it is transparent.
+    const char *decodeInto(web::Picture &pic, const uint8_t *data, size_t len)
+    {
+        int maxW = (int)((contentW - 3) * pxPerUnit);
+        if (maxW < 16)
+            maxW = 16;
+        const char *why = web::decodePicture(data, len, maxW, PIC_MAX_H,
+                                             (int)MementoR2Impl::R2_Palette::Count(), dark ? 0x000000 : 0xFFFFFF, pic);
+        //  Spacers and counters: a pixel or two, nothing to see.
+        if (!why && (pic.w <= 2 || pic.h <= 2))
+            pic.release();
+        return why;
+    }
+
+    void onImageLoaded()
+    {
+        web::HttpResponse &r = loader.response();
+        if (loader.phase() == web::Loader::FAILED && !strcmp(loader.error(), "Stopped"))
+        {
+            imgNext = -1;
+            web::scopy(message, "Stopped.", sizeof(message));
+            wnd->Repaint();
+            return;
+        }
+        Pic &p = pics[nPics - 1];
+        if (loader.phase() == web::Loader::DONE && r.status == 200 && r.body.len && !r.truncated)
+            decodeInto(p.pic, r.body.data, r.body.len);
+        r.body.release();
+        applyPictures();
+        imgNext++;
+        fetchNextImage();
+    }
+
+    //  An address that answered with a picture, or a picture file: a page
+    //  with just that on it.
+    void showPicture(const char *addr, const uint8_t *data, size_t len, bool truncated)
+    {
+        clearPics();
+        Pic &p = pics[nPics++];
+        web::scopy(p.url, addr, sizeof(p.url));
+        const char *why = truncated ? "too big to download (768 KiB at most)" : decodeInto(p.pic, data, len);
+        web::Buf b;
+        b.appendStr("<title>");
+        escapeInto(b, addr);
+        b.appendStr("</title>");
+        if (why)
+        {
+            b.appendStr("<h2>Cannot show the picture</h2><p>");
+            escapeInto(b, why);
+            b.appendStr(".</p>");
+        }
+        else
+        {
+            b.appendStr("<p align=center><img src=\"");
+            escapeInto(b, addr);
+            b.appendStr("\"></p>");
+        }
+        doc.loadMessage(b.cstr());
+        applyPictures();
+    }
+
     void onLoaded()
     {
         if (sheetNext >= 0)
         {
             onSheetLoaded();
+            return;
+        }
+        if (imgNext >= 0)
+        {
+            onImageLoaded();
             return;
         }
         if (loader.phase() == web::Loader::FAILED)
@@ -613,10 +1061,13 @@ private:
         for (web::Buf &b : sheetBody)
             b.release();
         nSheets = 0;
+        pageIsFile = false;
         if (html)
         {
+            clearPics();
             //  The page is kept, taken over from the response rather than
             //  copied: its style sheets come next, and then it is read again.
+            r.body.shrink(); // kept for as long as the page is: without its growing room
             pageBody.data = r.body.data;
             pageBody.len = r.body.len;
             pageBody.cap = r.body.cap;
@@ -625,6 +1076,11 @@ private:
             web::scopy(pageCharset, r.charset, sizeof(pageCharset));
             pageUrl = loader.url();
             renderPage(nullptr, 0);
+        }
+        else if (web::istarts(ct, "image/"))
+        {
+            pageUrl = loader.url();
+            showPicture(addr, r.body.data, r.body.len, r.truncated);
         }
         else if (web::istarts(ct, "text/") || web::istarts(ct, "application/json") ||
                  web::istarts(ct, "application/xml") || web::istarts(ct, "application/javascript"))
@@ -665,6 +1121,8 @@ private:
             sheetNext = 0;
             fetchNextSheet();
         }
+        else if (html)
+            startImages();
     }
 
     // ── Scrolling and links ───────────────────────────────────────────────────
@@ -763,8 +1221,13 @@ private:
         if (li >= doc.lineCount())
             return -1;
         const web::Line &l = doc.line(li);
-        if (row < l.row || row >= l.row + (l.big ? 2 : 1))
+        if (row < l.row || row >= l.row + l.height())
             return -1;
+        if (l.img)
+        {
+            double px = (x - contentX - 1) * pxPerUnit;
+            return px >= l.imgX && px < l.imgX + l.imgW ? l.link : -1;
+        }
         double cell = l.big ? bcw : cw;
         int col = (int)((x - contentX - 1) / cell);
         for (uint32_t r = 0; r < l.nRuns; r++)
@@ -777,6 +1240,43 @@ private:
     }
 
     // ── Editing the address bar ───────────────────────────────────────────────
+
+    static bool isCtrlKey(PlatformKey *key, char lower)
+    {
+        return (key->isLeftControl || key->isRightControl) && key->isChar &&
+               (key->theChar == lower || key->theChar == lower - 'a' + 'A');
+    }
+
+    void pasteIntoField(int ci)
+    {
+        for (const char *p = clipboardGet(); *p; p++)
+            if (*p >= ' ' && (unsigned char)*p < 0x7F)
+                doc.controlInsert(ci, *p);
+        formsTouched = true;
+    }
+
+    void say(const char *prefix, const char *what)
+    {
+        web::scopy(message, prefix, sizeof(message));
+        web::scat(message, what, sizeof(message));
+        messageFirst = true;
+        wnd->Repaint();
+    }
+
+    //  Ctrl+C on the page: the focused link's address, made whole against the
+    //  page's, or the page's own when no link (or only a form control) is
+    //  focused.
+    void copyAddress()
+    {
+        char s[ADDR_CAP];
+        int l = focusedLink >= 0 ? focusedLink : hoverLink;
+        if (l >= 0 && doc.linkControl(l) < 0)
+            linkForDisplay(l, s, sizeof(s));
+        else
+            web::scopy(s, current, sizeof(s));
+        clipboardSet(s);
+        say("Copied: ", s);
+    }
 
     void beginEdit(Edit what)
     {
@@ -825,6 +1325,10 @@ private:
         }
         else if (key->isBackspace)
             doc.controlBackspace(ci);
+        else if (isCtrlKey(key, 'v'))
+            pasteIntoField(ci);
+        else if (isCtrlKey(key, 'c'))
+            return;
         else if (key->isChar && key->theChar >= ' ' && (unsigned char)key->theChar < 0x7F)
             doc.controlInsert(ci, (char)key->theChar);
         else
@@ -871,6 +1375,23 @@ private:
             wnd->Repaint();
             return;
         }
+        if (isCtrlKey(key, 'c'))
+        {
+            clipboardSet(editBuf);
+            return;
+        }
+        if (isCtrlKey(key, 'v'))
+        {
+            if (editFresh)
+                editLen = 0;
+            editFresh = false;
+            for (const char *p = clipboardGet(); *p && editLen < ADDR_CAP - 1; p++)
+                if (*p >= ' ' && (unsigned char)*p < 0x7F)
+                    editBuf[editLen++] = *p;
+            editBuf[editLen] = 0;
+            wnd->Repaint();
+            return;
+        }
         if (key->isArrowRight || key->isEnd || key->isHome || key->isArrowLeft)
         {
             //  No cursor to move; these only keep the old text for editing.
@@ -907,27 +1428,56 @@ private:
         case PlatformWindowInputEventType::OnMouseMove:
         {
             Coord mx = data->Data.OnMouseMove.mouseX, my = data->Data.OnMouseMove.mouseY;
+            if (menuOpen)
+            {
+                int i = menuItemAt(COORD_VAL(mx), COORD_VAL(my));
+                if (i >= 0 && i != menuSel)
+                {
+                    menuSel = i;
+                    wnd->Repaint();
+                }
+                return;
+            }
             int l = linkAt(COORD_VAL(mx), COORD_VAL(my));
             if (l != hoverLink)
             {
                 hoverLink = l;
+                messageFirst = false;
                 wnd->Repaint();
             }
             return;
         }
         case PlatformWindowInputEventType::OnMouseWheel:
+            closeMenu();
             scrollTo(scrollRow + (data->Data.OnMouseWheel.up ? -3 : 3));
             return;
         case PlatformWindowInputEventType::OnMouseClick:
             if (data->Data.OnMouseClick.state == PlatformWindowButtonState::Pressed)
             {
                 Coord mx = data->Data.OnMouseClick.mouseX, my = data->Data.OnMouseClick.mouseY;
-                onClick(COORD_VAL(mx), COORD_VAL(my));
+                double x = COORD_VAL(mx), y = COORD_VAL(my);
+                if (menuOpen)
+                {
+                    //  A click on an item picks it; anywhere else only closes
+                    //  the menu, as a click beside a menu does everywhere.
+                    int i = menuItemAt(x, y);
+                    if (i >= 0)
+                        pickMenu(i);
+                    else
+                        closeMenu();
+                }
+                else if (data->Data.OnMouseClick.button == PlatformWindowMouseButton::Right)
+                    openMenu(linkAt(x, y), x, y, false);
+                else
+                    onClick(x, y);
             }
             return;
         case PlatformWindowInputEventType::OnKeyEvent:
             if (data->Data.OnKeyEvent.key->isKeyDown)
+            {
+                messageFirst = false;
                 onKey(data->Data.OnKeyEvent.key);
+            }
             return;
         default:
             return;
@@ -976,6 +1526,8 @@ private:
                 else
                     reload();
             }
+            else if (x < 4 * buttonW)
+                setDark(!dark);
             else if (x >= addrX)
                 beginEdit(EDIT_ADDRESS);
             return;
@@ -1006,6 +1558,22 @@ private:
 
     void onKey(PlatformKey *key)
     {
+        if (menuOpen)
+        {
+            onMenuKey(key);
+            return;
+        }
+        //  The menu, on the focused link or the field being typed into.
+        if ((edit == EDIT_NONE || edit == EDIT_FIELD) &&
+            (((key->isLeftControl || key->isRightControl) && key->isChar && key->theChar == ' ') ||
+             ((key->isLeftShift || key->isRightShift) && key->isF && key->f == 10)))
+        {
+            double x = contentX + 1, y = contentY;
+            if (focusedLink >= 0)
+                linkPoint(focusedLink, x, y);
+            openMenu(focusedLink, x, y, true);
+            return;
+        }
         if (edit != EDIT_NONE)
         {
             onEditKey(key);
@@ -1037,6 +1605,23 @@ private:
         if ((ctrl && key->isChar && (key->theChar == 'r' || key->theChar == 'R')) || (key->isF && key->f == 5))
         {
             reload();
+            return;
+        }
+        if (ctrl && key->isChar && (key->theChar == 'd' || key->theChar == 'D'))
+        {
+            setDark(!dark);
+            return;
+        }
+        if (isCtrlKey(key, 'c'))
+        {
+            copyAddress();
+            return;
+        }
+        if (isCtrlKey(key, 'v'))
+        {
+            //  Pasted on the page: an address to go to, in the bar for Enter.
+            beginEdit(EDIT_ADDRESS);
+            onEditKey(key);
             return;
         }
         if (alt && key->isArrowLeft)
@@ -1090,24 +1675,375 @@ private:
             findNext(false);
     }
 
+    // ── The context menu ──────────────────────────────────────────────────────
+
+    void addItem(Action a, bool enabled, const char *label, const char *keys = "")
+    {
+        if (menuLen < MENU_CAP)
+            menu[menuLen++] = {a, enabled, label, keys};
+    }
+
+    //  `link` is what it was opened on (-1: the page), (x, y) where: under
+    //  the pointer, or under the focused link when a key opened it.
+    void openMenu(int link, double x, double y, bool fromKey)
+    {
+        if (link >= doc.linkCount())
+            link = -1;
+        menuLen = 0;
+        menuLink = link;
+        int ci = link >= 0 ? doc.linkControl(link) : -1;
+        bool clip = clipboardGet()[0] != 0;
+        if (link >= 0 && ci < 0)
+        {
+            addItem(A_OPEN, true, "&Open link", "Enter");
+            addItem(A_OPEN_NEW, true, "Open in &new window");
+            addItem(A_COPY_LINK, true, "&Copy link address", "Ctrl+C");
+            addItem(A_COPY_TEXT, true, "Copy link &text");
+            addItem(A_SEP, false, "");
+        }
+        else if (ci >= 0 && doc.control(ci).isText())
+        {
+            addItem(A_PASTE_FIELD, clip, "&Paste", "Ctrl+V");
+            addItem(A_SEP, false, "");
+        }
+        addItem(A_BACK, histPos > 0, "&Back", "Alt+Left");
+        addItem(A_FORWARD, histPos + 1 < histLen, "&Forward", "Alt+Right");
+        if (loader.busy())
+            addItem(A_STOP, true, "&Stop", "Esc");
+        else
+            addItem(A_RELOAD, true, "&Reload", "F5");
+        addItem(A_SEP, false, "");
+        addItem(A_COPY_PAGE, true, "Copy page &address");
+        addItem(A_PASTE_GO, clip, "Paste and &go");
+        addItem(A_FIND, true, "F&ind on page", "/");
+        addItem(A_DARK, true, dark ? "&Light mode" : "&Dark mode", "Ctrl+D");
+
+        if (link >= 0)
+            focusedLink = link; // so it is drawn as the one the menu is about
+        menuOpen = true;
+        menuX = x;
+        menuY = y;
+        menuSel = -1;
+        if (fromKey)
+            moveMenuSel(+1);
+        wnd->Repaint();
+    }
+
+    void closeMenu()
+    {
+        if (!menuOpen)
+            return;
+        menuOpen = false;
+        wnd->Repaint();
+    }
+
+    void moveMenuSel(int dir)
+    {
+        for (int n = 0; n < menuLen; n++)
+        {
+            menuSel = menuSel < 0 ? (dir > 0 ? 0 : menuLen - 1) : (menuSel + dir + menuLen) % menuLen;
+            if (menu[menuSel].enabled)
+                return;
+        }
+        menuSel = -1;
+    }
+
+    static char accel(const char *label)
+    {
+        const char *a = strchr(label, '&');
+        if (!a || !a[1])
+            return 0;
+        char c = a[1];
+        return c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c;
+    }
+
+    void onMenuKey(PlatformKey *key)
+    {
+        if (key->isEscape || key->isTab)
+            closeMenu();
+        else if (key->isArrowDown)
+            moveMenuSel(+1), wnd->Repaint();
+        else if (key->isArrowUp)
+            moveMenuSel(-1), wnd->Repaint();
+        else if (key->isHome)
+            menuSel = -1, moveMenuSel(+1), wnd->Repaint();
+        else if (key->isEnd)
+            menuSel = -1, moveMenuSel(-1), wnd->Repaint();
+        else if (key->isEnter || (key->isChar && key->theChar == ' ' && !(key->isLeftControl || key->isRightControl)))
+        {
+            if (menuSel >= 0)
+                pickMenu(menuSel);
+        }
+        else if (key->isChar && !(key->isLeftControl || key->isRightControl))
+        {
+            char c = (char)key->theChar;
+            if (c >= 'A' && c <= 'Z')
+                c = (char)(c - 'A' + 'a');
+            for (int i = 0; i < menuLen; i++)
+                if (menu[i].enabled && accel(menu[i].label) == c)
+                {
+                    pickMenu(i);
+                    return;
+                }
+        }
+        else if ((key->isLeftControl || key->isRightControl) && key->isChar && key->theChar == ' ')
+            closeMenu(); // the key that opened it closes it again
+    }
+
+    void pickMenu(int i)
+    {
+        if (i < 0 || i >= menuLen || !menu[i].enabled)
+            return;
+        Action a = menu[i].action;
+        int l = menuLink;
+        menuOpen = false;
+        char s[ADDR_CAP];
+        switch (a)
+        {
+        case A_SEP:
+            break;
+        case A_OPEN:
+            followLink(l);
+            break;
+        case A_OPEN_NEW:
+            linkForDisplay(l, s, sizeof(s));
+            openInNewWindow(s);
+            break;
+        case A_COPY_LINK:
+            linkForDisplay(l, s, sizeof(s));
+            clipboardSet(s);
+            say("Copied: ", s);
+            break;
+        case A_COPY_TEXT:
+            linkText(l, s, sizeof(s));
+            clipboardSet(s);
+            say("Copied: ", s);
+            break;
+        case A_PASTE_FIELD:
+        {
+            int ci = doc.linkControl(l);
+            if (edit != EDIT_FIELD || editControl != ci)
+                activateControl(ci, false); // starts typing into it
+            pasteIntoField(ci);
+            break;
+        }
+        case A_BACK:
+            goHistory(-1);
+            break;
+        case A_FORWARD:
+            goHistory(+1);
+            break;
+        case A_RELOAD:
+            reload();
+            break;
+        case A_STOP:
+            loader.cancel();
+            onLoaded();
+            break;
+        case A_COPY_PAGE:
+            web::scopy(s, loader.busy() ? attempted : current, sizeof(s));
+            clipboardSet(s);
+            say("Copied: ", s);
+            break;
+        case A_PASTE_GO:
+            //  Through the address bar, so what is pasted is cleaned the
+            //  same way as what is typed there.
+            beginEdit(EDIT_ADDRESS);
+            editLen = 0;
+            for (const char *p = clipboardGet(); *p && editLen < ADDR_CAP - 1; p++)
+                if ((*p > ' ' || (*p == ' ' && editLen)) && (unsigned char)*p < 0x7F)
+                    editBuf[editLen++] = *p;
+            while (editLen && editBuf[editLen - 1] == ' ')
+                editLen--;
+            editBuf[editLen] = 0;
+            edit = EDIT_NONE;
+            navigate(editBuf, true);
+            break;
+        case A_FIND:
+            beginEdit(EDIT_FIND);
+            break;
+        case A_DARK:
+            setDark(!dark);
+            break;
+        }
+        wnd->Repaint();
+    }
+
+    void openInNewWindow(const char *addr)
+    {
+        web::scopy(openNext, addr, sizeof(openNext));
+        openApp(APP_WEB);
+        //  SetWindow takes it; still here, the window was never made.
+        if (openNext[0])
+        {
+            openNext[0] = 0;
+            say("", "No room for another window.");
+        }
+    }
+
+    //  The words of link l, as they read on the page (all its runs, which
+    //  wrapping may have put on several lines).
+    void linkText(int l, char *out, size_t cap)
+    {
+        out[0] = 0;
+        int row = doc.linkRow(l);
+        if (row < 0)
+            return;
+        bool found = false;
+        for (size_t li = doc.lineAtRow(row); li < doc.lineCount(); li++)
+        {
+            const web::Line &ln = doc.line(li);
+            bool here = false;
+            for (uint32_t r = 0; r < ln.nRuns; r++)
+            {
+                const web::Run &ru = doc.run(ln.firstRun + r);
+                if (ru.link != l)
+                    continue;
+                if (found && !here && out[0])
+                    web::scat(out, " ", cap); // a line break inside the link
+                here = found = true;
+                size_t n = strlen(out);
+                if (n + 1 < cap)
+                    web::scopyn(out + n, doc.text(ru.off), ru.len, cap - n);
+            }
+            if (found && !here)
+                break;
+        }
+    }
+
+    //  Just below where link l is drawn, for a menu opened by key.
+    void linkPoint(int l, double &x, double &y)
+    {
+        int row = doc.linkRow(l);
+        if (row < scrollRow || row >= scrollRow + visibleRows)
+            return;
+        size_t li = doc.lineAtRow(row);
+        if (li >= doc.lineCount())
+            return;
+        const web::Line &ln = doc.line(li);
+        if (ln.img && ln.link == l)
+        {
+            x = contentX + 1 + ln.imgX / pxPerUnit;
+            y = contentY + (ln.row - scrollRow + ln.height()) * rowH;
+            if (y > contentY + contentH - rowH)
+                y = contentY + contentH - rowH;
+            return;
+        }
+        double cell = ln.big ? bcw : cw;
+        for (uint32_t r = 0; r < ln.nRuns; r++)
+        {
+            const web::Run &ru = doc.run(ln.firstRun + r);
+            if (ru.link == l)
+            {
+                x = contentX + 1 + ru.col * cell;
+                y = contentY + (ln.row - scrollRow + ln.height()) * rowH;
+                return;
+            }
+        }
+    }
+
+    double menuItemH(int i) const { return menu[i].action == A_SEP ? 3 : rowH + 1; }
+
+    //  Where the menu goes: at the point asked for, moved in to fit.
+    void layoutMenu()
+    {
+        size_t lw = 0, kw = 0;
+        for (int i = 0; i < menuLen; i++)
+        {
+            size_t a = strlen(menu[i].label) - (strchr(menu[i].label, '&') ? 1 : 0);
+            size_t b = strlen(menu[i].keys);
+            lw = a > lw ? a : lw;
+            kw = b > kw ? b : kw;
+        }
+        menuW = (lw + (kw ? kw + 3 : 0)) * cw + 8;
+        double h = 4;
+        for (int i = 0; i < menuLen; i++)
+            h += menuItemH(i);
+        menuL = menuX;
+        menuT = menuY;
+        if (menuL + menuW > winW - 1)
+            menuL = winW - 1 - menuW;
+        if (menuT + h > winH - 1)
+            menuT = menuY - h > 0 ? menuY - h : winH - 1 - h;
+        if (menuL < 1)
+            menuL = 1;
+        if (menuT < 1)
+            menuT = 1;
+    }
+
+    int menuItemAt(double x, double y) const
+    {
+        if (!menuOpen || x < menuL || x >= menuL + menuW)
+            return -1;
+        double iy = menuT + 2;
+        for (int i = 0; i < menuLen; i++)
+        {
+            double h = menuItemH(i);
+            if (y >= iy && y < iy + h)
+                return menu[i].action == A_SEP ? -1 : i;
+            iy += h;
+        }
+        return -1;
+    }
+
+    void paintMenu(PlatformBitmap *t)
+    {
+        layoutMenu();
+        double h = 4;
+        for (int i = 0; i < menuLen; i++)
+            h += menuItemH(i);
+        //  A shadow, a border, then the items.
+        t->FillRect(Coord(menuL + 1.5), Coord(menuT + 1.5), Coord(menuW), Coord(h), cChromeDark, false);
+        t->FillRect(Coord(menuL), Coord(menuT), Coord(menuW), Coord(h), cText, false);
+        t->FillRect(Coord(menuL + 0.5), Coord(menuT + 0.5), Coord(menuW - 1), Coord(h - 1), cField, false);
+        double iy = menuT + 2;
+        for (int i = 0; i < menuLen; i++)
+        {
+            const MenuItem &m = menu[i];
+            double ih = menuItemH(i);
+            if (m.action == A_SEP)
+            {
+                t->FillRect(Coord(menuL + 2), Coord(iy + 1), Coord(menuW - 4), Coord(0.5), cChrome, false);
+                iy += ih;
+                continue;
+            }
+            bool sel = i == menuSel;
+            if (sel)
+                t->FillRect(Coord(menuL + 1), Coord(iy), Coord(menuW - 2), Coord(ih), cFocus, false);
+            PlatformColor *c = !m.enabled ? cFaint : sel ? cOnFocus : cText;
+            char label[40];
+            int ai = -1, n = 0;
+            for (const char *p = m.label; *p && n < (int)sizeof(label) - 1; p++)
+            {
+                if (*p == '&' && ai < 0)
+                {
+                    ai = n;
+                    continue;
+                }
+                label[n++] = *p;
+            }
+            label[n] = 0;
+            double tx = menuL + 4, ty = iy + 0.5;
+            text(t, tx, ty, menuW - 8, ch, label, c, font, false);
+            if (ai >= 0 && m.enabled)
+                t->FillRect(Coord(tx + ai * cw), Coord(ty + ch - 0.5), Coord(cw - 0.5), Coord(0.5), c, false);
+            if (m.keys[0])
+            {
+                double kx = menuL + menuW - 4 - strlen(m.keys) * cw;
+                text(t, kx, ty, menuW, ch, m.keys, sel ? cOnFocus : cFaint, font, false);
+            }
+            iy += ih;
+        }
+    }
+
     // ── Paint ─────────────────────────────────────────────────────────────────
 
     void makeResources(PlatformDrawingContext *dc)
     {
-        if (cBg)
+        if (cPal[0])
             return;
-        //  Everything is quantised to the 16 EGA colours, so these are those.
-        cBg = dc->CreateColor(0xFFFFFFFF, nullptr, nullptr);
-        cText = dc->CreateColor(0xFF000000, nullptr, nullptr);
-        cLink = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
-        cFaint = dc->CreateColor(0xFF555555, nullptr, nullptr);
-        cCode = dc->CreateColor(0xFFAA0000, nullptr, nullptr);
-        cHead = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
-        cChrome = dc->CreateColor(0xFFAAAAAA, nullptr, nullptr);
-        cChromeDark = dc->CreateColor(0xFF555555, nullptr, nullptr);
-        cWhite = dc->CreateColor(0xFFFFFFFF, nullptr, nullptr);
-        cMark = dc->CreateColor(0xFFFFFF55, nullptr, nullptr);
-        cFocus = dc->CreateColor(0xFF0000AA, nullptr, nullptr);
+        //  Everything is quantised to the 16 EGA colours, so the palette is
+        //  all there is; the theme picks from it.
         static const uint32_t ega[16] = {0xFF000000, 0xFF0000AA, 0xFF00AA00, 0xFF00AAAA, 0xFFAA0000, 0xFFAA00AA,
                                          0xFFAA5500, 0xFFAAAAAA, 0xFF555555, 0xFF5555FF, 0xFF55FF55, 0xFF55FFFF,
                                          0xFFFF5555, 0xFFFF55FF, 0xFFFFFF55, 0xFFFFFFFF};
@@ -1137,6 +2073,39 @@ private:
         if (bcw <= 0)
             bcw = cw * 2;
         rowH = ch + 1;
+    }
+
+    void applyTheme()
+    {
+        const Theme &th = dark ? DARK : LIGHT;
+        cBg = cPal[th.bg];
+        cText = cPal[th.text];
+        cFaint = cPal[th.faint];
+        cChrome = cPal[th.chrome];
+        cChromeDark = cPal[th.chromeDark];
+        cField = cPal[th.field];
+        cOnFocus = cPal[th.onFocus];
+        cMark = cPal[th.mark];
+        cFocus = cPal[th.focus];
+    }
+
+    //  A colour the page asked for, as it is drawn.  Dark mode does not
+    //  repaint the page in two colours: each EGA colour gives way to its
+    //  opposite in brightness --- black and white, the two greys, and each
+    //  dark colour and its bright one --- so a page keeps its colours, and a
+    //  dark heading on a pale box becomes a bright heading on a dark one.
+    int pageColour(int idx) const
+    {
+        static const uint8_t opposite[16] = {15, 9, 10, 11, 12, 13, 14, 8, 7, 1, 2, 3, 4, 5, 6, 0};
+        return dark ? opposite[idx & 15] : idx;
+    }
+
+    void setDark(bool on)
+    {
+        if (dark == on)
+            return;
+        dark = on;
+        wnd->Repaint();
     }
 
     void text(PlatformBitmap *t, double x, double y, double w, double h, const char *s, PlatformColor *c,
@@ -1190,18 +2159,19 @@ private:
         t->FillRect(0, 0, Coord(W), Coord(toolbarH), cChrome, false);
         t->FillRect(0, Coord(toolbarH - 0.5), Coord(W), Coord(0.5), cChromeDark, false);
         buttonW = (int)(cw * 3 + 3);
-        const char *labels[3] = {"<", ">", loader.busy() ? "x" : "R"};
-        bool enabled[3] = {histPos > 0, histPos + 1 < histLen, true};
-        for (int i = 0; i < 3; i++)
+        //  The last button says what it switches to: Dark, or Light.
+        const char *labels[BUTTONS] = {"<", ">", loader.busy() ? "x" : "R", dark ? "L" : "D"};
+        bool enabled[BUTTONS] = {histPos > 0, histPos + 1 < histLen, true, true};
+        for (int i = 0; i < BUTTONS; i++)
         {
             double bx = i * buttonW + 1;
-            t->FillRect(Coord(bx), 1.5, Coord(buttonW - 1), Coord(toolbarH - 3), cWhite, false);
+            t->FillRect(Coord(bx), 1.5, Coord(buttonW - 1), Coord(toolbarH - 3), cField, false);
             text(t, bx + (buttonW - 1 - cw) / 2, 2 + (toolbarH - 4 - ch) / 2, cw * 2, ch, labels[i],
                  enabled[i] ? cText : cChrome, font, true);
         }
-        addrX = 3 * buttonW + 2;
+        addrX = BUTTONS * buttonW + 2;
         double aw = W - addrX - 2;
-        t->FillRect(Coord(addrX), 1.5, Coord(aw), Coord(toolbarH - 3), cWhite, false);
+        t->FillRect(Coord(addrX), 1.5, Coord(aw), Coord(toolbarH - 3), cField, false);
 
         int cells = (int)((aw - 3) / cw) - 1;
         char shown[ADDR_CAP + 16];
@@ -1228,7 +2198,7 @@ private:
             //  Selected: the next key replaces it.
             double tw = strlen(shown) * cw;
             t->FillRect(Coord(addrX + 1.5), Coord(ty), Coord(tw), Coord(ch), cFocus, false);
-            text(t, addrX + 1.5, ty, aw - 3, ch, shown, cWhite, font, false);
+            text(t, addrX + 1.5, ty, aw - 3, ch, shown, cOnFocus, font, false);
         }
         else
             text(t, addrX + 1.5, ty, aw - 3, ch, shown, cText, font, false);
@@ -1266,6 +2236,8 @@ private:
             return;
         }
         const char *href = doc.linkHref(idx);
+        if (localAddress(href, out, cap))
+            return;
         web::Url base, u;
         if (!web::istarts(href, "about:") && web::urlFromInput(current, base) && web::urlResolve(base, href, u))
             web::urlFormat(u, out, cap);
@@ -1280,6 +2252,8 @@ private:
         char s[ADDR_CAP];
         if (loader.busy())
             web::scopy(s, loader.status(), sizeof(s));
+        else if (messageFirst && message[0])
+            web::scopy(s, message, sizeof(s));
         else if (edit == EDIT_FIELD && focusedLink >= 0)
             linkForDisplay(focusedLink, s, sizeof(s));
         else if (hoverLink >= 0)
@@ -1310,6 +2284,16 @@ private:
     {
         t->FillRect(Coord(contentX - 1), Coord(contentY - 1), Coord(contentW + 1), Coord(contentH + 1), cBg, false);
 
+        //  The pixels a cell and a row take, which is what pictures are
+        //  measured in.  From the DPI, not from the bitmap: Memento allocates
+        //  bitmaps in steps of 150 pixels, so one is usually wider than its
+        //  window, and a scale worked out from its width puts everything
+        //  drawn straight into the pixels too far right and down.
+        auto *bm = static_cast<MementoR2Impl::R2_BitmapImpl *>(t);
+        if (wnd->GetEffectiveDPI() > 0)
+            pxPerUnit = wnd->GetEffectiveDPI() / 96.0;
+        doc.setCellPixels((int)(cw * pxPerUnit + 0.5), (int)(rowH * pxPerUnit + 0.5));
+
         int cols = (int)((contentW - 2) / cw);
         if (cols != doc.layoutCols())
         {
@@ -1329,6 +2313,11 @@ private:
             if (l.hr)
             {
                 t->FillRect(Coord(contentX + 1), Coord(y + rowH / 2), Coord(cols * cw), Coord(0.5), cFaint, false);
+                continue;
+            }
+            if (l.img)
+            {
+                paintPicture(bm, l, y);
                 continue;
             }
             double cell = l.big ? bcw : cw;
@@ -1365,28 +2354,31 @@ private:
                     bool typing = edit == EDIT_FIELD && editControl == ci;
                     PlatformColor *box = focused || typing ? cFocus : cChrome;
                     t->FillRect(Coord(x), Coord(y), Coord(w), Coord(lh - 1), box, false);
-                    text(t, x, y, w + cell, lh, buf, focused || typing ? cWhite : cText, font, !live);
+                    text(t, x, y, w + cell, lh, buf, focused || typing ? cOnFocus : cText, font, !live);
                     continue;
                 }
 
                 //  The page's colours, kept readable: a colour too close to
-                //  what is behind it gives way to black or white.
-                int bgIdx = ru.bg ? ru.bg - 1 : 15;
+                //  what is behind it (the find mark, when there is one)
+                //  gives way to black or white.
+                int bgIdx = pageColour(ru.bg ? ru.bg - 1 : 15);
                 int fgIdx = isLink ? 1 : ru.fg ? ru.fg - 1 : l.big ? 1 : (ru.style & web::ST_FAINT) ? 8 : 0;
-                int dl = web::cssLuma((uint8_t)fgIdx) - web::cssLuma((uint8_t)bgIdx);
+                fgIdx = pageColour(fgIdx);
+                int under = found ? (dark ? DARK : LIGHT).mark : bgIdx;
+                int dl = web::cssLuma((uint8_t)fgIdx) - web::cssLuma((uint8_t)under);
                 if (dl < 0)
                     dl = -dl;
                 if (dl < 90)
-                    fgIdx = web::cssLuma((uint8_t)bgIdx) < 128 ? 15 : 0;
+                    fgIdx = web::cssLuma((uint8_t)under) < 128 ? 15 : 0;
                 PlatformColor *fg = cPal[fgIdx];
                 if (focused)
                 {
                     t->FillRect(Coord(x), Coord(y), Coord(w), Coord(lh - 1), cFocus, false);
-                    fg = cWhite;
+                    fg = cOnFocus;
                 }
                 else if (found)
                     t->FillRect(Coord(x), Coord(y), Coord(w), Coord(lh - 1), cMark, false);
-                else if (bgIdx != 15)
+                else if (bgIdx != pageColour(15))
                     t->FillRect(Coord(x), Coord(y), Coord(w), Coord(lh - 1), cPal[bgIdx], false);
 
                 text(t, x, y, w + cell, lh, buf, fg, l.big ? bigFont : font, (ru.style & web::ST_BOLD) || l.big);
@@ -1396,6 +2388,25 @@ private:
             }
         }
         t->ClearClip();
+
+        //  A frame around a picture that is the focused link, over the rest.
+        if (focusedLink >= 0)
+            for (size_t li = doc.lineAtRow(scrollRow); li < doc.lineCount(); li++)
+            {
+                const web::Line &l = doc.line(li);
+                if (l.row >= scrollRow + visibleRows)
+                    break;
+                if (!l.img || l.link != focusedLink)
+                    continue;
+                double x = contentX + 1 + l.imgX / pxPerUnit, y = contentY + (l.row - scrollRow) * rowH;
+                double w = l.imgW / pxPerUnit, h = l.imgH / pxPerUnit;
+                t->SetClip(Coord(contentX), Coord(contentY), Coord(contentW), Coord(contentH), false);
+                t->FillRect(Coord(x - 1), Coord(y - 1), Coord(w + 2), Coord(1), cFocus, false);
+                t->FillRect(Coord(x - 1), Coord(y + h), Coord(w + 2), Coord(1), cFocus, false);
+                t->FillRect(Coord(x - 1), Coord(y), Coord(1), Coord(h), cFocus, false);
+                t->FillRect(Coord(x + w), Coord(y), Coord(1), Coord(h), cFocus, false);
+                t->ClearClip();
+            }
 
         //  The scroll bar.
         double sx = contentX + contentW;
@@ -1411,18 +2422,56 @@ private:
         }
     }
 
+    //  A picture line, straight into the window's pixels (one palette index a
+    //  pixel), scaled by nearest pixel when the page is narrower than it and
+    //  cut to the page area.
+    void paintPicture(MementoR2Impl::R2_BitmapImpl *bm, const web::Line &l, double y)
+    {
+        int i = l.img - 1;
+        int k = i < MAX_DOC_IMAGES ? picOf[i] : -1;
+        if (k < 0 || k >= nPics || !pics[k].pic.px)
+            return;
+        const web::Picture &p = pics[k].pic;
+        uint8 *px = bm->GetPixels();
+        int bw = bm->GetRealWidth().intValue(), bh = bm->GetRealHeight().intValue();
+        if (!px || bw <= 0)
+            return;
+        int x0 = (int)((contentX + 1) * pxPerUnit) + l.imgX, y0 = (int)(y * pxPerUnit);
+        int top = (int)(contentY * pxPerUnit), bottom = (int)((contentY + contentH) * pxPerUnit);
+        int right = (int)((contentX + contentW) * pxPerUnit);
+        if (bottom > bh)
+            bottom = bh;
+        if (right > bw)
+            right = bw;
+        for (int dy = 0; dy < l.imgH; dy++)
+        {
+            int py = y0 + dy;
+            if (py < top)
+                continue;
+            if (py >= bottom)
+                break;
+            const uint8_t *src = p.px + (size_t)(dy * p.h / l.imgH) * p.w;
+            uint8 *dst = px + (size_t)py * bw;
+            for (int dx = 0; dx < l.imgW && x0 + dx < right; dx++)
+                if (x0 + dx >= 0)
+                    dst[x0 + dx] = src[l.imgW == p.w ? dx : dx * p.w / l.imgW];
+        }
+    }
+
     void OnPaint(PlatformDrawingContext *dc, PlatformBitmap *target)
     {
         if (!target)
             return;
         makeResources(dc);
-        if (!cBg || !font || !bigFont)
+        if (!cPal[0] || !font || !bigFont)
             return;
+        applyTheme();
 
         Coord Wc = target->GetWidth();
         Coord Hc = target->GetHeight();
         double W = COORD_VAL(Wc), H = COORD_VAL(Hc);
         winW = W;
+        winH = H;
 
         paintChrome(target, W);
         double sh = rowH + 2;
@@ -1435,5 +2484,7 @@ private:
             visibleRows = 1;
         paintPage(target);
         paintStatus(target, W, H);
+        if (menuOpen)
+            paintMenu(target);
     }
 };

@@ -2,7 +2,7 @@
 
 namespace web {
 
-bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool post, Buf &req)
+bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool post, Buf &req, const char *contentType)
 {
     char out[Url::PATH_CAP + Url::HOST_CAP + 512];
     size_t cap = sizeof(out);
@@ -18,7 +18,9 @@ bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool po
     }
     if (post)
     {
-        scat(out, "\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: ", cap);
+        scat(out, "\r\nContent-Type: ", cap);
+        scat(out, contentType ? contentType : "application/x-www-form-urlencoded", cap);
+        scat(out, "\r\nContent-Length: ", cap);
         scatInt(out, (long)bodyLen, cap);
     }
     scat(out,
@@ -188,6 +190,10 @@ void HttpResponse::takeBody(const uint8_t *data, size_t n)
 {
     if (!n || done)
         return;
+    //  The size is known: one block of it, rather than doubling towards it
+    //  and leaving the heap a hole at every step.
+    if (!body.len && contentLength_ > 0 && (size_t)contentLength_ <= MAX_BODY)
+        (void)body.reserve((size_t)contentLength_ + 1);
     if (body.len + n > MAX_BODY)
     {
         n = MAX_BODY - body.len;

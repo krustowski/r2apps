@@ -117,12 +117,11 @@ class ChatWindow
             unsigned char f[42];
             for (int i = 0; i < 6; i++)
                 f[i] = 0xFF;
-            f[6] = 0x52;
-            f[7] = 0x54;
-            f[8] = 0x00;
-            f[9] = 0x12;
-            f[10] = 0x34;
-            f[11] = 0x56;
+            // Our own MAC: the card's, as the kernel reports it.
+            unsigned char my_mac[6];
+            net_get_local_mac(my_mac);
+            for (int i = 0; i < 6; i++)
+                f[6 + i] = my_mac[i];
             f[12] = 0x08;
             f[13] = 0x06;
             f[14] = 0x00;
@@ -133,12 +132,8 @@ class ChatWindow
             f[19] = 0x04;
             f[20] = 0x00;
             f[21] = 0x01;
-            f[22] = 0x52;
-            f[23] = 0x54;
-            f[24] = 0x00;
-            f[25] = 0x12;
-            f[26] = 0x34;
-            f[27] = 0x56;
+            for (int i = 0; i < 6; i++)
+                f[22 + i] = my_mac[i];
             f[28] = my_ip[0];
             f[29] = my_ip[1];
             f[30] = my_ip[2];

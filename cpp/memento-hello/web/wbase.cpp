@@ -14,6 +14,15 @@ bool Buf::reserve(size_t want)
         n *= 2;
 
     void *p = big ? big_realloc(data, n) : web::realloc(data, n);
+    //  Doubling is what keeps appends cheap, but a page-sized buffer that
+    //  doubles asks for a block twice what it needs, from a heap every process
+    //  shares and that is already in pieces.  When that is not there, what is
+    //  actually needed may be.
+    if (!p && n > want)
+    {
+        n = want;
+        p = big ? big_realloc(data, n) : web::realloc(data, n);
+    }
     if (!p)
     {
         failed = true;
@@ -22,6 +31,18 @@ bool Buf::reserve(size_t want)
     data = (uint8_t *)p;
     cap = n;
     return true;
+}
+
+void Buf::shrink()
+{
+    if (!data || failed || cap <= len + 1)
+        return;
+    void *p = big ? big_realloc(data, len + 1) : web::realloc(data, len + 1);
+    if (p)
+    {
+        data = (uint8_t *)p;
+        cap = len + 1;
+    }
 }
 
 bool Buf::append(const void *src, size_t n)

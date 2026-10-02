@@ -18,12 +18,12 @@ void *realloc(void *p, size_t n) { return r2::heap::reallocate(p, n); }
 void free(void *p) { r2::heap::deallocate(p); }
 
 //
-//  The big pool.  The kernel heap is several times the size of the arena and
-//  these buffers --- the page as it came, its text, its layout, the TLS
-//  record buffer --- never go through a syscall, which is the one thing a
-//  kernel-heap block cannot do.  Blocks are tagged so that a block from either
-//  pool finds its way back to the right one; build with -DWEB_BIG_ARENA to
-//  keep everything in the arena.
+//  The big pool: the page as it came, its text, its layout, the TLS record
+//  buffer, the trust anchors.  They come straight from the kernel's user heap
+//  rather than through Memento's arena (which is on that heap too), so a big
+//  page cannot fragment the arena the windows live in.  Blocks are tagged so
+//  that a block from either pool finds its way back to the right one; build
+//  with -DWEB_BIG_ARENA to keep everything in the arena.
 //
 namespace {
 const uint64_t TAG_KERNEL = 0x4b524e4c4b524e4cull; // "KRNLKRNL"
@@ -208,38 +208,34 @@ void currentTime(unsigned long *days, unsigned long *seconds)
 } // namespace web
 
 //
-//  The trust anchors live on the CD (tools/mkcacerts.sh puts them there), read
-//  once, on the first handshake, and kept: BearSSL's anchors point into them.
-//  The kernel reads a file into memory the process owns, so it comes in
-//  through a buffer on the stack a sector at a time and is gathered in the
-//  big pool.
+//  The trust anchors live on the USB stick (tools/mkcacerts.sh puts them
+//  there), read once, on the first handshake, and kept: BearSSL's anchors
+//  point into them.
+//  The kernel reads into the user heap as readily as into the image, so the
+//  file goes into the big pool in one call.
 //
-static const char ANCHOR_PATH[] = "/mnt/iso/opt/memento/cacerts.bin";
+static const char ANCHOR_PATH[] = "/mnt/tar/opt/memento/cacerts.bin";
 static const size_t ANCHOR_MAX = 256 * 1024;
 
 extern "C" const char *web_tls_platform_anchor_path(void) { return ANCHOR_PATH; }
 
 extern "C" int web_tls_platform_anchors(const unsigned char **data, unsigned long *len)
 {
-    web::Buf file(true);
-    uint8_t chunk[512];
-    for (;;)
-    {
-        int64_t got = r2::fs::read_at(ANCHOR_PATH, r2::byte_span(chunk, sizeof(chunk)), file.len);
-        if (got < 0)
-            return -1;
-        if (got > 0 && !file.append(chunk, (size_t)got))
-            return -1;
-        if ((size_t)got < sizeof(chunk) || file.len > ANCHOR_MAX)
-            break;
-    }
-    if (!file.len)
+    auto size = r2::fs::size_of(ANCHOR_PATH);
+    if (!size || !*size || *size > ANCHOR_MAX)
         return -1;
-    //  Handed over for good: the Buf lets go of it without freeing it.
-    *data = file.data;
-    *len = (unsigned long)file.len;
-    file.data = nullptr;
-    file.len = file.cap = 0;
+    uint8_t *file = (uint8_t *)web::big_alloc(*size);
+    if (!file)
+        return -1;
+    int64_t got = r2::fs::read_at(ANCHOR_PATH, r2::byte_span(file, *size), 0);
+    if (got <= 0)
+    {
+        web::big_free(file);
+        return -1;
+    }
+    //  Handed over for good.
+    *data = file;
+    *len = (unsigned long)got;
     return 0;
 }
 

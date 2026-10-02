@@ -72,7 +72,10 @@ public:
     ~Loader();
 
     //  A GET, or with a body a POST of a urlencoded form.
-    void start(const Url &u, bool insecure, const uint8_t *postBody = nullptr, size_t postLen = 0);
+    //  `contentType` is the body's; form data when null (multipart for an
+    //  upload: the Telegram window's photos).
+    void start(const Url &u, bool insecure, const uint8_t *postBody = nullptr, size_t postLen = 0,
+               const char *contentType = nullptr);
     void step();
     void cancel();
 
@@ -113,10 +116,11 @@ private:
     int conn_ = -1;
     web_tls *tls_ = nullptr;
 
-    Buf request_;
+    Buf request_{true}; // the big pool: an upload is in it
     size_t reqSent_ = 0;
     bool post_ = false;
-    Buf postBody_;
+    Buf postBody_{true};
+    char contentType_[96] = {};
 
     HttpResponse resp_;
     size_t received_ = 0;

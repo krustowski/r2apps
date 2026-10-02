@@ -43,6 +43,7 @@ struct Item
         BLOCK, // a new block starts: margin, indent, heading, marker, alignment
         BR,
         HR,
+        IMG, // a picture; the `off` items after it are its alt text
     };
     uint8_t kind;
     uint8_t style;
@@ -52,14 +53,16 @@ struct Item
     uint8_t indent;  // BLOCK: in cells
     uint8_t align;   // BLOCK: 0 left, 1 centre, 2 right
     uint8_t fg, bg;  // TEXT: palette index + 1, 0 for the default
-    uint8_t pad[3];
-    int32_t link;    // TEXT: index into the link table, or -1
-    uint32_t off;    // TEXT: the text; BLOCK: the list marker, if any
+    uint8_t pad;
+    uint16_t img;    // IMG: index into the image table + 1
+    int32_t link;    // TEXT, IMG: index into the link table, or -1
+    uint32_t off;    // TEXT: the text; BLOCK: the list marker, if any; IMG: items of alt text
     uint32_t len;
 };
 
 //  One line of the laid-out page.  Big lines are headings drawn at twice the
-//  size; they take two rows and have half as many columns.
+//  size; they take two rows and have half as many columns.  A picture is a
+//  line of its own, as many rows tall as it needs, with no runs.
 struct Line
 {
     uint32_t firstRun;
@@ -67,6 +70,21 @@ struct Line
     uint8_t big;
     uint8_t hr;
     int32_t row;
+    int32_t link;   // a picture's link, or -1
+    uint16_t img;   // index into the image table + 1; 0 for a line of text
+    uint16_t rows;  // a picture's height in rows
+    uint16_t imgX;  // where the picture starts, in pixels from the left
+    uint16_t imgW, imgH; // the size it is drawn at, in pixels
+
+    int height() const { return img ? rows : big ? 2 : 1; }
+};
+
+//  An <img>.  Its size is 0 until the window has the picture and says how
+//  big it is (Document::setImageSize); until then its alt text stands in.
+struct Image
+{
+    uint32_t src;   // the src attribute (string pool)
+    uint16_t w, h;  // in pixels
 };
 
 struct Run
@@ -167,6 +185,15 @@ public:
     //  case-insensitively.  Returns false when there is none.
     bool find(const char *needle, size_t &lineIdx, size_t &runIdx) const;
 
+    //  The pictures, in the order they appear.  A picture with a size is laid
+    //  out as one: the window sets the size when it has the picture, and the
+    //  pixels a cell and a row take so that it knows how many rows that is
+    //  and how wide the page is.  Either one lays the page out again.
+    int imageCount() const { return (int)(images_.len / sizeof(Image)); }
+    const char *imageSrc(int i) const { return str(((const Image *)images_.data)[i].src); }
+    void setImageSize(int i, int w, int h);
+    void setCellPixels(int cellW, int rowH);
+
     //  The <link rel=stylesheet> hrefs the page named, in order.
     int stylesheetCount() const { return (int)(sheetOffs_.len / sizeof(uint32_t)); }
     const char *stylesheetHref(int i) const { return str(((const uint32_t *)sheetOffs_.data)[i]); }
@@ -208,6 +235,8 @@ private:
     Buf forms_{true};
     Buf optionOffs_{true};
     Buf sheetOffs_{true};
+    Buf images_{true};
+    int cellPx_ = 0, rowPx_ = 0;
     char title_[96] = {};
     int cols_ = 0;
     int rows_ = 0;

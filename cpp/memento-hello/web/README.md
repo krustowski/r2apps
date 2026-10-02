@@ -17,8 +17,17 @@ browser_window.cpp   toolbar, page, status line, keys, history
 doc                  HTML → items → lines and runs, in character cells; forms
 css                  the CSS subset: selectors, cascade, @media
 url                  what the user typed, and links resolved (RFC 3986)
+image                PNG/JPEG/GIF/BMP → scaled, dithered palette indices;
+                     every frame of an animated GIF (Telegram)
+   └── stb_image.c   the decoder (stb_image 2.30, in ../../third_party/stb)
+mp4                  an MP4 of H.264 → an animation, a step at a time (Telegram)
+   └── h264.c        the decoder (h264bsd, Baseline only, ../../third_party/h264bsd)
+png                  palette indices → PNG (screenshots)
 web_r2.cpp           memory, clock, entropy and the date, on r2
 ```
+
+The Telegram window (`../windows/telegram_window.cpp`) uses the same loader,
+TLS and picture code for the Bot API.
 
 Nothing blocks.  The window turns the loader from Memento's idle loop, the
 loader turns the network stack, and the TLS engine is BearSSL's low-level one,
@@ -29,8 +38,8 @@ which never touches a socket: bytes go in and come out through its buffers.
 Headings (h1 and h2 at twice the size), paragraphs, lists (bullets, circles,
 numbers), block quotes, definition lists, `<pre>`, tables read row by row,
 links (underlined, walkable with Tab), bold (the font has none: the glyphs are
-drawn twice, one pixel apart), colours, horizontal rules, image `alt` text,
-and forms.  `<script>`, `<svg>` and friends are skipped.
+drawn twice, one pixel apart), colours, horizontal rules, pictures, and
+forms.  `<script>`, `<svg>` and friends are skipped.
 
 Text is decoded from UTF-8, windows-1252/ISO-8859-1, windows-1250 and
 ISO-8859-2, then mapped to CP437, which is what the font is for letters and
@@ -38,13 +47,51 @@ the Latin-1 symbols.  What CP437 does not have loses its accent (č → c,
 ř → r); the font's box-drawing and Greek rows are not CP437's, so those are
 not used.  `tools/gencharmap.py` generates the tables in `charmap.inc`.
 
-Not done: JavaScript, images, cookies, compression (the request asks for
-`identity`), IPv6, TLS 1.3.
+Not done: JavaScript, WebP and SVG pictures, cookies, compression (the
+request asks for `identity`), IPv6, TLS 1.3.
+
+## Pictures
+
+An `<img>` (its `data-src` when a lazy loader put the real address there;
+`data:` addresses are left out) is an item in the document with its alt text
+after it.  Until the window has the picture, the alt text is what shows ---
+`[alt]`, or `[img]` inside a link --- and once it has, `setImageSize` lays the
+page out again with the picture on a line of its own, as many rows tall as
+it needs, scaled down to the page's width, aligned with its block.  A
+picture inside a link is that link: Tab reaches it and a click follows it.
+A link with nothing in it (the "card" pattern: an empty `<a>` stretched
+over an article by CSS) takes the card's heading, or failing that its
+`aria-label` or `title`.
+
+The window fetches pictures one at a time after the page and its style
+sheets, the first 16 of a page, and keeps them by address, so the page read
+again (its sheets came, `:css` or `:img` switched) still has them.
+`image.cpp` decodes with stb_image --- freestanding, without SIMD or
+floating point (`stb_image.c` says how it is built) --- makes the picture fit
+(at most the page's width and 480 pixels, never enlarged, each pixel the
+average of those it stands for), lays transparency over the page's
+background, and puts it into the screen's colours with a 4x4 ordered dither:
+the 16 EGA colours, or the 6x6x6 cube on the 256-colour framebuffer.  One
+byte a pixel, drawn straight into the window's bitmap.  A picture of 2x2
+pixels or less (spacers, counters) is dropped.
+
+An address that answers with `image/*` shows that picture alone, and
+`file:` addresses (or a bare `/mnt/...` path) open pictures, `.htm` pages and
+text from the disks; a page's relative pictures and links are then files
+beside it.
+
+## Uploads
+
+`Loader::start` takes a content type for the body of a POST, so an upload can
+be `multipart/form-data`; the request and the body are in the big pool.
+`png.cpp` writes the screenshots Telegram sends: an indexed PNG (4 bits a
+pixel with 16 colours, 8 with 256), rows filtered Up and deflated with the
+fixed codes and one-byte runs --- no match search, which a screen of flat
+windows does not need (an 800x600 desktop is about 12 KiB).
 
 Pages are cut at 768 KiB.  The body, the document's text and its layout live
-on the kernel heap (`big_alloc` in `web_r2.cpp`), which none of them ever
-passes to a syscall; build with `EXTRA=-DWEB_BIG_ARENA` to keep them in the
-arena instead.
+on the kernel's user heap (`big_alloc` in `web_r2.cpp`), apart from Memento's
+arena; build with `EXTRA=-DWEB_BIG_ARENA` to keep them in the arena instead.
 
 ## CSS
 
@@ -77,6 +124,13 @@ fetched after the page is on the screen and applied by reading it again (not
 when a form on it has been filled in meanwhile).  `:css off` in the address
 bar shows pages with the built-in sheet only; `:css on` brings the page's back.
 
+Dark mode (`:dark on|off`, Ctrl+D, or the D/L button in the toolbar) is only
+a matter of drawing, in the window: each of the 16 EGA colours a page ends up
+with is swapped for its opposite in brightness (black and white, the two
+greys, each dark colour and its bright one), so a page keeps its own colours
+and the usual contrast check still applies afterwards.  The page is not read
+again.
+
 ## Forms
 
 Text fields (any type that takes text), password fields, text areas,
@@ -100,13 +154,12 @@ control's state.
 - TLS 1.2 only, ECDHE (P-256, P-384, X25519) with AES-GCM or
   ChaCha20-Poly1305 first, then AES-CBC and static RSA for older servers.
 - The certificate chain must lead to one of the roots in
-  `/mnt/iso/opt/memento/cacerts.bin`, read from the CD on the first
+  `/mnt/tar/opt/memento/cacerts.bin`, read from the USB stick on the first
   handshake: 36 roots (Let's Encrypt, DigiCert, Google, Amazon,
   Sectigo/USERTrust, GlobalSign, Microsoft, GoDaddy/Starfield, Entrust,
-  SSL.com, Certum) in 13 KiB.  `tools/mkcacerts.sh [bundle.pem] [iso-dir]`
-  regenerates `cacerts.bin` (and copies it into `iso-dir/opt/memento`);
-  r2_main's `build_iso` copies it onto the CD.  `tools/mkcacerts.c` describes
-  the format.  Without the file every certificate is unknown, and the error
+  SSL.com, Certum) in 13 KiB.  `tools/mkcacerts.sh [bundle.pem] [usb-dir]`
+  regenerates `cacerts.bin` (and copies it into `usb-dir/memento`).
+  `tools/mkcacerts.c` describes the format.  Without the file every certificate is unknown, and the error
   page says which file could not be read.
 - An unknown root gets an error page with a "load it anyway" link; that retry
   forgives the root and nothing else.  Wrong names and expired certificates
@@ -139,32 +192,42 @@ not something to trust against an attacker who can model the machine's timing.
 - The guest needs a route out: NAT on the host for `10.3.4.0/24`.  With QEMU's
   user networking the same layout works without root:
   `-netdev user,id=n,net=10.3.4.0/24,host=10.3.4.1 -device rtl8139,netdev=n,mac=52:54:00:12:34:56`
-- One stack per process, and it shares the process's frame queue with
-  c/libcr2's stack in the Chat and IRC windows: use one or the other at a time.
+- It shares the process's one frame queue with c/libcr2's stack in the Chat
+  and IRC windows.  Neither reads the queue itself: `../netmux.cpp` does, and
+  gives each stack the frames for its ports (the browser claims 47000-47015;
+  ARP goes to both, ping to one).  A frame for the stack that is not asking
+  just now waits for it there, so a page and an IRC session run side by side.
 - TCP: one segment in flight when sending; three duplicate ACKs at once on
   a gap; retransmission with backoff.
-- Receiving is shaped by the kernel.  It moves one frame per millisecond tick
-  into a single buffer (`poll_and_deliver` in the kernel's `net/netdrv.rs`),
-  and the next frame overwrites it whether or not it was read.  Memento's
-  loop is regularly busy for longer than a tick --- a repaint, a TLS record
-  to decrypt --- and every frame of a burst but the last is lost in such a
-  stretch.  So the window offered is two segments (`WEB_RX_SEGMENTS`), the
-  window reopens as soon as reading frees a segment (a sender that avoids
-  silly windows otherwise waits out its persist timer: seconds per KiB), and
-  the window repaints the status line twice a second at most while loading.
-  Measured in QEMU with packets released in 20 ms batches, a 768 KiB page
-  took 16 s with two segments, 20 s with one and 53 s with four; `about:net`
-  counts the frames that went missing.
-- The real fix is in the kernel: a frame buffer per queued message, and
-  frames left in the NIC's ring while the receiving process's queue is full.
-  With that, larger windows would be safe and much faster.
+- Receiving: the window offered is sixteen full segments (`WEB_RX_SEGMENTS`,
+  1460 bytes each) into a 32 KiB ring buffer per connection, reopened as soon
+  as reading frees a segment.  That rests on the kernel queueing every frame
+  in a buffer of its own and leaving what it cannot queue in the NIC's ring
+  (see `net/netdrv.rs`); kernels before that kept one frame in one buffer,
+  overwritten by the next, and the window had to be two segments of 1024.
+  Measured in QEMU with user networking, a 700 KiB page over plain HTTP:
+  before, 2 minutes 20 seconds, most of it the sender resending what was
+  lost; now 0.07 s for the response, about 2 s until it is on the screen.
+  `about:net` counts gaps and repeated segments, which should both stay 0.
 
 ## Memory
 
-The whole Memento process is 2 MiB (see libc++r2's README).  The browser adds
-about 165 KiB of text --- BearSSL 68, the engine (with CSS and forms) the rest
---- built with `-Os`, which leaves about 21 KiB below the 0x800000 line.  Check with
+The whole Memento image is 2 MiB (see libc++r2's README); its heap arena is
+768 KiB of it, and grows onto the kernel's user heap when that is full.  The
+browser adds about 200 KiB of text --- BearSSL 68, stb_image 32, the engine
+(with CSS, forms and pictures) the rest --- built with `-Os`.
+Check what is left below the 0x800000 line with
 `nm -n memento-hello.elf | grep ' _end$'` after adding anything.
+
+The page's buffers --- the body, its text and items, the layout --- and the
+decoded pictures are on the kernel's user heap, 4 MiB for all processes
+together until the kernel grows it (by an eighth of the RAM, once, when it is
+full), which is why the arena is not: a 700 KiB page needs about 2.5 MiB of it, and every buffer that
+grows while others do leaves holes.  So the body gets its Content-Length in
+one block, the text and items are reserved from the source's size before
+parsing, and all of them give back their growing room when they are done.
+Memento needs a kernel whose syscalls accept user-heap pointers
+(`USER_REGIONS` in `src/abi/syscall.rs`).
 
 ## Tests
 
@@ -172,7 +235,8 @@ The engine builds on the host too (`WEB_HOST`), with the same BearSSL
 configuration and roots:
 
 ```shell
-make -C web/tests check                     # URLs, HTTP, HTML layout, CSS, forms
+make -C web/tests check                     # URLs, HTTP, HTML layout, CSS, forms,
+                                            # pictures (tests/img/) and PNG round trips
 make -C web/tests && web/tests/host_fetch https://news.ycombinator.com/ 76
 ```
 

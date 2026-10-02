@@ -107,6 +107,9 @@ private:
     PlatformFont *font = nullptr;
 
     char filePath[128];
+    // Why F4 did not open the editor, shown in place of the path until the
+    // next key.
+    char note[64] = {};
     unsigned int fileBytes = 0;
     int scrollTop = 0;
     int nLines = 0;
@@ -182,6 +185,11 @@ private:
         auto *key = data->Data.OnKeyEvent.key;
         if (!key->isKeyDown)
             return;
+        if (note[0])
+        {
+            note[0] = 0;
+            wnd->Repaint();
+        }
         if (key->isEscape || key->isEnter)
         {
             wnd->Close();
@@ -193,6 +201,11 @@ private:
         {
             if (openInEditor(filePath))
                 wnd->Close();
+            else
+            {
+                strncpy(note, g_launchError[0] ? g_launchError : "Editor: could not start.", sizeof(note) - 1);
+                wnd->Repaint();
+            }
             return;
         }
         if (key->isArrowUp)
@@ -253,7 +266,7 @@ private:
 
         // Path on left, line/total on right of the subheader row
         opts.horizontalAlign = PlatformAlign::Begin;
-        target->DrawText(3, 2, W - 60, 10, (const mchar *)filePath, &opts, false);
+        target->DrawText(3, 2, W - 60, 10, (const mchar *)(note[0] ? note : filePath), &opts, false);
 
         if (nLines > VIS)
         {

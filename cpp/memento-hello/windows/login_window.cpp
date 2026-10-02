@@ -42,6 +42,8 @@ private:
     static const int CANCEL_X = 60, CANCEL_W = 40;
 
     Coord panX = 102, panY = 70; // panel origin; drag title bar to reposition
+    int screenW = 320, screenH = 200; // the window's size, from the last paint
+    bool placed = false;              // centred on it once, then where dragged
     bool dragging = false;
     Coord dragMX0 = 0, dragMY0 = 0, dragPX0 = 0, dragPY0 = 0;
 
@@ -62,12 +64,12 @@ private:
             Coord ny = dragPY0 + (my - dragMY0);
             if (nx < 0)
                 nx = 0;
-            if (nx > 320 - PAN_W)
-                nx = 320 - PAN_W;
+            if (nx > screenW - PAN_W)
+                nx = screenW - PAN_W;
             if (ny < 0)
                 ny = 0;
-            if (ny > 200 - PAN_H)
-                ny = 200 - PAN_H;
+            if (ny > screenH - PAN_H)
+                ny = screenH - PAN_H;
             panX = nx;
             panY = ny;
             wnd->Repaint();
@@ -283,6 +285,15 @@ private:
 
         Coord W = target->GetWidth();
         Coord H = target->GetHeight();
+        screenW = (int)COORD_VAL(W);
+        screenH = (int)COORD_VAL(H);
+        if (!placed)
+        {
+            //  In the middle of whatever size the screen is.
+            panX = (screenW - PAN_W) / 2;
+            panY = (screenH - PAN_H) / 2;
+            placed = true;
+        }
 
         target->FillRect(0, 0, W, H, dark, false);
         drawWallpaper(dc, target);
@@ -310,5 +321,10 @@ private:
 
         DrawButton(target, panX + OK_X, panY + BTN_Y, OK_W, BTN_H, "OK", focus == 2);
         DrawButton(target, panX + CANCEL_X, panY + BTN_Y, CANCEL_W, BTN_H, "Cancel", focus == 3);
+
+        //  Under the panel, on the wallpaper: what leaving it does.
+        opts.foreground = light;
+        opts.horizontalAlign = PlatformAlign::Middle;
+        target->DrawText(panX - 20, panY + PAN_H + 3, PAN_W + 40, 9, "Esc restarts the computer", &opts, false);
     }
 };

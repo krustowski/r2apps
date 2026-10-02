@@ -62,6 +62,9 @@ struct Buf
     Buf &operator=(const Buf &) = delete;
 
     bool reserve(size_t want);
+    //  Gives back what doubling reserved past the contents, once they are all
+    //  there: a buffer that is kept should not keep its growing room.
+    void shrink();
     bool append(const void *src, size_t n);
     bool push(uint8_t b) { return append(&b, 1); }
     bool appendStr(const char *s) { return append(s, strlen(s)); }
@@ -71,6 +74,16 @@ struct Buf
         failed = false;
     }
     void release();
+    //  The contents change owners, without a copy: a response body handed
+    //  to what decodes it.  Both must be in the same pool.
+    void swap(Buf &o)
+    {
+        uint8_t *d = data;
+        size_t l = len, c = cap;
+        bool b = big, f = failed;
+        data = o.data, len = o.len, cap = o.cap, big = o.big, failed = o.failed;
+        o.data = d, o.len = l, o.cap = c, o.big = b, o.failed = f;
+    }
 
     //  The contents as a C string.  Keeps the terminator outside len.
     const char *cstr();

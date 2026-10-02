@@ -16,14 +16,20 @@
 //
 //  The heap.
 //
-//  The process gets one private 2 MiB frame at 0x600_000 for everything — code,
-//  data, the stack from _crt0.o and this arena — so the arena is what is left
-//  after the rest. The window manager's own frame buffer and the VGA plane
-//  staging take 380 KiB of .bss between them, so this is 768 KiB: enough for
-//  the desktop's full-screen bitmap (244 KiB at one byte per pixel) plus the
-//  four or five windows over it.
+//  640 KiB in .bss, growing onto the kernel's user heap (0xC00_000 up) in
+//  256 KiB pieces when that is full.  The desktop's full-screen bitmap is 244
+//  KiB at one byte per pixel and every window is a bitmap of its own, so a few
+//  windows fit and more grow the arena rather than fail to open.
 //
-R2_HEAP_ARENA(1024 * 1024)
+//  Not the user heap from the start: the Web window keeps a page there --- the
+//  body, its text and its layout come to about four times a page's size --- and
+//  the heap is 4 MiB for every process together.  With a 1 MiB arena sitting in
+//  it, a 700 KiB page no longer fitted.  The image has the room since the arena
+//  left it once (the private 2 MiB frame has to hold code, data and stack).
+//  It was 768 KiB until the H.264 decoder for Telegram's GIFs (web/mp4.cpp,
+//  about 80 KiB of code) needed the room.
+//
+R2_HEAP_ARENA_GROWING(640 * 1024)
 
 //
 //  Memento platform hooks.

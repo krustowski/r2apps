@@ -4,6 +4,12 @@
 
 #include "../doc.h"
 #include "../http.h"
+#include "../image.h"
+#include "../mp4.h"
+#include "../png.h"
+
+extern "C" unsigned char *stbi_load_from_memory(const unsigned char *, int, int *, int *, int *, int);
+extern "C" void stbi_image_free(void *);
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -423,6 +429,272 @@ static void headlines()
                "Styled=/f");
     //  Formatting does not cross into a table cell.
     checkLinks("<table><tr><td><a href=/g>x<td>y</table>", "x=/g | y=-");
+    //  A card made clickable by an empty <a> stretched over it (krusty.space,
+    //  Hugo's PaperMod): the heading takes the link.
+    checkLinks("<article><header><h2>Card title</h2></header><div><p>Teaser</p></div>"
+               "<footer>June</footer><a class=entry-link aria-label=\"post link\" href=/h></a></article>"
+               "<article><h2>Second</h2><p>More</p><a href=/i></a></article>",
+               "Card title=/h | Teaser=- | June=- | Second=/i | More=-");
+    //  A heading that is a link already keeps its own.
+    checkLinks("<article><h2><a href=/j>Own</a></h2><a href=/k aria-label=Card></a></article>", "Own=/j");
+    //  No heading to take: the label stands in for the text.
+    checkLinks("<p>Share <a href=/l aria-label=Mastodon><svg></svg></a> <a href=/m title=Feed></a>",
+               "Share=- | [Mastodon]=/l | [Feed]=/m");
+    //  No heading, no label: nothing to show, as before.
+    checkLinks("<p>x<a href=/n></a>y", "xy=-");
+}
+
+//  A test picture from img/ (made by Pillow), into `buf`; its length.
+static size_t readImg(const char *name, uint8_t *buf, size_t cap)
+{
+    char path[128];
+    snprintf(path, sizeof(path), "img/%s", name);
+    FILE *f = fopen(path, "rb");
+    if (!f)
+    {
+        printf("FAIL cannot open %s\n", path);
+        failures++;
+        return 0;
+    }
+    size_t n = fread(buf, 1, cap, f);
+    fclose(f);
+    return n;
+}
+
+static void pictures()
+{
+    static uint8_t buf[4096];
+    web::Picture p;
+    size_t n;
+
+    //  Black and white come out as exactly black and white: the dither
+    //  cannot move them to another colour.
+    n = readImg("bw.png", buf, sizeof(buf));
+    CHECK(!web::decodePicture(buf, n, 100, 100, 16, 0xFFFFFF, p));
+    CHECK(p.w == 8 && p.h == 4);
+    bool bw = true;
+    for (int y = 0; y < 4; y++)
+        for (int x = 0; x < 8; x++)
+            bw &= p.px[y * 8 + x] == (x < 4 ? 0 : 15);
+    CHECK(bw);
+
+    //  Red: dithered between the two reds of the 16; in the cube, a red with
+    //  no green or blue in it.
+    n = readImg("red.jpg", buf, sizeof(buf));
+    CHECK(!web::decodePicture(buf, n, 100, 100, 16, 0xFFFFFF, p));
+    bool reds = p.w == 16 && p.h == 16;
+    for (int k = 0; reds && k < 256; k++)
+        reds = p.px[k] == 4 || p.px[k] == 12;
+    CHECK(reds);
+    CHECK(!web::decodePicture(buf, n, 100, 100, 256, 0xFFFFFF, p));
+    bool cube = true;
+    for (int k = 0; cube && k < 256; k++)
+        cube = p.px[k] >= 16 + 36 * 4 && p.px[k] <= 231 && (p.px[k] - 16) % 36 == 0;
+    CHECK(cube);
+
+    //  Transparent: whatever it is laid over.
+    n = readImg("clear.png", buf, sizeof(buf));
+    CHECK(!web::decodePicture(buf, n, 100, 100, 16, 0xFFFFFF, p) && p.px[0] == 15);
+    CHECK(!web::decodePicture(buf, n, 100, 100, 16, 0x000000, p) && p.px[5] == 0);
+
+    //  Made to fit, keeping its shape; never enlarged.
+    n = readImg("wide.gif", buf, sizeof(buf));
+    int w, h;
+    CHECK(web::pictureSize(buf, n, w, h) && w == 100 && h == 50);
+    CHECK(!web::decodePicture(buf, n, 40, 40, 16, 0, p));
+    CHECK(p.w == 40 && p.h == 20 && p.px[0] == 15);
+    CHECK(!web::decodePicture(buf, n, 1000, 10, 16, 0, p));
+    CHECK(p.w == 20 && p.h == 10);
+
+    n = readImg("blue.bmp", buf, sizeof(buf));
+    CHECK(!web::decodePicture(buf, n, 100, 100, 16, 0, p) && p.w == 6 && p.h == 3 && p.px[0] == 1);
+
+    //  Not a picture, or cut short: an answer, not a crash.
+    CHECK(web::decodePicture((const uint8_t *)"<html>", 6, 100, 100, 16, 0, p) != nullptr);
+    n = readImg("red.jpg", buf, sizeof(buf));
+    CHECK(web::decodePicture(buf, n / 3, 100, 100, 16, 0, p) != nullptr || p.w == 16);
+    p.release();
+}
+
+//  Animated GIFs: every frame, each held as long as the file says (0 ms as
+//  browsers take it, 100), and when they do not all fit, every other one
+//  left out as often as it takes, its time given to the one before.
+static void animations()
+{
+    static uint8_t buf[4096];
+    web::Animation a;
+    size_t n = readImg("anim.gif", buf, sizeof(buf));
+    CHECK(web::isGif(buf, n));
+    CHECK(!web::decodeAnimation(buf, n, 100, 100, 16, 0xFFFFFF, 64 * 1024, a));
+    CHECK(a.w == 20 && a.h == 10 && a.frames == 3);
+    CHECK(a.delay[0] == 50 && a.delay[1] == 100 && a.delay[2] == 100 && a.length == 250);
+    CHECK((a.frame(0)[0] == 4 || a.frame(0)[0] == 12) && a.frame(1)[0] == 0 && a.frame(2)[199] == 15);
+    CHECK(a.frameAt(0) == 0 && a.frameAt(49) == 0 && a.frameAt(50) == 1 && a.frameAt(149) == 1);
+    CHECK(a.frameAt(150) == 2 && a.frameAt(250) == 0 && a.frameAt(250 * 7 + 60) == 1);
+    //  Made smaller like any picture.
+    CHECK(!web::decodeAnimation(buf, n, 10, 10, 16, 0xFFFFFF, 64 * 1024, a) && a.w == 10 && a.h == 5);
+
+    //  Ten frames of 8x8, a white column moving right, in room for four:
+    //  frames 0, 4 and 8, the last of them with 9's time too.
+    n = readImg("ten.gif", buf, sizeof(buf));
+    CHECK(!web::decodeAnimation(buf, n, 100, 100, 16, 0, 4 * 64, a));
+    CHECK(a.frames == 3 && a.length == 400);
+    CHECK(a.frames == 3 && a.delay[0] == 160 && a.delay[1] == 160 && a.delay[2] == 80);
+    CHECK(a.frame(0)[0] == 15 && a.frame(0)[1] == 0 && a.frame(1)[4] == 15 && a.frame(1)[0] == 0 &&
+          a.frame(2)[0] == 15);
+    //  All of them when there is room.
+    CHECK(!web::decodeAnimation(buf, n, 100, 100, 16, 0, 64 * 1024, a) && a.frames == 10 && a.length == 400);
+    CHECK(a.frame(9)[1] == 15 && a.frame(9)[0] == 0);
+    //  Not room for two frames: not an animation.
+    CHECK(web::decodeAnimation(buf, n, 100, 100, 16, 0, 100, a) != nullptr && !a.px);
+
+    //  A still GIF is one frame; anything else is not a GIF; a cut one
+    //  keeps the frames before the cut.
+    n = readImg("wide.gif", buf, sizeof(buf));
+    CHECK(!web::decodeAnimation(buf, n, 100, 100, 16, 0, 64 * 1024, a) && a.frames == 1 && a.frameAt(12345) == 0);
+    n = readImg("red.jpg", buf, sizeof(buf));
+    CHECK(!web::isGif(buf, n) && web::decodeAnimation(buf, n, 100, 100, 16, 0, 64 * 1024, a) != nullptr);
+    n = readImg("ten.gif", buf, sizeof(buf));
+    CHECK(!web::decodeAnimation(buf, n * 2 / 3, 100, 100, 16, 0, 64 * 1024, a) && a.frames >= 1 &&
+          a.frames < 10);
+    CHECK(web::decodeAnimation(buf, 20, 100, 100, 16, 0, 64 * 1024, a) != nullptr);
+    a.release();
+}
+
+//  An MP4 of H.264 (what Telegram makes of a GIF): decoded a step at a
+//  time into an Animation, cut to the size the stream says is shown, each
+//  frame as long as its sample.  colours.mp4 is 36x20 at 10 frames a second,
+//  black, white, red, blue, white (Baseline, from openh264); high.mp4 the same
+//  with its avcC saying High, which is turned away before anything is decoded.
+static bool mostly(const web::Animation &a, int f, int c1, int c2)
+{
+    int n = 0;
+    for (int k = 0; k < a.w * a.h; k++)
+        n += a.frame(f)[k] == c1 || a.frame(f)[k] == c2;
+    return n * 10 >= a.w * a.h * 9;
+}
+
+static const char *decodeMp4(const char *name, size_t cut, int maxW, size_t budget, web::Animation &a)
+{
+    static uint8_t buf[8192];
+    size_t n = readImg(name, buf, sizeof(buf));
+    web::Buf file{true};
+    file.append(buf, cut ? cut : n);
+    web::Mp4Animation m;
+    const char *why = m.start(file, maxW, 100, 16, 0xFFFFFF, budget);
+    if (why)
+        return why;
+    CHECK(!file.data && m.busy());
+    int steps = 0;
+    while (m.step(0) && steps < 1000)
+        steps++;
+    return m.finish(a);
+}
+
+static void mp4s()
+{
+    web::Animation a;
+    const char *why = decodeMp4("colours.mp4", 0, 100, 64 * 1024, a);
+    CHECK(!why);
+    if (why)
+        printf("  colours.mp4: %s\n", why);
+    CHECK(a.w == 36 && a.h == 20 && a.frames == 5 && a.length == 500);
+    if (a.frames != 5)
+    {
+        printf("  colours.mp4: %dx%d, %d frames, %u ms\n", a.w, a.h, a.frames, a.length);
+        return;
+    }
+    CHECK(a.delay[0] == 100 && a.delay[4] == 100);
+    CHECK(a.frames == 5 && mostly(a, 0, 0, 0) && mostly(a, 1, 15, 15) && mostly(a, 2, 4, 12) &&
+          mostly(a, 3, 1, 9) && mostly(a, 4, 15, 15));
+    //  Made smaller, and fewer frames kept where they do not fit.
+    CHECK(!decodeMp4("colours.mp4", 0, 18, 64 * 1024, a) && a.w == 18 && a.h == 10);
+    CHECK(!decodeMp4("colours.mp4", 0, 100, 36 * 20 * 2, a) && a.frames == 2 && a.length == 500);
+    int w, h, profile;
+    static uint8_t buf[8192];
+    size_t n = readImg("colours.mp4", buf, sizeof(buf));
+    CHECK(web::Mp4Animation::probe(buf, n, w, h, profile) && w == 36 && h == 20 && profile == 66);
+
+    a.release();
+    why = decodeMp4("high.mp4", 0, 100, 64 * 1024, a);
+    CHECK(why && strstr(why, "High") && !a.px);
+    //  Cut short, or not an MP4 at all: an answer, not a crash.
+    CHECK(decodeMp4("colours.mp4", 600, 100, 64 * 1024, a) != nullptr || a.frames <= 5);
+    CHECK(decodeMp4("colours.mp4", 40, 100, 64 * 1024, a) != nullptr);
+    CHECK(decodeMp4("anim.gif", 0, 100, 64 * 1024, a) != nullptr);
+    a.release();
+}
+
+//  Pictures on a page: alt text until the window has the picture, then a
+//  line of their own, as many rows as they are tall.
+static void pageImages()
+{
+    web::Document d;
+    d.loadMessage("<p>before<img src=a.png alt=Cat>after</p><a href=/x><img src=b.gif></a>"
+                  "<img src=\"data:image/png;base64,AAAA\"><img>");
+    CHECK(d.imageCount() == 2 && !strcmp(d.imageSrc(0), "a.png") && !strcmp(d.imageSrc(1), "b.gif"));
+    d.setCellPixels(6, 14);
+    d.layout(40);
+    char got[1024];
+    linkMap(d, got, sizeof(got));
+    CHECK(!strcmp(got, "before=- | [Cat]=- | after=- | [img]=/x"));
+
+    d.setImageSize(0, 60, 30);   // 3 rows of 14 pixels
+    d.setImageSize(1, 600, 100); // wider than the 240 pixels of 40 cells
+    CHECK(d.layoutCols() != 40); // to be laid out again
+    d.layout(40);
+    linkMap(d, got, sizeof(got));
+    CHECK(!strcmp(got, "before=- | after=-"));
+    int pics = 0;
+    for (size_t li = 0; li < d.lineCount(); li++)
+    {
+        const web::Line &l = d.line(li);
+        if (l.img == 1)
+        {
+            CHECK(l.rows == 3 && l.imgW == 60 && l.imgH == 30 && l.height() == 3 && l.link == -1);
+            pics++;
+        }
+        if (l.img == 2)
+        {
+            CHECK(l.imgW == 240 && l.imgH == 40 && l.rows == 3 && l.link == 0);
+            pics++;
+        }
+    }
+    CHECK(pics == 2);
+    //  The linked picture is where its link is.
+    CHECK(d.linkRow(0) >= 0 && d.line(d.lineAtRow(d.linkRow(0))).img == 2);
+}
+
+//  A screenshot's PNG, read back by stb_image: every pixel its palette colour.
+static void pngRoundTrip(int w, int h, int colours)
+{
+    static uint8_t px[640 * 400];
+    uint8_t pal[768];
+    for (int i = 0; i < 256; i++)
+        pal[i * 3] = (uint8_t)i, pal[i * 3 + 1] = (uint8_t)(255 - i), pal[i * 3 + 2] = (uint8_t)(i * 7);
+    //  Flat areas, a few windows and some noise, like a screen.
+    unsigned seed = 1;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+        {
+            seed = seed * 1103515245 + 12345;
+            int v = (x / 40 + y / 30) % colours;
+            if (y > h / 2 && x < w / 3)
+                v = (seed >> 16) % colours;
+            px[y * w + x] = (uint8_t)v;
+        }
+    web::Buf png{true};
+    CHECK(web::encodePng(px, w, h, pal, colours, png));
+    int gw = 0, gh = 0, comp = 0;
+    unsigned char *rgb = stbi_load_from_memory(png.data, (int)png.len, &gw, &gh, &comp, 3);
+    CHECK(rgb && gw == w && gh == h);
+    bool same = rgb != nullptr;
+    for (int i = 0; same && i < w * h; i++)
+        same = rgb[i * 3] == pal[px[i] * 3] && rgb[i * 3 + 1] == pal[px[i] * 3 + 1] && rgb[i * 3 + 2] == pal[px[i] * 3 + 2];
+    CHECK(same);
+    if (rgb)
+        stbi_image_free(rgb);
+    printf("png %dx%d, %d colours: %zu bytes (raw %d)\n", w, h, colours, png.len, w * h);
 }
 
 int main()
@@ -433,6 +705,13 @@ int main()
     css();
     forms();
     headlines();
+    pictures();
+    animations();
+    mp4s();
+    pageImages();
+    pngRoundTrip(640, 400, 16);
+    pngRoundTrip(333, 211, 256);
+    pngRoundTrip(3, 1, 16);
     if (failures)
     {
         printf("%d failure(s)\n", failures);

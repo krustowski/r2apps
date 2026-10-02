@@ -257,7 +257,12 @@ private:
         int8_t indentDelta;
         int8_t savedCtrl;
         int32_t savedLink;
+        uint32_t firstItem; // how many items there were when it opened
+        uint32_t label;     // an <a>'s aria-label or title (strings pool), or NO_LABEL
     };
+    static const uint32_t NO_LABEL = 0xFFFFFFFFu;
+    uint32_t itemCount() const { return (uint32_t)(d_.items_.len / sizeof(Item)); }
+    void emptyLink(const Elem &a, int32_t link);
     static const int MAX_DEPTH = 128;
     Elem *stack_ = nullptr;
     int depth_ = 0;
@@ -947,6 +952,8 @@ void HtmlParser::pop(bool semantics, bool implicit)
 
     if (e.flags & F_BUTTON)
         appendAscii("]");
+    if ((e.flags & F_HREF) && !implicit && link_ >= 0)
+        emptyLink(e, link_);
     if (e.flags & F_LINK)
     {
         link_ = e.savedLink;
@@ -956,6 +963,58 @@ void HtmlParser::pop(bool semantics, bool implicit)
         form_ = -1;
     if (e.flags & F_BLOCKIFY)
         softBlock(0);
+}
+
+//  A link that closes without having put anything on the page: the "card"
+//  pattern, <article><h2>Title</h2><p>...</p><a class=stretched href=...></a>
+//  </article>, where CSS spreads the empty <a> over the whole card.  With no
+//  text of its own it could be neither clicked nor reached with Tab.  So the
+//  card's heading becomes the link --- the first heading in the element that
+//  holds the <a>, or in the one around that --- and a link with no heading
+//  to take shows its aria-label or title instead, as "[label]".
+void HtmlParser::emptyLink(const Elem &a, int32_t link)
+{
+    flush();
+    Item *items = (Item *)d_.items_.data;
+    uint32_t n = itemCount();
+    for (uint32_t k = a.firstItem; k < n; k++)
+        if ((items[k].kind == Item::TEXT || items[k].kind == Item::IMG) && items[k].link == link)
+            return; // it has text or a picture: an ordinary link
+
+    bool sawHeading = false;
+    for (int up = 1; up <= 2 && depth_ - up >= 0 && !sawHeading; up++)
+    {
+        uint32_t from = stack_[depth_ - up].firstItem;
+        bool inHeading = false, adopted = false;
+        for (uint32_t k = from; k < a.firstItem && k < n; k++)
+        {
+            Item &it = items[k];
+            if (it.kind == Item::BLOCK)
+            {
+                if (adopted)
+                    break; // only the first heading
+                inHeading = it.heading > 0;
+                sawHeading |= inHeading;
+            }
+            else if (it.kind == Item::TEXT && inHeading && it.link < 0)
+            {
+                it.link = link;
+                it.style |= ST_LINK;
+                adopted = true;
+            }
+        }
+    }
+    //  A heading that is a link of its own already stands for the card.
+    if (sawHeading || a.label == NO_LABEL)
+        return;
+    char buf[80];
+    scopy(buf, "[", sizeof(buf));
+    scat(buf, d_.str(a.label), sizeof(buf) - 1);
+    scat(buf, "]", sizeof(buf));
+    if (!lastSpace_)
+        textChar(' ');
+    appendUtf8(buf);
+    lastSpace_ = false;
 }
 
 void HtmlParser::reconstruct()
@@ -1095,6 +1154,8 @@ void HtmlParser::startTag(const char *name, bool selfClosing, const uint8_t *s, 
     bool blockish = isAny(name, kBlockish);
     e.savedLink = link_;
     e.savedCtrl = ctrl_ ? 1 : 0;
+    e.firstItem = itemCount();
+    e.label = NO_LABEL;
     if (tracked)
         depth_++;
     else
@@ -1521,13 +1582,43 @@ bool HtmlParser::open(const char *name, const uint8_t *s, size_t n, size_t &i)
             link_ = addLink(href);
             ctrl_ = false;
             me.flags |= F_HREF;
+            const char *label = attr("aria-label");
+            if (!label || !label[0])
+                label = attr("title");
+            if (label && label[0])
+                me.label = d_.addString(label, strlen(label));
         }
         return false;
     }
     if (is(name, "img"))
     {
+        //  The picture, when it names one the window can fetch; followed by
+        //  its alt text, which is what shows until (and unless) the picture
+        //  comes.  Lazy loaders put the real address in data-src.
+        const char *src = attr("data-src");
+        if (!src || !src[0])
+            src = attr("src");
+        size_t imgItem = (size_t)-1;
+        flush();
+        if (src && src[0] && !istarts(src, "data:") && d_.imageCount() < 0xFFFE)
+        {
+            Image im = {};
+            im.src = d_.addString(src, strlen(src));
+            Item it = {};
+            it.kind = Item::IMG;
+            it.img = (uint16_t)(d_.imageCount() + 1);
+            it.link = ctrl_ ? -1 : link_;
+            if (d_.images_.append(&im, sizeof(im)))
+            {
+                imgItem = itemCount();
+                pushItem(it);
+            }
+            else
+                d_.oom_ = true;
+        }
         const char *alt = attr("alt");
         char buf[80];
+        buf[0] = 0;
         if (alt && alt[0])
         {
             scopy(buf, "[", sizeof(buf));
@@ -1536,13 +1627,16 @@ bool HtmlParser::open(const char *name, const uint8_t *s, size_t n, size_t &i)
         }
         else if (link_ >= 0 && !ctrl_)
             scopy(buf, "[img]", sizeof(buf));
-        else
-            return false;
-        flush();
-        faint_++;
-        appendUtf8(buf);
-        faint_--;
-        lastSpace_ = false;
+        if (buf[0])
+        {
+            faint_++;
+            appendUtf8(buf);
+            faint_--;
+            lastSpace_ = false;
+            flush();
+        }
+        if (imgItem != (size_t)-1 && imgItem < itemCount())
+            ((Item *)d_.items_.data)[imgItem].off = itemCount() - (uint32_t)imgItem - 1;
         return false;
     }
     if (is(name, "form"))
@@ -1840,6 +1934,7 @@ void Document::clear()
     forms_.release();
     optionOffs_.release();
     sheetOffs_.release();
+    images_.release();
     title_[0] = 0;
     cols_ = rows_ = 0;
     oom_ = false;
@@ -1883,6 +1978,18 @@ void Document::loadHtml(const uint8_t *src, size_t n, const char *charset, const
         scopy(cs, charset, sizeof(cs));
     else
         sniffCharset(src, n, cs, sizeof(cs));
+    //  The text and the items are what grows with the page, and grow at the
+    //  same time: doubling in turns, each would leave the heap a hole at every
+    //  step that the other is by then too big for.  So each gets one block up
+    //  front, as large as the source says it can need --- the text is never
+    //  longer than the markup it came from, and pages run to an item per hundred
+    //  or so bytes of source --- and gives the rest back when parsing is
+    //  done (the shrinks below).  A page that needs more still grows; if the
+    //  estimate does not fit, parsing starts small as it always did.
+    (void)text_.reserve(n + 1);
+    (void)items_.reserve((n / 128 + 64) * sizeof(Item));
+    text_.clear();
+    items_.clear();
     HtmlParser *p = new HtmlParser(*this, encodingFor(cs), css);
     if (!p || !p->ok())
     {
@@ -1895,6 +2002,14 @@ void Document::loadHtml(const uint8_t *src, size_t n, const char *charset, const
             p->addSheet(sheets[k].data, sheets[k].len);
     p->parseHtml(src, n);
     delete p;
+    //  Parsing is over: what the buffers reserved for growing is heap the
+    //  layout can use.
+    text_.shrink();
+    items_.shrink();
+    strings_.shrink();
+    links_.shrink();
+    linkOffs_.shrink();
+    controls_.shrink();
 }
 
 void Document::loadText(const uint8_t *src, size_t n, const char *charset)
@@ -2318,6 +2433,54 @@ private:
 
     bool wrapGlued();
     void text(const Item &it);
+
+    //  Lays out the picture of an IMG item if its size is known; false if not.
+    bool picture(const Item &it)
+    {
+        if (!it.img || it.img > d_.imageCount() || d_.rowPx_ <= 0 || d_.cellPx_ <= 0)
+            return false;
+        const Image &im = ((const Image *)d_.images_.data)[it.img - 1];
+        if (!im.w || !im.h)
+            return false;
+        closeLine();
+        if (!atStart_)
+            row_ += margin_;
+        margin_ = 0;
+        atStart_ = false;
+
+        //  Drawn smaller when the page is narrower than the picture.
+        int indentPx = (big_ ? indent_ / 2 : indent_) * d_.cellPx_;
+        int avail = cols_ * d_.cellPx_ - indentPx;
+        if (avail < 8)
+            avail = 8;
+        int w = im.w, h = im.h;
+        if (w > avail)
+        {
+            h = (int)((long long)h * avail / w);
+            w = avail;
+        }
+        if (h < 1)
+            h = 1;
+        int x = indentPx;
+        if (align_ == 1)
+            x += (avail - w) / 2;
+        else if (align_ == 2)
+            x += avail - w;
+
+        Line l = {};
+        l.firstRun = (uint32_t)(d_.runs_.len / sizeof(Run));
+        l.row = row_;
+        l.link = it.link;
+        l.img = it.img;
+        l.rows = (uint16_t)((h + d_.rowPx_ - 1) / d_.rowPx_);
+        l.imgX = (uint16_t)x;
+        l.imgW = (uint16_t)w;
+        l.imgH = (uint16_t)h;
+        if (!d_.lines_.append(&l, sizeof(l)))
+            d_.oom_ = true;
+        row_ += l.rows;
+        return true;
+    }
 };
 
 //  Starts a new line and takes the beginning of the current word along, when
@@ -2513,6 +2676,12 @@ void Layout::run()
         case Item::TEXT:
             text(it);
             break;
+        case Item::IMG:
+            //  A picture the window has: its own line, and its alt text
+            //  (the items after it) is not needed.
+            if (picture(it))
+                k += it.off;
+            break;
         }
     }
     closeLine();
@@ -2521,9 +2690,46 @@ void Layout::run()
 
 void Document::layout(int cols)
 {
+    //  0 is "not laid out": the window asks for it after loading, and lays the
+    //  page out at its real width when it next paints.  It used to be taken as
+    //  a width, clamped to 16 columns --- so every page was laid out a first
+    //  time four or five times as tall as it would be shown, which cost most
+    //  of a big page's load time and, for a 700 KiB one, more memory than
+    //  there was.
+    if (cols <= 0)
+    {
+        lines_.clear();
+        runs_.clear();
+        cols_ = 0;
+        return;
+    }
     Layout l(*this, cols);
     l.run();
     cols_ = cols;
+}
+
+void Document::setImageSize(int i, int w, int h)
+{
+    if (i < 0 || i >= imageCount())
+        return;
+    Image &im = ((Image *)images_.data)[i];
+    uint16_t nw = (uint16_t)(w < 0 ? 0 : w > 0xFFFF ? 0xFFFF : w);
+    uint16_t nh = (uint16_t)(h < 0 ? 0 : h > 0xFFFF ? 0xFFFF : h);
+    if (im.w == nw && im.h == nh)
+        return;
+    im.w = nw;
+    im.h = nh;
+    cols_ = -1; // laid out again at the next paint
+}
+
+void Document::setCellPixels(int cellW, int rowH)
+{
+    if (cellW == cellPx_ && rowH == rowPx_)
+        return;
+    cellPx_ = cellW;
+    rowPx_ = rowH;
+    if (imageCount())
+        cols_ = -1;
 }
 
 size_t Document::lineAtRow(int row) const
@@ -2533,7 +2739,7 @@ size_t Document::lineAtRow(int row) const
     {
         size_t mid = (lo + hi) / 2;
         const Line &l = line(mid);
-        if (l.row + (l.big ? 2 : 1) <= row)
+        if (l.row + l.height() <= row)
             lo = mid + 1;
         else
             hi = mid;
@@ -2546,6 +2752,8 @@ int Document::linkRow(int i) const
     for (size_t li = 0; li < lineCount(); li++)
     {
         const Line &l = line(li);
+        if (l.img && l.link == i)
+            return l.row;
         for (uint32_t r = 0; r < l.nRuns; r++)
             if (run(l.firstRun + r).link == i)
                 return l.row;

@@ -2,12 +2,12 @@
 #
 #  mkcacerts.sh --- regenerates ../cacerts.bin, the roots the browser trusts.
 #
-#  Usage: tools/mkcacerts.sh [bundle.pem] [iso-dir]
+#  Usage: tools/mkcacerts.sh [bundle.pem] [usb-dir]
 #
-#  The browser reads the file at run time from /mnt/iso/opt/memento/cacerts.bin,
-#  so it lives on the CD rather than in Memento's 2 MiB image.  Give the
-#  kernel's ISO tree (r2_main/iso) as the second argument and the file is put
-#  in its opt/memento/ as well; r2_main's build_iso copies it from here too.
+#  The browser reads the file at run time from /mnt/tar/opt/memento/cacerts.bin,
+#  so it lives on the USB stick rather than in Memento's 2 MiB image.  Give
+#  the stick's root (where it is mounted on the host) as the second argument
+#  and the file is put in its memento/ as well.
 #
 #  The bundle defaults to the system's.  The roots kept are the ones named in
 #  ROOTS below, matched on the certificate's CN: the CAs that issue for most
@@ -19,7 +19,7 @@ set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 BUNDLE=${1:-/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem}
 [ -f "$BUNDLE" ] || BUNDLE=/etc/ssl/certs/ca-certificates.crt
-ISO=$2
+USB=$2
 
 ROOTS='Amazon Root CA 1
 Amazon Root CA 2
@@ -69,8 +69,8 @@ for f in "$TMP"/[0-9]*.pem; do
 done
 
 "$HERE/tests/build/mkcacerts" "$HERE/cacerts.bin" "$TMP/selected.pem"
-if [ -n "$ISO" ]; then
-    mkdir -p "$ISO/opt/memento"
-    cp "$HERE/cacerts.bin" "$ISO/opt/memento/cacerts.bin"
-    echo "copied to $ISO/opt/memento/cacerts.bin"
+if [ -n "$USB" ]; then
+    mkdir -p "$USB/memento"
+    cp "$HERE/cacerts.bin" "$USB/memento/cacerts.bin"
+    echo "copied to $USB/memento/cacerts.bin"
 fi

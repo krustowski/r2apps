@@ -11,8 +11,8 @@
 //    nobody holds that registration this stack takes it and answers ARP and
 //    ping for the machine.  When somebody does, it binds its TCP ports
 //    instead; ARP replies and UDP then go to the other process, so the
-//    gateway's MAC is assumed (the tap convention of this repository) until a
-//    frame from it teaches the real one, and DNS falls back to TCP.
+//    gateway's MAC comes from the configuration the driver publishes (syscall
+//    0x3d), and DNS falls back to TCP.
 //
 //  - Frames are lost in bursts: the kernel takes one per timer tick through a
 //    single shared buffer.  So the window advertised is small (a burst is at
@@ -29,6 +29,8 @@
 
 #include "net_r2.h"
 
+#include "../netmux.h"
+
 #include <r2/net.hpp>
 #include <r2/syscall.hpp>
 #include <r2/time.hpp>
@@ -43,18 +45,18 @@ const size_t IP_HDR = 20;
 const size_t TCP_HDR = 20;
 const size_t UDP_HDR = 8;
 
-const uint16_t MSS_IN = 1024;
-const size_t RX_CAP = 4096;
+const uint16_t MSS_IN = 1460;
+const size_t RX_CAP = 32768;
 #ifndef WEB_RX_SEGMENTS
-#define WEB_RX_SEGMENTS 2
+#define WEB_RX_SEGMENTS 16
 #endif
-//  The most we let the peer have in flight towards us.  The kernel moves one
-//  frame per millisecond tick into a single buffer that the next frame
-//  overwrites, and Memento's loop is regularly busy for longer than that ---
-//  a repaint, a TLS record to decrypt.  Everything of a burst but its last
-//  frame that arrives in such a stretch is gone, and every loss costs a round
-//  trip at best and a retransmission timeout at worst.  So bursts are kept to
-//  what a stall can lose at most one frame of.
+//  The most we let the peer have in flight towards us.  The kernel queues
+//  every frame it takes off the NIC in a buffer of its own, up to 64 of them
+//  a process (older kernels had one buffer, overwritten by the next frame, and
+//  this had to be two segments); frames that do not fit wait in the NIC.  So
+//  a burst that arrives while Memento is busy --- a repaint, a TLS record to
+//  decrypt --- is still there when it comes back, and the window can be as
+//  large as what one busy stretch can let arrive: sixteen full segments.
 const size_t RX_WINDOW = WEB_RX_SEGMENTS * MSS_IN;
 const size_t TX_CAP = 4096;
 const size_t SEG_MAX = 1024;
@@ -64,6 +66,12 @@ const uint64_t RTO_MAX = 4000;
 const int MAX_RETRIES = 6;
 const uint64_t FIN_WAIT_MS = 3000;
 const uint64_t ARP_RETRY_MS = 50; // how soon to try again when the next hop's MAC was unknown
+const uint64_t ARP_RESEND_MS = 250; // between ARP requests for the same address
+//  How long a segment may wait for its next hop's MAC.  Waiting is not a
+//  retransmission: a real host (a laptop on Wi-Fi, asleep between beacons)
+//  can take a few hundred milliseconds to answer ARP, where QEMU answers at
+//  once, and counting each 50 ms look as a retry gave up after 350 ms.
+const uint64_t ARP_GIVE_UP_MS = 5000;
 
 const uint16_t PORT_BASE = 47000; // eight local ports, reused round robin
 const int PORT_COUNT = 8;
@@ -73,9 +81,10 @@ const int MAX_CONNS = 6;
 
 const uint8_t F_FIN = 0x01, F_SYN = 0x02, F_RST = 0x04, F_PSH = 0x08, F_ACK = 0x10;
 
-//  QEMU's RTL8139 address, and the one this repository's tap is pinned to on
-//  the host side (see run_iso_net, and the IRC window, which pre-seeds it for
-//  the same reason: without the driver registration, ARP replies go elsewhere).
+//  Fallbacks for a kernel that does not publish the configuration (syscall
+//  0x3d): QEMU's RTL8139 address, and the one this repository's tap is pinned
+//  to on the host side (see run_iso_net).  Without the driver registration ARP
+//  replies go elsewhere, so the gateway's MAC cannot be asked for here.
 const uint8_t DEFAULT_MAC[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
 const uint8_t TAP_MAC[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x57};
 
@@ -161,8 +170,11 @@ struct Tcp
     bool peerFin;
     uint64_t sentAt, rto;
     int retries;
+    bool arpWait;       // the last try never left: its next hop's MAC was unknown
+    uint64_t arpSince;
 
-    uint8_t *rx;
+    uint8_t *rx;        // a ring of RX_CAP: rxLen bytes from rxHead on, wrapping
+    size_t rxHead;
     size_t rxLen;
     uint16_t advWnd;    // the window our last segment advertised
 
@@ -201,16 +213,19 @@ public:
     struct Stats
     {
         uint32_t frames, mangled, segments, outOfOrder, duplicates, retransmits;
+        uint32_t arpAsked, arpReplies; // requests sent, replies heard (anyone's)
         uint64_t bytes;
         uint64_t longestPause;
     } stats_ = {};
     uint64_t lastPoll_ = 0;
     uint8_t dns2_[4] = {8, 8, 8, 8};
+    bool dnsSet_ = false; // by ":dns", which the published configuration does not override
     uint8_t gw_[4] = {0, 0, 0, 0};
     bool gwSet_ = false;
 
 private:
     bool up_ = false;
+    char arpErr_[120] = {};
     bool driver_ = false;
     uint8_t mac_[6];
     uint8_t ip_[4];
@@ -231,6 +246,9 @@ private:
     } arp_[8] = {};
     uint64_t arpAskedAt_ = 0;
     uint8_t arpAsked_[4] = {};
+    //  An address on the link still without a MAC, and since when (see sendIp).
+    uint8_t unanswered_[4] = {};
+    uint64_t unansweredSince_ = 0;
 
     Tcp conns_[MAX_CONNS] = {};
 
@@ -290,6 +308,7 @@ private:
     void segment(Tcp &c, uint8_t flags, uint32_t seq, uint32_t ack, uint16_t wnd, const uint8_t *opt,
                  size_t optLen, const uint8_t *data, size_t len);
     void signalGap(Tcp &c, uint64_t now);
+    void noteSent(Tcp &c, bool sent, uint64_t now);
     void sendRst(const uint8_t dst[4], uint16_t lport, uint16_t rport, uint32_t seq, uint32_t ack, uint8_t flags,
                  size_t dataLen);
 
@@ -307,27 +326,48 @@ bool Stack::bringUp()
     if (up_)
         return true;
 
+    //  The process's frame queue is shared with c/libcr2's stack (Chat, IRC):
+    //  frames come through netmux, which gives this stack those for its ports.
+    netmux_claim(NETMUX_WEB, PORT_BASE, DNS_PORT_LOCAL + 5);
+
     auto st = r2::net::status();
     if (!st)
     {
         setError("the kernel reports no network");
         return false;
     }
-    driver_ = false;
-    if (!st->driver_active)
-    {
-        //  Nobody drives the NIC: take the job, which also starts the card.
-        if (r2::net::register_driver())
-        {
-            driver_ = true;
-            st = r2::net::status();
-        }
-    }
+    //  Nobody drives the NIC: take the job, which also starts the card.  Or
+    //  this process took it already (netmux says), for the host scan.
+    driver_ = netmux_take_driver();
+    if (driver_)
+        st = r2::net::status();
+
+    //  The machine's configuration as the ETH driver published it (syscall
+    //  0x3d): address, netmask, gateway, DNS, and the gateway's MAC, which
+    //  this stack cannot ARP for itself while the driver takes the replies.
+    //  ":gw" and ":dns" from the address bar still win.
+    auto cfg = r2::net::config();
 
     memcpy(mac_, DEFAULT_MAC, 6);
     memset(ip_, 0, 4);
-    if (st)
+    if (cfg)
     {
+        bool zero = true;
+        for (int i = 0; i < 6; i++)
+            zero = zero && cfg->mac.octets[i] == 0;
+        if (!zero)
+            memcpy(mac_, cfg->mac.octets, 6);
+        memcpy(ip_, cfg->ip.octets, 4);
+        if (!cfg->netmask.is_unspecified())
+            memcpy(mask_, cfg->netmask.octets, 4);
+        if (!gwSet_ && !cfg->gateway.is_unspecified())
+            memcpy(gw_, cfg->gateway.octets, 4);
+        if (!dnsSet_ && !cfg->dns.is_unspecified())
+            memcpy(dns_, cfg->dns.octets, 4);
+    }
+    else if (st)
+    {
+        //  A kernel without syscall 0x3d: the address and MAC from 0x38.
         bool zero = true;
         for (int i = 0; i < 6; i++)
             zero = zero && st->mac.octets[i] == 0;
@@ -344,20 +384,25 @@ bool Stack::bringUp()
     }
     if (!ip_[0])
     {
-        //  This repository's guest address; r2 has no DHCP client.
+        //  Nothing published yet: this repository's guest address.
         ip_[0] = 10;
         ip_[1] = 3;
         ip_[2] = 4;
         ip_[3] = 2;
     }
-    if (!gwSet_)
+    if (!gw_[0] && !gw_[1] && !gw_[2] && !gw_[3])
     {
         for (int i = 0; i < 4; i++)
             gw_[i] = ip_[i] & mask_[i];
         gw_[3] |= 1;
     }
     if (!driver_)
-        arpRemember(gw_, TAP_MAC);
+    {
+        if (cfg && cfg->gateway_mac_known && !memcmp(cfg->gateway.octets, gw_, 4))
+            arpRemember(gw_, cfg->gateway_mac.octets);
+        else if (!cfg)
+            arpRemember(gw_, TAP_MAC); // an older kernel: the tap convention
+    }
 
     ipId_ = (uint16_t)rdtsc();
     nextPort_ = (int)(rdtsc() % PORT_COUNT);
@@ -397,7 +442,11 @@ void Stack::describe(char *out, size_t cap)
     scatInt(out, (long)stats_.duplicates, cap);
     scat(out, " repeated; ", cap);
     scatInt(out, (long)stats_.retransmits, cap);
-    scat(out, " retransmits of ours; longest pause between polls ", cap);
+    scat(out, " retransmits of ours; ARP ", cap);
+    scatInt(out, (long)stats_.arpAsked, cap);
+    scat(out, " asked, ", cap);
+    scatInt(out, (long)stats_.arpReplies, cap);
+    scat(out, " replies heard; longest pause between polls ", cap);
     scatInt(out, (long)stats_.longestPause, cap);
     scat(out, " ms", cap);
 }
@@ -455,16 +504,30 @@ void Stack::arpSend(uint16_t op, const uint8_t tip[4], const uint8_t tmac[6])
     else
         memcpy(a + 18, tmac, 6);
     memcpy(a + 24, tip, 4);
+    if (op == 1)
+        stats_.arpAsked++;
     sendFrame(ETH_HDR + 28);
 }
 
 void Stack::arpAsk(const uint8_t ip[4])
 {
     uint64_t now = now_ms();
-    if (!memcmp(arpAsked_, ip, 4) && now - arpAskedAt_ < ARP_RETRY_MS)
+    if (!memcmp(arpAsked_, ip, 4) && now - arpAskedAt_ < ARP_RESEND_MS)
         return;
     memcpy(arpAsked_, ip, 4);
     arpAskedAt_ = now;
+    //  Not the driver: an ARP reply would go to it, not here.  The driver
+    //  resolves the gateway for everyone and publishes its MAC (syscall 0x3d),
+    //  maybe only since bringUp().
+    if (!driver_ && !memcmp(ip, gw_, 4))
+    {
+        auto cfg = r2::net::config();
+        if (cfg && cfg->gateway_mac_known && !memcmp(cfg->gateway.octets, gw_, 4))
+        {
+            arpRemember(gw_, cfg->gateway_mac.octets);
+            return;
+        }
+    }
     arpSend(1, ip, nullptr);
 }
 
@@ -478,7 +541,20 @@ bool Stack::sendIp(const uint8_t dst[4], uint8_t proto, size_t payloadLen)
     if (!arpLookup(hop, dmac))
     {
         arpAsk(hop);
-        return false;
+        //  A host on the local network, and another process is the driver:
+        //  the ARP reply goes to it, and only a kernel that copies ARP replies
+        //  to the processes with ports bound lets it reach here.  On one that
+        //  does not, after a moment the frame goes to the gateway, which sends
+        //  it back onto the network to the host (routers do; they may add an
+        //  ICMP redirect, which is ignored).
+        uint64_t now = now_ms();
+        if (memcmp(unanswered_, hop, 4))
+        {
+            memcpy(unanswered_, hop, 4);
+            unansweredSince_ = now;
+        }
+        if (driver_ || !memcmp(hop, gw_, 4) || now - unansweredSince_ < 1500 || !arpLookup(gw_, dmac))
+            return false;
     }
     uint8_t *f = txFrame_;
     memcpy(f, dmac, 6);
@@ -509,9 +585,9 @@ void Stack::poll()
 
     //  A burst is taken in one go, up to a limit, so that the timers below
     //  still run when the queue is busy.
-    for (int k = 0; k < 16; k++)
+    for (int k = 0; k < 64; k++)
     {
-        int64_t n = r2::raw_syscall(r2::Sys::ReceivePort, 0, (int64_t)rxFrame_);
+        int64_t n = netmux_pull(NETMUX_WEB, rxFrame_, (uint32_t)FRAME);
         if (n <= 0)
             break;
         if ((size_t)n > FRAME)
@@ -551,6 +627,8 @@ void Stack::onFrame(size_t n)
         const uint8_t *a = f + ETH_HDR;
         if (get16(a) != 1 || get16(a + 2) != 0x0800)
             return;
+        if (get16(a + 6) == 2)
+            stats_.arpReplies++;
         arpRemember(a + 14, a + 8);
         if (get16(a + 6) == 1 && !memcmp(a + 24, ip_, 4))
         {
@@ -983,8 +1061,7 @@ void Stack::pump(Tcp &c, uint64_t now)
         c.sndNxt = c.sndUna + (uint32_t)n;
         c.retries = 0;
         c.rto = RTO_INITIAL;
-        //  An unresolved next hop: try again as soon as ARP has had a chance.
-        c.sentAt = sent ? now : now - RTO_INITIAL + ARP_RETRY_MS;
+        noteSent(c, sent, now);
         return;
     }
     if (c.finQueued && !c.finAcked && (c.state == Tcp::FIN_WAIT))
@@ -996,6 +1073,24 @@ void Stack::pump(Tcp &c, uint64_t now)
         c.retries = 0;
         c.rto = RTO_INITIAL;
     }
+}
+
+//  After a try: the timer runs from now, or --- when the next hop's MAC was
+//  not known and nothing left --- fires again as soon as ARP has had a chance.
+void Stack::noteSent(Tcp &c, bool sent, uint64_t now)
+{
+    if (sent)
+    {
+        c.arpWait = false;
+        c.sentAt = now;
+        return;
+    }
+    if (!c.arpWait)
+    {
+        c.arpWait = true;
+        c.arpSince = now;
+    }
+    c.sentAt = now - c.rto + ARP_RETRY_MS;
 }
 
 void Stack::tick(Tcp &c, uint64_t now)
@@ -1011,16 +1106,37 @@ void Stack::tick(Tcp &c, uint64_t now)
     bool waiting = c.inflight || c.pendFlags || c.state == Tcp::SYN_SENT;
     if (waiting && now - c.sentAt >= c.rto)
     {
-        if (++c.retries > MAX_RETRIES)
+        const char *giveUp = nullptr;
+        if (c.arpWait)
+        {
+            //  Nothing went out last time: look again, without counting it.
+            if (now - c.arpSince >= ARP_GIVE_UP_MS)
+            {
+                //  With the counts: replies that never arrive here at all
+                //  point at the machine, not the network.
+                scopy(arpErr_, "no ARP answer (asked ", sizeof(arpErr_));
+                scatInt(arpErr_, (long)stats_.arpAsked, sizeof(arpErr_));
+                scat(arpErr_, ", replies heard ", sizeof(arpErr_));
+                scatInt(arpErr_, (long)stats_.arpReplies, sizeof(arpErr_));
+                scat(arpErr_, driver_ ? ", as driver)" : ")", sizeof(arpErr_));
+                giveUp = arpErr_;
+            }
+        }
+        else if (++c.retries > MAX_RETRIES)
+            giveUp = c.state == Tcp::SYN_SENT ? "no answer from the server" : "the connection timed out";
+        if (giveUp)
         {
             c.failed = true;
-            c.err = c.state == Tcp::SYN_SENT ? "no answer from the server" : "the connection timed out";
+            c.err = giveUp;
             if (c.state == Tcp::FIN_WAIT)
                 freeConn(c);
             return;
         }
-        c.rto = c.rto * 2 > RTO_MAX ? RTO_MAX : c.rto * 2;
-        stats_.retransmits++;
+        if (!c.arpWait)
+        {
+            c.rto = c.rto * 2 > RTO_MAX ? RTO_MAX : c.rto * 2;
+            stats_.retransmits++;
+        }
         bool sent;
         if (c.state == Tcp::SYN_SENT)
             sent = sendSeg(c, F_SYN, c.sndUna, nullptr, 0);
@@ -1028,7 +1144,7 @@ void Stack::tick(Tcp &c, uint64_t now)
             sent = sendSeg(c, F_FIN | F_ACK, c.sndUna, nullptr, 0);
         else
             sent = sendSeg(c, F_ACK | F_PSH, c.sndUna, c.tx, c.inflight);
-        c.sentAt = sent ? now : now - c.rto + ARP_RETRY_MS;
+        noteSent(c, sent, now);
         return;
     }
     pump(c, now);
@@ -1101,7 +1217,21 @@ void Stack::onTcp(const uint8_t src[4], const uint8_t *p, size_t n)
 
     if (c.state == Tcp::SYN_SENT)
     {
-        if ((flags & (F_SYN | F_ACK)) != (F_SYN | F_ACK) || ack != c.sndUna + 1)
+        //  An ACK of something else: the peer still holds an old connection
+        //  on this pair of ports --- in TIME_WAIT after it closed the last
+        //  request's, since only eight local ports go round --- and did not
+        //  take our SYN as a new one.  A reset clears it (RFC 793, SYN-SENT),
+        //  and the SYN goes again at once.  Ignored, the same old ACK came
+        //  back to every SYN until the peer's minute ran out, and the fetch
+        //  failed: on a real network, where QEMU's user networking has no
+        //  TIME_WAIT, every other stream segment went missing that way.
+        if ((flags & F_ACK) && ack != c.sndUna + 1)
+        {
+            sendRst(src, dport, sport, seq, ack, flags, len);
+            c.sentAt = now - c.rto + ARP_RETRY_MS;
+            return;
+        }
+        if ((flags & (F_SYN | F_ACK)) != (F_SYN | F_ACK))
             return;
         c.rcvNxt = seq + 1;
         c.sndUna = c.sndNxt = ack;
@@ -1166,7 +1296,10 @@ void Stack::onTcp(const uint8_t src[4], const uint8_t *p, size_t n)
             size_t room = RX_CAP - c.rxLen;
             if (take > room)
                 take = room; // what does not fit is acknowledged later, after a read
-            memcpy(c.rx + c.rxLen, data + skip, take);
+            size_t at = (c.rxHead + c.rxLen) % RX_CAP;
+            size_t first = take < RX_CAP - at ? take : RX_CAP - at;
+            memcpy(c.rx + at, data + skip, first);
+            memcpy(c.rx, data + skip + first, take - first);
             c.rxLen += take;
             c.rcvNxt += (uint32_t)take;
             sendSeg(c, F_ACK, c.sndNxt, nullptr, 0);
@@ -1235,15 +1368,20 @@ int Stack::connect(const uint8_t ip[4], uint16_t port)
     c.rport = port;
     c.lport = lport;
     c.state = Tcp::SYN_SENT;
-    //  A sequence number that moves between runs: the same few local ports
-    //  come back every time, and the peer may still remember the last use.
-    c.sndUna = c.sndNxt = (uint32_t)(r2::ticks() * 1000) ^ (uint32_t)rdtsc();
+    //  A sequence number that only grows, a thousand a millisecond (RFC 793's
+    //  clock, give or take): the same eight local ports come back every few
+    //  seconds, and a peer that still has the last connection on the port in
+    //  TIME_WAIT takes a SYN as a new one only when its number is past the
+    //  old connection's.  A random one was below it half the time.  A little
+    //  noise under the clock; a fresh boot starts the clock again, and the
+    //  reset above covers that.
+    c.sndUna = c.sndNxt = (uint32_t)(r2::ticks() * 1000) + ((uint32_t)rdtsc() & 0x1FF);
     c.peerMss = 536;
     c.rto = RTO_INITIAL;
     uint64_t now = now_ms();
     bool sent = sendSeg(c, F_SYN, c.sndUna, nullptr, 0);
     c.sndNxt = c.sndUna + 1;
-    c.sentAt = sent ? now : now - RTO_INITIAL + ARP_RETRY_MS;
+    noteSent(c, sent, now);
     return h;
 }
 
@@ -1296,9 +1434,16 @@ size_t Stack::recv(int h, uint8_t *data, size_t n)
         return 0;
     if (n > c.rxLen)
         n = c.rxLen;
-    memcpy(data, c.rx, n);
-    memmove(c.rx, c.rx + n, c.rxLen - n);
+    //  A ring: reading is a copy out and a moved head, however much is left
+    //  behind (TLS reads a record's five-byte header, then the record, and
+    //  moving the rest down after each would be quadratic in the window).
+    size_t first = n < RX_CAP - c.rxHead ? n : RX_CAP - c.rxHead;
+    memcpy(data, c.rx + c.rxHead, first);
+    memcpy(data + first, c.rx, n - first);
+    c.rxHead = (c.rxHead + n) % RX_CAP;
     c.rxLen -= n;
+    if (!c.rxLen)
+        c.rxHead = 0;
     //  Every segment is acknowledged the moment it arrives, when the loader
     //  has not read it yet, so the windows those ACKs carry shrink: after two
     //  full segments the peer is told 4096 - 2 * 1460 = 1176, which is less
@@ -1353,6 +1498,7 @@ bool r2NetSetDns(const char *ip)
         return false;
     memcpy(g_stack.dns_, a, 4);
     memcpy(g_stack.dns2_, a, 4);
+    g_stack.dnsSet_ = true;
     return true;
 }
 

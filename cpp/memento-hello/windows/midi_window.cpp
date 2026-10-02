@@ -1,5 +1,5 @@
 //
-// Window — MIDI player for the .MID files in /mnt/fat/SOUND
+// Window — MIDI player for the .MID files in /mnt/tar/sound
 //
 // The kernel will play a Standard MIDI File for you (syscall 0x1b), and that
 // is exactly what this window does not do. That call parses the file and then
@@ -22,6 +22,10 @@
 // held, because a PC speaker has one voice. Channel 10 is dropped — drum
 // notes carry no pitch worth hearing.
 //
+
+// Where the songs are: the sound/ directory of the archive GRUB loads next
+// to the kernel. A macro, so the path can be spliced into a string literal.
+#define MIDI_SOUND_DIR "/mnt/tar/sound"
 
 class MidiWindow
 {
@@ -181,7 +185,7 @@ private:
 
     void refreshListing()
     {
-        int raw = (int)list_dir_path((const unsigned char *)"/mnt/fat/SOUND", entries);
+        int raw = (int)list_dir_path((const unsigned char *)MIDI_SOUND_DIR, entries);
         if (raw < 0)
             raw = 0;
         nFiles = 0;
@@ -220,10 +224,10 @@ private:
         message[i] = 0;
     }
 
-    // read_file takes a single path component and searches the current
-    // directory, so the directory is changed first — the same dance the file
-    // viewer does. The size comes from the directory entry, and a file that
-    // will not fit is refused rather than read over the end of the buffer.
+    // The songs are on the tar archive, which read_file reaches by its full
+    // path, so the working directory is left alone. The size comes from the
+    // directory entry, and a file that will not fit is refused rather than
+    // read over the end of the buffer.
     bool loadFile(int index)
     {
         if (index < 0 || index >= nFiles)
@@ -234,16 +238,12 @@ private:
             return false;
         }
 
-        char name[33];
-        copyName(entries[index], name, sizeof(name));
+        char path[64] = MIDI_SOUND_DIR "/";
+        int dirLen = (int)sizeof(MIDI_SOUND_DIR);
+        copyName(entries[index], path + dirLen, (int)sizeof(path) - dirLen);
 
-        chdir((const unsigned char *)"/mnt/fat/SOUND");
         memset(data, 0, sizeof(data));
-        long ok = read_file((const unsigned char *)name, data);
-        // The working directory belongs to the system, not to this window:
-        // leave it where it was or the shell comes back from the desktop
-        // sitting in a directory it never asked for.
-        chdir((const unsigned char *)"/");
+        long ok = read_file((const unsigned char *)path, data);
         if (ok == 0)
         {
             setMessage("read error");
@@ -824,7 +824,7 @@ private:
         opts.horizontalAlign = PlatformAlign::Begin;
         opts.verticalAlign = PlatformAlign::Middle;
 
-        target->DrawText(NAME_X, HEAD_Y, NAME_W, 10, "/mnt/fat/SOUND", &opts, false);
+        target->DrawText(NAME_X, HEAD_Y, NAME_W, 10, MIDI_SOUND_DIR, &opts, false);
         target->DrawText(SIZE_X, HEAD_Y, SIZE_W, 10, "Bytes", &opts, false);
         target->FillRect(2, ROW_Y - 2, W - 4, 1, dark, false);
 

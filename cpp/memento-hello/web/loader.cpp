@@ -66,9 +66,10 @@ void Loader::cancel()
     fail("Stopped");
 }
 
-void Loader::start(const Url &u, bool insecure, const uint8_t *postBody, size_t postLen)
+void Loader::start(const Url &u, bool insecure, const uint8_t *postBody, size_t postLen, const char *contentType)
 {
     post_ = postBody != nullptr;
+    scopy(contentType_, contentType ? contentType : "", sizeof(contentType_));
     postBody_.clear();
     if (post_ && postLen)
         postBody_.append(postBody, postLen);
@@ -89,7 +90,7 @@ void Loader::begin()
     resp_.reset();
     received_ = 0;
     reqSent_ = 0;
-    if (!httpBuildRequest(url_, postBody_.data, postBody_.len, post_, request_))
+    if (!httpBuildRequest(url_, postBody_.data, postBody_.len, post_, request_, contentType_[0] ? contentType_ : nullptr))
     {
         fail("The address is too long");
         return;
