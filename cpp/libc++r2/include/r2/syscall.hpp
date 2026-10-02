@@ -21,10 +21,10 @@
  *  matters because an app built today may well be run on a kernel built a year
  *  ago --- the ISO and the app suite ship separately.
  *
- *  Every pointer handed to the kernel must point inside 0x600_000-0xA00_000:
+ *  Every buffer handed to the kernel must lie wholly inside the image range
+ *  0x600_000-0xA00_000 or wholly inside the user heap 0xC00_000-0xFFF_FFF:
  *  the ABI range-checks arguments and returns InvalidInput for anything else.
- *  That is the whole reason r2::heap allocates from an arena inside the image
- *  rather than from the kernel's own 0xC00_000 heap --- see heap.hpp.
+ *  (Kernels before the user-heap region accepted the image range only.)
  */
 
 #include "types.hpp"
@@ -61,6 +61,7 @@ enum class Sys : int64_t {
     GetFbInfo = 0x16,
     BlitBuffer = 0x17,
     GetKernelFont = 0x18,
+    BlitIndexed = 0x19, /*  8-bit frame + palette to the framebuffer (graphics kernel)  */
     PlayFreq = 0x1a,
     PlayFile = 0x1b,
     PlayStop = 0x1f,
@@ -90,6 +91,12 @@ enum class Sys : int64_t {
     NetRegister = 0x37,
     NetStatus = 0x38,
     ReadFileAt = 0x39,
+    WriteFileAt = 0x3a,
+    KillTask = 0x3b,
+    MemInfo = 0x3c,
+    NetConfig = 0x3d,
+    Power = 0x3e,
+    Audio = 0x3f,
 };
 
 /*  Return codes the ABI uses in place of the 0 it returns on success.  */
@@ -110,10 +117,19 @@ enum class SysError : int64_t {
 inline int64_t raw_syscall(Sys number, int64_t arg1 = 0, int64_t arg2 = 0,
                            int64_t arg3 = 0) noexcept {
     int64_t ret;
+    /*
+     *  r9 is in the clobber list because the kernel destroys it: its interrupt
+     *  entry (src/abi/syscall.rs) pushes every register but that one and uses
+     *  it to carry the return value across the restore --- "mov r9, rax" ...
+     *  "mov rax, r9".  Leave it out and the compiler is free to keep a live
+     *  value there across the int, which comes back as whatever the kernel
+     *  returned.  That is not a crash; it is a wrong byte, once in a while, in
+     *  whichever loop the register allocator happened to pick r9 for.
+     */
     asm volatile("int $0x7f"
                  : "=a"(ret)
                  : "a"(number), "d"(number), "D"(arg1), "S"(arg2), "c"(arg3)
-                 : "r11", "memory");
+                 : "r9", "r11", "memory");
     return ret;
 }
 
@@ -173,7 +189,7 @@ struct __attribute__((packed)) FsckReport {
 struct __attribute__((packed)) MountInfo {
     uint8_t path[32];
     uint8_t path_len;
-    uint8_t fs_type; /*  0 none, 1 rootfs, 2 fat12, 3 iso9660  */
+    uint8_t fs_type; /*  0 none, 1 rootfs, 2 fat12, 3 iso9660, 4 tar  */
 };
 
 struct __attribute__((packed)) VfsDirEntry {
@@ -190,6 +206,20 @@ struct __attribute__((packed)) FbInfo {
     uint32_t bpp;
 };
 
+/*  What Sys::BlitIndexed sends: `width` x `height` palette indices and 256
+ *  (r, g, b) byte triples, centred on the screen; only rows first_row ..
+ *  first_row + rows go out.  With a null request the call only answers
+ *  whether there is an RGB framebuffer to send to: 0 yes, 1 no (the
+ *  text-mode kernel).  Arg2 = 1 clears the screen first.  */
+struct __attribute__((packed)) IndexedFrame {
+    uint64_t pixels;
+    uint64_t palette;
+    uint32_t width;
+    uint32_t height;
+    uint32_t first_row;
+    uint32_t rows;
+};
+
 struct __attribute__((packed)) MousePacket {
     uint8_t buttons; /*  bit 0 left, bit 1 right, bit 2 middle  */
     int8_t dx;
@@ -204,13 +234,64 @@ struct __attribute__((packed)) NetStatus {
     uint16_t ports[16];
 };
 
+/*  Syscall 0x3d: the network configuration the ETH driver publishes.  */
+struct __attribute__((packed)) NetConfig {
+    uint8_t ip[4];
+    uint8_t netmask[4];
+    uint8_t gateway[4];
+    uint8_t dns[4];
+    uint8_t mac[6];
+    uint8_t gateway_mac[6];
+    uint8_t source; /*  0 not set, 1 static, 2 DHCP, 3 fallback  */
+    uint8_t reserved;
+};
+
+/*
+ *  One entry from syscall 0x2f: 28 bytes, four of identifiers, sixteen of
+ *  name and eight of instruction pointer — not the 20 this used to say.  The
+ *  kernel advances 28 bytes per entry whatever the caller believes the stride
+ *  to be, so a buffer sized from a shorter struct is overrun by 8 bytes per
+ *  task and every entry after the first is read from the wrong offset.
+ *
+ *  rip is where the task was when it was last put down, and 0 for the task
+ *  doing the asking.  One that has stopped answering reports the same rip
+ *  every time, which says what code it is stuck in.
+ */
 struct __attribute__((packed)) TaskInfo {
     uint8_t id;
     uint8_t mode;   /*  0 kernel, 1 user  */
     uint8_t status; /*  0 ready, 1 running, 2 idle, 3 blocked, 4 crashed, 5 dead  */
     uint8_t _pad;
     uint8_t name[16];
+    uint64_t rip;
 };
+
+/*
+ *  What syscall 0x3c fills in; every figure is in bytes.  The user heap is the
+ *  one kernel_allocate() (syscall 0x0a) hands out from, shared by every
+ *  process; heap_by_slot is who holds what, by process slot ([16] untagged),
+ *  and slot_task the task id in each slot (0xFF for a free one).  Slot n's
+ *  private frame is physical frame_base + n * frame_size, seen at frame_virt.
+ */
+struct __attribute__((packed)) MemInfo {
+    uint64_t version;
+    uint64_t total_ram;
+    uint64_t heap_start;
+    uint64_t heap_size;
+    uint64_t heap_used;
+    uint64_t heap_free;
+    uint64_t heap_largest_free;
+    uint64_t heap_blocks;
+    uint64_t heap_free_blocks;
+    uint64_t heap_by_slot[17];
+    uint64_t frame_base;
+    uint64_t frame_size;
+    uint64_t frame_virt;
+    uint64_t slots;
+    uint8_t slot_task[16];
+};
+
+static_assert(sizeof(MemInfo) == 8 * 30 + 16, "MemInfo must match the kernel's layout");
 
 struct ReadRange {
     uint64_t buffer;
@@ -218,10 +299,13 @@ struct ReadRange {
     uint64_t length;
 };
 
+/*  Syscall 0x3a's request: the same shape, the other way.  */
+using WriteRange = ReadRange;
+
 static_assert(sizeof(SysInfo) == 116, "SysInfo must match the kernel's layout");
 static_assert(sizeof(VfsDirEntry) == 38, "VfsDirEntry must match the kernel's layout");
 static_assert(sizeof(MousePacket) == 3, "MousePacket must match the kernel's layout");
-static_assert(sizeof(TaskInfo) == 20, "TaskInfo must match the kernel's layout");
+static_assert(sizeof(TaskInfo) == 28, "TaskInfo must match the kernel's layout");
 
 } // namespace r2
 

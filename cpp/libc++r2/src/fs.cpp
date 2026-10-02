@@ -144,6 +144,27 @@ bool remove(string_view path) {
     return raw_syscall(Sys::DeleteFile, (int64_t)name, 0) == 0;
 }
 
+bool remove_dir(string_view path) {
+    char name[PATH_MAX];
+    if (!to_path(path, name))
+        return false;
+    return raw_syscall(Sys::DeleteFile, (int64_t)name, 1) == 0;
+}
+
+int64_t write_at(string_view path, const_byte_span data, uint64_t offset) {
+    char name[PATH_MAX];
+    if (!to_path(path, name))
+        return -1;
+    if (data.empty())
+        return 0;
+    WriteRange range;
+    range.buffer = (uint64_t)data.data();
+    range.offset = offset;
+    range.length = data.size();
+    int64_t n = raw_syscall(Sys::WriteFileAt, (int64_t)name, (int64_t)&range);
+    return n < 0 ? -1 : n;
+}
+
 bool rename(string_view from, string_view to) {
     char old_name[PATH_MAX];
     char new_name[PATH_MAX];

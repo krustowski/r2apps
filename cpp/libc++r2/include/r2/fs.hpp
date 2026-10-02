@@ -76,7 +76,20 @@ inline bool exists(string_view path) { return size_of(path).has_value(); }
 bool write(string_view path, const_byte_span data);
 bool write_text(string_view path, string_view text);
 
+/*
+ *  Writes `data` at `offset` into the file, creating it (on FAT12 only; the
+ *  CD is read-only) and growing it as far as it takes (syscall 0x3a).  What
+ *  was there past the end of `data` is left: to replace a file, remove it
+ *  first.  Returns the bytes written --- short when the disk filled --- or -1.
+ */
+int64_t write_at(string_view path, const_byte_span data, uint64_t offset);
+
+/*  Deletes a file.  Like the kernel, only resolves a bare name against the
+ *  working directory, or a path at the top of the floppy: change_dir() to the
+ *  file's own directory first.  */
 bool remove(string_view path);
+/*  Deletes a directory, which has to be empty (syscall 0x23 with 1).  */
+bool remove_dir(string_view path);
 bool rename(string_view from, string_view to);
 
 /*  Creates `name` inside the directory `parent` (an absolute VFS path).  */

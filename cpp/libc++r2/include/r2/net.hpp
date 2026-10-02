@@ -98,10 +98,32 @@ struct Status {
 /*  Network status (syscall 0x38).  */
 optional<Status> status();
 
+/*
+ *  The machine's network configuration (syscall 0x3d): what the ETH driver got
+ *  by DHCP or was given.  Use it rather than addresses of your own --- the
+ *  gateway's MAC especially, which a process other than the driver cannot ARP
+ *  for (the replies go to the driver).  Unset fields are zero.
+ */
+struct Config {
+    enum class Source : uint8_t { None = 0, Static = 1, Dhcp = 2, Fallback = 3 };
+
+    Ipv4 ip;
+    Ipv4 netmask;
+    Ipv4 gateway;
+    Ipv4 dns;
+    MacAddress mac;
+    MacAddress gateway_mac;
+    bool gateway_mac_known;
+    Source source;
+};
+
+/*  nullopt on a kernel without syscall 0x3d.  */
+optional<Config> config();
+
 /*  Waits until the ETH driver reports an address, or the timeout expires.  */
 optional<Ipv4> wait_for_address(uint64_t timeout_ms = 15000);
 
-/*  Claims every unrouted Ethernet frame and brings up the RTL8139 (0x37).  */
+/*  Claims every unrouted Ethernet frame and brings up the network card (0x37).  */
 bool register_driver();
 
 /*  Receives only TCP frames for this port (0x37 with the port as arg1).  */
@@ -117,7 +139,7 @@ int64_t receive(PacketKind kind, byte_span buffer);
 /*  Returns 0 immediately when nothing is queued.  */
 int64_t receive_nonblocking(byte_span buffer);
 
-/*  Sends a complete Ethernet frame through the RTL8139 (0x34, kind 0x04).  */
+/*  Sends a complete Ethernet frame through the network card (0x34, kind 0x04).  */
 bool send_frame(const_byte_span frame);
 
 /*  Asks the kernel to fill in the headers of a packet under construction

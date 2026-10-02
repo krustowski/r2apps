@@ -132,9 +132,25 @@ class Mouse {
 
     void warp(int32_t x, int32_t y) noexcept;
 
+    /*
+     *  Pointer speed, as a percentage of the raw PS/2 deltas.  100 is the
+     *  mouse as the hardware reports it; 200 covers twice the distance for
+     *  the same movement of the hand.
+     *
+     *  It exists because the right number depends on the screen: a delta of
+     *  four pixels crosses 1/80th of a 320-wide mode and 1/160th of a 640-wide
+     *  one, so the same mouse feels half as fast on the larger screen.  The
+     *  scaling is applied per packet and the remainder is carried, so slow,
+     *  single-count movements still move the pointer rather than rounding
+     *  away to nothing.
+     */
+    void set_speed(int32_t percent) noexcept;
+
   private:
     int32_t x_, y_;
     int32_t width_, height_;
+    int32_t speed_ = 100;
+    int32_t rem_x_ = 0, rem_y_ = 0;
     uint8_t buttons_;
     uint8_t prev_buttons_;
     bool subscribed_;

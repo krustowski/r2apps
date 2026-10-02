@@ -1,9 +1,9 @@
 /*
  *  test_arena.cpp — checks that an application can replace the default arena.
  *
- *  R2_HEAP_ARENA defines the weak __r2_heap_config that heap::init() looks for,
+ *  R2_HEAP_ARENA defines the __r2_heap_config that heap::init() calls,
  *  so the allocator must end up using this 64 KiB buffer rather than the
- *  512 KiB (or whatever R2CXX_ARENA_BYTES says) one compiled into heap.cpp.
+ *  512 KiB (or whatever R2CXX_ARENA_BYTES says) one in heap_arena.cpp.
  *  A separate binary from the main host test because there can only be one
  *  arena per program.
  */

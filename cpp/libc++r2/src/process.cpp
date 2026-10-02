@@ -94,4 +94,26 @@ optional<uint8_t> spawn(string_view path, string_view args) {
     return (uint8_t)result;
 }
 
+bool kill(uint8_t id) {
+    return raw_syscall(Sys::KillTask, (int64_t)id, 0) == 0;
+}
+
+bool reboot() noexcept {
+    raw_syscall(Sys::Power, 0x01, 0);
+    return false; // still here: a kernel without the call
+}
+
+bool power_off() noexcept {
+    raw_syscall(Sys::Power, 0x02, 0);
+    return false;
+}
+
+optional<MemInfo> meminfo() {
+    MemInfo info;
+    memset(&info, 0, sizeof(info));
+    if (raw_syscall(Sys::MemInfo, (int64_t)&info, 0) != 0 || info.version < 1)
+        return nullopt;
+    return info;
+}
+
 } // namespace r2

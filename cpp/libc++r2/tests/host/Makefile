@@ -20,10 +20,17 @@ CXXFLAGS := -std=c++17 -m64 -O1 -g -nostdinc++ \
 
 CXX23FLAGS := $(subst -std=c++17,-std=c++23,$(CXXFLAGS))
 
-SOURCES := test_main.cpp $(ROOT)/src/heap.cpp $(ROOT)/src/new.cpp $(ROOT)/src/string.cpp
+#  heap_arena.cpp carries the default arena and the __r2_heap_config that
+#  points at it.  A suite that declares its own with R2_HEAP_ARENA leaves it
+#  out, exactly as an application does — on the real target the linker skips
+#  that archive member for the same reason.
+SOURCES := test_main.cpp $(ROOT)/src/heap.cpp $(ROOT)/src/heap_arena.cpp \
+           $(ROOT)/src/new.cpp $(ROOT)/src/string.cpp
 
 ARENA_SOURCES := test_arena.cpp $(ROOT)/src/heap.cpp $(ROOT)/src/new.cpp
-CXX23_SOURCES := test_cxx23.cpp $(ROOT)/src/heap.cpp $(ROOT)/src/new.cpp $(ROOT)/src/string.cpp \
+GROW_SOURCES  := test_grow.cpp $(ROOT)/src/heap.cpp $(ROOT)/src/new.cpp
+CXX23_SOURCES := test_cxx23.cpp $(ROOT)/src/heap.cpp $(ROOT)/src/heap_arena.cpp \
+                 $(ROOT)/src/new.cpp $(ROOT)/src/string.cpp \
                  panic_host.cpp
 
 .PHONY: run build clean
@@ -33,9 +40,11 @@ run: build
 	@echo
 	@./arena_test
 	@echo
+	@./grow_test
+	@echo
 	@./cxx23_test
 
-build: host_test arena_test cxx23_test
+build: host_test arena_test grow_test cxx23_test
 
 host_test: $(SOURCES)
 	@$(CXX) $(CXXFLAGS) $(SOURCES) -o $@
@@ -43,8 +52,11 @@ host_test: $(SOURCES)
 arena_test: $(ARENA_SOURCES)
 	@$(CXX) $(CXXFLAGS) $(ARENA_SOURCES) -o $@
 
+grow_test: $(GROW_SOURCES)
+	@$(CXX) $(CXXFLAGS) $(GROW_SOURCES) -o $@
+
 cxx23_test: $(CXX23_SOURCES)
 	@$(CXX) $(CXX23FLAGS) $(CXX23_SOURCES) -o $@
 
 clean:
-	@rm -f host_test arena_test cxx23_test
+	@rm -f host_test arena_test grow_test cxx23_test

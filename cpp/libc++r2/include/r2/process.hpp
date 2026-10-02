@@ -57,6 +57,27 @@ string_view task_status_name(uint8_t status);
  */
 optional<uint8_t> spawn(string_view path, string_view args = string_view());
 
+/*
+ *  Ends the task whose id is `id` --- the id tasks() reports (syscall 0x3b).
+ *  The kernel gives its user-heap blocks back.  False when no live task has
+ *  that id, or on a kernel without the call.
+ */
+bool kill(uint8_t id);
+
+/*
+ *  The machine's memory (syscall 0x3c): RAM, the process frames and the user
+ *  heap, with who holds what.  Empty when the kernel is busy at that instant
+ *  (ask again) or older than the call.
+ */
+optional<MemInfo> meminfo();
+
+/*
+ *  Restarts, or switches off, the machine (syscall 0x3e).  They do not come
+ *  back when they work; false means the kernel is older than the call.
+ */
+bool reboot() noexcept;
+bool power_off() noexcept;
+
 } // namespace r2
 
 #endif

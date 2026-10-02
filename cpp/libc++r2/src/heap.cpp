@@ -17,8 +17,14 @@
  *  that coalescing stops at, which removes the end-of-arena special case from
  *  every path.
  *
+ *  The arena may be several regions.  An application that defines
+ *  __r2_heap_more (R2_HEAP_ARENA_KERNEL does) is asked for another region when
+ *  nothing on the free list fits; each region is laid out like the first, with
+ *  its own first block (prev_size 0) and its own sentinel, so blocks never
+ *  merge across the gap between two regions.  Regions are never given back.
+ *
  *  Single-threaded by construction: each r2 process has one thread and its own
- *  arena in its own private frame, so there is nothing to lock against.
+ *  arena, so there is nothing to lock against.
  */
 
 #include "r2/heap.hpp"
@@ -66,17 +72,16 @@ inline size_t round_up(size_t value, size_t multiple) {
     return (value + multiple - 1) & ~(multiple - 1);
 }
 
-/*  The default arena.  R2CXX_ARENA_BYTES is settable at build time; see the
- *  Makefile and README.md, "Memory map".  */
-#ifndef R2CXX_ARENA_BYTES
-#define R2CXX_ARENA_BYTES (512 * 1024)
-#endif
+struct Region {
+    unsigned char *base;
+    size_t size;
+};
 
-alignas(ALIGNMENT) unsigned char g_default_arena[R2CXX_ARENA_BYTES];
+constexpr int MAX_REGIONS = 32;
 
 Block *g_free_list = nullptr;
-unsigned char *g_arena_base = nullptr;
-size_t g_arena_size = 0;
+Region g_regions[MAX_REGIONS];
+int g_region_count = 0;
 bool g_ready = false;
 
 r2::heap::Stats g_stats = {};
@@ -100,19 +105,24 @@ void free_list_remove(Block *b) {
         links_of(links->next)->prev = links->prev;
 }
 
-void arena_init(unsigned char *base, size_t size) {
+/*  Lays a region out as one free block and a sentinel.  */
+bool add_region(unsigned char *base, size_t size) {
+    if (g_region_count == MAX_REGIONS)
+        return false;
+
     /*  Align the base up and the size down, then reserve the tail sentinel.  */
     uintptr_t aligned_base = round_up((uintptr_t)base, ALIGNMENT);
+    if (size < (size_t)(aligned_base - (uintptr_t)base))
+        return false;
     size -= (size_t)(aligned_base - (uintptr_t)base);
     size &= ~(ALIGNMENT - 1);
 
     if (size < HEADER_SIZE * 2 + MIN_PAYLOAD)
-        return;
+        return false;
 
-    g_arena_base = (unsigned char *)aligned_base;
-    g_arena_size = size;
+    g_regions[g_region_count++] = {(unsigned char *)aligned_base, size};
 
-    Block *first = (Block *)g_arena_base;
+    Block *first = (Block *)aligned_base;
     size_t usable = size - HEADER_SIZE /*  first header  */ - HEADER_SIZE /*  sentinel  */;
     usable &= ~(ALIGNMENT - 1);
 
@@ -123,12 +133,36 @@ void arena_init(unsigned char *base, size_t size) {
     sentinel->size = 0; /*  zero-sized and not free: coalescing stops here  */
     sentinel->prev_size = usable;
 
-    g_free_list = nullptr;
     free_list_insert(first);
+    g_stats.arena_bytes += size;
+    return true;
+}
 
-    g_stats = {};
-    g_stats.arena_bytes = size;
-    g_ready = true;
+/*  Asks the application for another region big enough for `wanted`.  */
+bool grow(size_t wanted) {
+    if (!__r2_heap_more)
+        return false;
+    void *base = nullptr;
+    size_t size = 0;
+    size_t need = wanted + HEADER_SIZE * 2 + ALIGNMENT;
+    if (need < wanted || !__r2_heap_more(need, &base, &size) || !base)
+        return false;
+    return add_region((unsigned char *)base, size);
+}
+
+Block *first_fit(size_t wanted) {
+    for (Block *b = g_free_list; b != nullptr; b = links_of(b)->next)
+        if (payload_size(b) >= wanted)
+            return b;
+    return nullptr;
+}
+
+const Region *region_of(const void *p) {
+    for (int i = 0; i < g_region_count; i++)
+        if ((const unsigned char *)p >= g_regions[i].base &&
+            (const unsigned char *)p < g_regions[i].base + g_regions[i].size)
+            return &g_regions[i];
+    return nullptr;
 }
 
 void ensure_ready() {
@@ -182,21 +216,22 @@ void init() noexcept {
     if (g_ready)
         return;
 
-    unsigned char *base = g_default_arena;
-    size_t size = sizeof(g_default_arena);
+    /*  Where the arena is comes from __r2_heap_config: the application's own,
+     *  when it declared one with R2_HEAP_ARENA, and otherwise the default in
+     *  heap_arena.cpp, which the linker only brings in when the application
+     *  has not.  */
+    void *base = nullptr;
+    size_t size = 0;
+    __r2_heap_config(&base, &size);
 
-    /*  An application can supply its own arena with R2_HEAP_ARENA().  */
-    if (__r2_heap_config) {
-        void *custom_base = nullptr;
-        size_t custom_size = 0;
-        __r2_heap_config(&custom_base, &custom_size);
-        if (custom_base && custom_size >= HEADER_SIZE * 2 + MIN_PAYLOAD) {
-            base = (unsigned char *)custom_base;
-            size = custom_size;
-        }
-    }
+    g_free_list = nullptr;
+    g_region_count = 0;
+    g_stats = {};
+    /*  Ready even without a first region: one may still come from grow().  */
+    g_ready = true;
 
-    arena_init(base, size);
+    if (base && size >= HEADER_SIZE * 2 + MIN_PAYLOAD)
+        add_region((unsigned char *)base, size);
 }
 
 void *allocate(size_t size) noexcept {
@@ -215,22 +250,22 @@ void *allocate(size_t size) noexcept {
         return nullptr;
     }
 
-    for (Block *b = g_free_list; b != nullptr; b = links_of(b)->next) {
-        if (payload_size(b) < wanted)
-            continue;
-
-        free_list_remove(b);
-        split_block(b, wanted);
-        set_free(b, false);
-
-        g_stats.used_bytes += payload_size(b);
-        g_stats.live_allocations++;
-        g_stats.total_allocations++;
-        return payload_of(b);
+    Block *b = first_fit(wanted);
+    if (!b && grow(wanted))
+        b = first_fit(wanted);
+    if (!b) {
+        g_stats.failed_allocations++;
+        return nullptr;
     }
 
-    g_stats.failed_allocations++;
-    return nullptr;
+    free_list_remove(b);
+    split_block(b, wanted);
+    set_free(b, false);
+
+    g_stats.used_bytes += payload_size(b);
+    g_stats.live_allocations++;
+    g_stats.total_allocations++;
+    return payload_of(b);
 }
 
 void *allocate_aligned(size_t size, size_t align) noexcept {
@@ -348,6 +383,7 @@ Stats stats() noexcept {
      *  tracked on every split and merge: one walk at diagnostic time is far
      *  easier to keep correct than a delta on each of half a dozen paths.  */
     Stats snapshot = g_stats;
+    snapshot.regions = (size_t)g_region_count;
     snapshot.free_bytes = 0;
     snapshot.largest_free_block = 0;
     for (Block *b = g_free_list; b != nullptr; b = links_of(b)->next) {
@@ -357,6 +393,80 @@ Stats stats() noexcept {
             snapshot.largest_free_block = size;
     }
     return snapshot;
+}
+
+Integrity validate(const void **where) noexcept {
+    if (where)
+        *where = nullptr;
+    if (!g_ready)
+        return Integrity::NotReady;
+
+    size_t total = 0;
+    for (int r = 0; r < g_region_count; r++) {
+        unsigned char *base = g_regions[r].base;
+        unsigned char *end = base + g_regions[r].size;
+        total += g_regions[r].size;
+
+        /*  Forward over the chain: every block's prev_size must agree with
+         *  the block it physically follows, and the walk must land on the
+         *  sentinel.  An overrun that rewrote a header shows up here as the
+         *  first block whose boundary tags disagree --- which is the block
+         *  after the one that was written past, so the culprit is its
+         *  neighbour.  */
+        Block *b = (Block *)base;
+        size_t previous = 0;
+        bool sawSentinel = false;
+        while ((unsigned char *)b + HEADER_SIZE <= end) {
+            if (b->prev_size != previous) {
+                if (where)
+                    *where = b;
+                return Integrity::BadPrevSize;
+            }
+            if (payload_size(b) == 0) {
+                sawSentinel = true;
+                break;
+            }
+            previous = payload_size(b);
+            unsigned char *next = (unsigned char *)next_block(b);
+            if (next <= (unsigned char *)b || next + HEADER_SIZE > end) {
+                if (where)
+                    *where = b;
+                return Integrity::BlockOutOfRange;
+            }
+            b = (Block *)next;
+        }
+        if (!sawSentinel) {
+            if (where)
+                *where = b;
+            return Integrity::NoSentinel;
+        }
+    }
+
+    /*  And the free list: every entry has to be a block of this arena that is
+     *  still flagged free.  The step limit is what catches a list that has
+     *  been spliced into a ring.  */
+    size_t steps = 0;
+    size_t limit = total / (HEADER_SIZE + MIN_PAYLOAD) + 2;
+    for (Block *f = g_free_list; f != nullptr; f = links_of(f)->next) {
+        const Region *in = region_of(f);
+        if (!in || (unsigned char *)f + HEADER_SIZE > in->base + in->size) {
+            if (where)
+                *where = f;
+            return Integrity::FreeOutOfRange;
+        }
+        if (!is_free(f)) {
+            if (where)
+                *where = f;
+            return Integrity::FreeNotMarked;
+        }
+        if (++steps > limit) {
+            if (where)
+                *where = f;
+            return Integrity::FreeListLoop;
+        }
+    }
+
+    return Integrity::Ok;
 }
 
 void *kernel_allocate(size_t size) noexcept {

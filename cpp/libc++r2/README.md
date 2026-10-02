@@ -64,9 +64,9 @@ path assumes the program sits one level below `examples/`.
 | `r2/gfx.hpp` | `Canvas`, `Font`, the VESA framebuffer, VGA mode 13h |
 | `r2/input.hpp` | keyboard and mouse |
 | `r2/time.hpp` | ticks, sleep, the RTC, `Stopwatch`, `FrameTimer` |
-| `r2/process.hpp` | arguments, `exit`, `panic`, sysinfo, the task table, `spawn` |
+| `r2/process.hpp` | arguments, `exit`, `panic`, sysinfo, the task table, `spawn`, `kill`, `meminfo`, `reboot` and `power_off` (syscall `0x3e`; they return false only on a kernel without it) |
 | `r2/net.hpp` | addresses, byte order, frames, port binding |
-| `r2/audio.hpp` | the PC speaker |
+| `r2/audio.hpp` | the PC speaker, and PCM through the HD Audio driver (syscall `0x3f`; inline, so a program built without SSE compiles it with its own flags) |
 | `r2/math.hpp` | `sqrt`, `sin`, `cos`, `floor`, `fmod`, ... since there is no libm |
 
 ### The standard, and what the language needs from a freestanding library
@@ -181,7 +181,7 @@ inside the private frame:
            +---------------------------+
            |  stack     512 KiB        |   _crt0.asm, R2_STACK_BYTES
            +---------------------------+
-           |  heap arena 512 KiB       |   heap.cpp, R2CXX_ARENA_BYTES
+           |  heap arena 512 KiB       |   heap_arena.cpp, R2CXX_ARENA_BYTES
 0x800_000  +---------------------------+   <-- stay below this line
            |  other processes' stacks  |
 0xA00_000  +---------------------------+   <-- the kernel rejects segments past here
@@ -199,18 +199,55 @@ and a single application can override the arena without rebuilding the library:
 R2_HEAP_ARENA(1024 * 1024)      // at file scope, in exactly one .cpp
 ```
 
-### Why the heap is an arena and not the kernel's
+An application that does replaces the default outright rather than sitting
+beside it: the default lives in `heap_arena.cpp`, which is a translation unit
+of its own precisely so that the linker never brings it in once the program
+has defined `__r2_heap_config` itself.  Both arenas in `.bss` at once would
+cost half a megabyte of a two-megabyte process for nothing.
 
-The kernel has a 4 MiB heap of its own at `0xC00_000` (syscall `0x0a`), and
-libc++r2 does not use it for `operator new`.  Every syscall that takes a
-pointer range-checks it against `0x600_000-0xA00_000` and returns
-`InvalidInput` for anything else, so a string built on the kernel heap can be
-allocated but never printed, written to a file, or blitted to the screen.  The
-arena lives in `.bss`, inside the image, which is inside the range the kernel
-accepts.
+### The arena in `.bss`, or on the kernel's user heap
 
-The kernel heap is still reachable through `r2::heap::kernel_allocate()` for
-large scratch buffers that never cross the ABI boundary.
+The kernel has a 4 MiB user heap at `0xC00_000-0xFFF_FFF` (syscall `0x0a`),
+shared by all processes: every process's page tables map it the same way, and
+the kernel frees a process's blocks when it dies.  Every syscall that takes a
+pointer accepts a buffer that lies wholly inside the image range
+(`0x600_000-0xA00_000`) or wholly inside that heap, so memory from either
+place can be printed, written to a file, or blitted.  (Older kernels checked
+the image range only; a program that puts pointers from the user heap into
+syscalls needs a kernel with the two-region check.)
+
+The default arena is in `.bss`.  A program that needs its 2 MiB for code and
+stack can put the arena on the user heap instead, and carry none in its image:
+
+```cpp
+R2_HEAP_ARENA_KERNEL(1024 * 1024)   // at file scope, in exactly one .cpp
+```
+
+It asks for that much at startup, halving the request down to 64 KiB when the
+heap is short.  After that the arena grows: when nothing on its free list
+fits, `__r2_heap_more` (which the macro defines) takes another region of at
+least `R2_HEAP_GROW_BYTES` (256 KiB) from the user heap, laid out with its own
+first block and sentinel so that nothing coalesces across the gap.  Regions
+are kept until the process ends.  Allocation fails only when the user heap
+itself is out --- and that heap is 4 MiB for everyone, so start with what the
+program needs rather than all of it.  `r2::heap::stats().regions` says how
+many pieces the arena is in; `r2::heap::kernel_allocate()` hands out blocks
+directly.
+
+Between the two:
+
+```cpp
+R2_HEAP_ARENA_GROWING(768 * 1024)   // in .bss, growing onto the user heap
+```
+
+keeps the arena in the image and leaves the shared user heap to others until
+the arena is full, and only then takes regions from it.  Memento uses this: its
+Web window keeps whole pages on the user heap, and a 1 MiB arena sitting there
+from the start left too little for a large one.
+
+A program that reads `largest_free_block` to decide whether a big allocation
+will succeed gets the wrong answer from a growing arena: try the allocation
+instead.
 
 The arena allocator is a first-fit free list with boundary tags: blocks are
 coalesced with both neighbours on free, so a loop that allocates and frees
@@ -218,15 +255,16 @@ stays flat rather than marching off the end of a bump pointer.
 `r2::heap::stats()` reports what is in use, what is free, and the largest block
 that can still be handed out.
 
-## The syscall number goes in two registers
+## The syscall number goes in two registers, and R9 does not survive
 
-`r2::raw_syscall` loads the syscall number into **both `RAX` and `RDX`**:
+`r2::raw_syscall` loads the syscall number into **both `RAX` and `RDX`**, and
+tells the compiler that `R9` is gone:
 
 ```cpp
 asm volatile("int $0x7f"
              : "=a"(ret)
              : "a"(number), "d"(number), "D"(arg1), "S"(arg2), "c"(arg3)
-             : "r11", "memory");
+             : "r9", "r11", "memory");
 ```
 
 `c/libcr2` passes it in `RDX` only.  The kernel's interrupt entry
@@ -241,6 +279,21 @@ process vanished before printing anything.  Adding `"a"(number)` to `libcr2`'s
 inline assembly made the same probe reach `print` normally.  Setting both
 registers costs one instruction and works whichever register the kernel
 happens to read.
+
+`R9` is the other half of that story.  The kernel's entry stub pushes every
+register it is going to use --- except `R9`, which it keeps for the return
+value across the restore (`mov r9, rax` ... `pop`s ... `mov rax, r9`).  So
+every syscall destroys `R9`, and a caller that does not say so in the clobber
+list can have the compiler keep a live value there across the `int`.
+
+That is not theoretical either.  Memento's r2 backend programs the VGA a
+register at a time, and GCC chose `R9` to hold the *value* byte of each
+index/value pair while the syscall that wrote the *index* went through.  Every
+CRTC register received the previous syscall's return value instead of the
+timing it was meant to get, so the screen came up as a single scan line --- in
+one build.  A different one, from the same source, allocated a different
+register and worked.  `c/libcr2`'s `syscall.c` has the same omission and the
+same latent bug.
 
 ## Startup
 
@@ -275,8 +328,7 @@ Two things to know when both libraries are linked:
   `uint16_t` length and silently truncates copies over 65535 bytes.
 - `libcr2` also defines `malloc`, `free` and `realloc` against the kernel heap.
   libc++r2 keeps its C allocator out of `libc++r2.a` for exactly this reason,
-  so there is no clash --- but remember that memory from `libcr2`'s `malloc`
-  cannot be passed back to a syscall.
+  so there is no clash.
 - If a duplicate symbol does turn up, `-Wl,--allow-multiple-definition` settles
   it in favour of whichever archive came first.
 

@@ -118,3 +118,42 @@ uintptr_t __stack_chk_guard = 0x00000aff'deadbeefULL;
 
 void __stack_chk_fail() { r2::panic(r2::string_view("stack smashing detected")); }
 }
+
+/*
+ *  Type-info anchors.
+ *
+ *  A class with virtual functions gets a vtable, and the slot before its first
+ *  method points at the class's type_info object — which in turn points at the
+ *  vtable of whichever __cxxabiv1 type_info kind describes it: __class_type_info
+ *  for a base, __si_class_type_info for single inheritance, __vmi_class_type_info
+ *  for anything more involved.  The compiler emits those references even under
+ *  -fno-rtti, and on a hosted system libsupc++ satisfies them.
+ *
+ *  Nothing here can be called: with no RTTI there is no dynamic_cast and no
+ *  typeid to walk these tables, and a program that manages to reach one has
+ *  gone somewhere it cannot come back from.  What the three definitions below
+ *  provide is the symbol, so that a program with an ordinary class hierarchy
+ *  — Memento's platform layer, say — links at all.  Each has one virtual
+ *  function defined here, which is what makes the compiler emit the vtable in
+ *  this translation unit; -fdata-sections and --gc-sections drop the ones a
+ *  given program does not refer to.
+ */
+namespace __cxxabiv1 {
+
+class __class_type_info {
+    virtual void unreachable();
+};
+
+class __si_class_type_info {
+    virtual void unreachable();
+};
+
+class __vmi_class_type_info {
+    virtual void unreachable();
+};
+
+void __class_type_info::unreachable() { r2::panic(r2::string_view("rtti is not available")); }
+void __si_class_type_info::unreachable() { r2::panic(r2::string_view("rtti is not available")); }
+void __vmi_class_type_info::unreachable() { r2::panic(r2::string_view("rtti is not available")); }
+
+} // namespace __cxxabiv1

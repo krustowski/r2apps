@@ -221,9 +221,18 @@ bool Mouse::poll() {
             count = MAX_PACKETS;
 
         for (int i = 0; i < count; i++) {
-            int32_t nx = x_ + packets[i].dx;
+            /*  Scale the raw deltas, carrying the remainder so that a slow
+             *  movement of one count per packet still gets there.  */
+            int32_t sx = (int32_t)packets[i].dx * speed_ + rem_x_;
+            int32_t sy = (int32_t)packets[i].dy * speed_ + rem_y_;
+            int32_t dx = sx / 100;
+            int32_t dy = sy / 100;
+            rem_x_ = sx - dx * 100;
+            rem_y_ = sy - dy * 100;
+
+            int32_t nx = x_ + dx;
             /*  PS/2 reports positive dy as upwards; the screen grows down.  */
-            int32_t ny = y_ - packets[i].dy;
+            int32_t ny = y_ - dy;
 
             if (nx < 0)
                 nx = 0;
@@ -251,6 +260,18 @@ bool Mouse::poll() {
     }
 
     return changed;
+}
+
+void Mouse::set_speed(int32_t percent) noexcept {
+    /*  Below a quarter speed the pointer is unusable and above eight times it
+     *  jumps whole windows; clamping keeps a typo from making it either.  */
+    if (percent < 25)
+        percent = 25;
+    if (percent > 800)
+        percent = 800;
+    speed_ = percent;
+    rem_x_ = 0;
+    rem_y_ = 0;
 }
 
 void Mouse::warp(int32_t x, int32_t y) noexcept {

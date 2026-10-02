@@ -2,11 +2,9 @@
  *  io.cpp — the console writer.
  *
  *  Syscall 0x10 takes a pointer and a length and prints bytes until it reaches
- *  the length or hits a NUL.  The pointer has to be inside 0x600_000-0xA00_000
- *  or the call is rejected, so everything goes through this object's own
- *  buffer, which is .bss and therefore always in range --- text that a program
- *  parked in the kernel heap (r2::heap::kernel_allocate) would otherwise
- *  silently fail to print.
+ *  the length or hits a NUL.  Everything goes through this object's own
+ *  buffer, which is .bss and therefore in range on every kernel, old ones
+ *  included, which rejected pointers into the user heap.
  */
 
 #include "r2/io.hpp"

@@ -84,6 +84,27 @@ optional<Ipv4> Ipv4::parse(string_view text) {
     return address;
 }
 
+optional<Config> config() {
+    NetConfig raw;
+    memset(&raw, 0, sizeof(raw));
+
+    if (raw_syscall(Sys::NetConfig, 0x01, (int64_t)&raw) != 0)
+        return nullopt;
+
+    Config result;
+    memcpy(result.ip.octets, raw.ip, 4);
+    memcpy(result.netmask.octets, raw.netmask, 4);
+    memcpy(result.gateway.octets, raw.gateway, 4);
+    memcpy(result.dns.octets, raw.dns, 4);
+    memcpy(result.mac.octets, raw.mac, 6);
+    memcpy(result.gateway_mac.octets, raw.gateway_mac, 6);
+    result.gateway_mac_known = false;
+    for (int i = 0; i < 6; i++)
+        result.gateway_mac_known = result.gateway_mac_known || raw.gateway_mac[i] != 0;
+    result.source = (Config::Source)(raw.source <= 3 ? raw.source : 0);
+    return result;
+}
+
 optional<Status> status() {
     NetStatus raw;
     memset(&raw, 0, sizeof(raw));
