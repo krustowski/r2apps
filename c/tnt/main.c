@@ -5,6 +5,7 @@
 #include "syscall.h"
 
 #include "shell.h"
+#include "xfer.h"
 
 /*
  *  tnt
@@ -40,6 +41,7 @@ int main(int argc, char **argv) {
         for (int i = 1; i < argc; i++) {
             if (memcmp((uint8_t *)argv[i], (uint8_t *)"debug", 6) == 0) {
                 debug = 1;
+                net_set_debug(1);
             } else if (memcmp((uint8_t *)argv[i], (uint8_t *)"--net", 5) == 0 && i + 1 < argc) {
                 net_arg = (const uint8_t *)argv[i + 1];
                 i++;
@@ -73,6 +75,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf((const uint8_t *)"-> net driver: %s\n", net_arg);
+    xfer_init(net_arg);
 
     for (;;) {
         int64_t n = net_drv.recv(packet_buf, sizeof(packet_buf));
@@ -104,6 +107,7 @@ int main(int argc, char **argv) {
 
                     shell_banner(s);
                     shell_prompt(s);
+                    shell_flush();
                 }
             } else if (!s->used && sessions[i].active) {
                 sessions[i].active = 0;
@@ -177,11 +181,13 @@ int main(int argc, char **argv) {
                 int quit = shell_dispatch(client, sockets, sess->line, sess->llen);
                 sess->llen = 0;
                 if (quit) {
+                    shell_flush();
                     close(client);
                     sessions[client->id].active = 0;
                     break;
                 }
                 shell_prompt(client);
+                shell_flush();
                 continue;
             }
 
