@@ -22,12 +22,31 @@ static uint16_t parse_u16(const uint8_t *s, uint32_t len) {
     return v;
 }
 
+/* Parse "A.B.C.D" of length len into ip[4]; returns 1 on success. */
+static uint8_t parse_ip4(const uint8_t *s, uint32_t len, uint8_t ip[4]) {
+    uint32_t oct = 0, i = 0, start = 0;
+    while (i <= len && oct < 4) {
+        if (i == len || s[i] == '.') {
+            uint16_t v = 0;
+            for (uint32_t k = start; k < i; k++) {
+                if (s[k] < '0' || s[k] > '9') return 0;
+                v = (uint16_t)(v * 10 + s[k] - '0');
+            }
+            ip[oct++] = (uint8_t)v;
+            start = i + 1;
+        }
+        i++;
+    }
+    return oct == 4;
+}
+
 void config_defaults(GarnConfig_T *cfg) {
     cfg->port   = 80;
     cfg->debug  = 0;
     cfg->net[0] = 's'; cfg->net[1] = 'l'; cfg->net[2] = 'i';
     cfg->net[3] = 'p'; cfg->net[4] = '\0';
     cfg->path[0] = '\0';
+    cfg->ip[0] = cfg->ip[1] = cfg->ip[2] = cfg->ip[3] = 0;
 }
 
 void config_load(const uint8_t *path, GarnConfig_T *cfg) {
@@ -139,6 +158,10 @@ void config_load(const uint8_t *path, GarnConfig_T *cfg) {
             uint32_t n = vlen < 63 ? vlen : 63;
             memcpy(cfg->path, buf + vs, n);
             cfg->path[n] = '\0';
+        } else if (klen == 2 && memcmp(buf + ks, (const uint8_t *)"ip", 2) == 0) {
+            uint8_t tmp[4] = {0, 0, 0, 0};
+            if (parse_ip4(buf + vs, vlen, tmp))
+                memcpy(cfg->ip, tmp, 4);
         }
 
         if (i < len && buf[i] == '\r') i++;

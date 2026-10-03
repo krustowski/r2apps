@@ -18,6 +18,7 @@ typedef struct {
     uint8_t  net[8];
     uint8_t  debug;
     uint8_t  path[64]; /* VFS prefix for route_file; empty = kernel cwd */
+    uint8_t  ip[4];   /* static IPv4; all-zero = let ETH/DHCP manage the IP */
 } GarnConfig_T;
 
 void config_defaults(GarnConfig_T *cfg);

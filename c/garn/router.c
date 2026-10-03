@@ -1,33 +1,109 @@
 #include "router.h"
 
-/* Route: GET /<filename> — read from the FAT filesystem and serve in chunks.
- * buf/cap is a caller-supplied scratch buffer (reuse main's temp_buf to avoid
- * a large stack allocation here — BSS/static is not available in this env).
+/* Directory listings get storage of their own, sized to the kernel contract.
+ * Syscall 0x2D writes up to 64 entries of 38 bytes (2432 bytes) and takes no
+ * capacity argument, so it must never share a smaller buffer: overrunning one
+ * is what corrupted the socket pool, which the linker places immediately
+ * above the process stack. */
+#define VFS_MAX_ENTRIES 64
+#define FAT_MAX_ENTRIES 32
+
+static VfsDirEntry_T vfs_entries[VFS_MAX_ENTRIES];
+static Entry_T fat_entries[FAT_MAX_ENTRIES];
+
+/* File contents live in BSS rather than on the stack, and a guard band follows
+ * them.  read_file() (syscall 0x20) also takes no capacity argument: it writes
+ * the whole file wherever it is pointed.  We refuse any file whose size we
+ * know exceeds the buffer, and the guard catches the case where the size could
+ * not be determined up front. */
+#define FILE_BUF_CAP 16384
+#define FILE_GUARD 256
+#define GUARD_BYTE 0xa5
+
+static uint8_t file_buf[FILE_BUF_CAP + FILE_GUARD];
+
+static void guard_arm(void) {
+    for (uint32_t i = 0; i < FILE_GUARD; i++)
+        file_buf[FILE_BUF_CAP + i] = GUARD_BYTE;
+}
+
+static uint8_t guard_intact(void) {
+    for (uint32_t i = 0; i < FILE_GUARD; i++)
+        if (file_buf[FILE_BUF_CAP + i] != GUARD_BYTE)
+            return 0;
+
+    return 1;
+}
+
+static void respond_status(TcpSocket_T *client, uint16_t code, const uint8_t *reason) {
+    respond(client, code, reason, (const uint8_t *)"text/plain", reason, strlen(reason));
+}
+
+/* Route: GET /<filename> --- read from the filesystem and serve in chunks.
  * base_path: if non-empty, files are read from that VFS directory; otherwise
  * the kernel cwd (set by chdir at startup) is used. */
-void route_file(TcpSocket_T *client, const uint8_t *name, uint8_t *buf, uint32_t cap, const uint8_t *base_path) {
+void route_file(TcpSocket_T *client, const uint8_t *name, const uint8_t *base_path) {
     uint32_t file_size = 0;
+    uint8_t size_known = 0;
 
     if (base_path && base_path[0]) {
-        /* Path-based serving: use list_dir_path for the size, then chdir to
-         * base_path, read_file, and restore the kernel cwd. */
-        VfsDirEntry_T *vfs = (VfsDirEntry_T *)buf;
-        int64_t count = list_dir_path(base_path, vfs);
+        /* Path-based serving: look the size up with list_dir_path, then chdir
+         * to base_path, read_file, and restore the kernel cwd. */
+        int64_t count = list_dir_path(base_path, vfs_entries);
+
+        /* The kernel signals errors with -1 and never reports more than 64;
+         * anything else means we cannot trust the buffer. */
+        if (count > VFS_MAX_ENTRIES)
+            count = VFS_MAX_ENTRIES;
+
         if (count > 0) {
             uint32_t nlen = strlen(name);
             for (int64_t i = 0; i < count; i++) {
-                if ((uint32_t)vfs[i].name_len != nlen)
+                if ((uint32_t)vfs_entries[i].name_len != nlen)
                     continue;
                 uint8_t match = 1;
                 for (uint32_t k = 0; k < nlen; k++) {
-                    uint8_t a = vfs[i].name[k] >= 'a' ? vfs[i].name[k] - 32 : vfs[i].name[k];
-                    uint8_t b2 = name[k]       >= 'a' ? name[k]       - 32 : name[k];
+                    uint8_t a = vfs_entries[i].name[k] >= 'a' ? vfs_entries[i].name[k] - 32 : vfs_entries[i].name[k];
+                    uint8_t b2 = name[k]               >= 'a' ? name[k]               - 32 : name[k];
                     if (a != b2) { match = 0; break; }
                 }
-                if (match) { file_size = vfs[i].size; break; }
+                if (match) {
+                    file_size = vfs_entries[i].size;
+                    size_known = 1;
+                    break;
+                }
             }
         }
+    } else {
+        /* Default: root-cluster FAT listing for the size, then read_file. */
+        if (list_dir(0, fat_entries)) {
+            for (uint8_t i = 0; i < FAT_MAX_ENTRIES; i++) {
+                if (fat_entries[i].name[0] == 0x00)
+                    break;
+                if (fat_entries[i].name[0] == 0xe5)
+                    continue;
+                if (fat_name_eq(&fat_entries[i], name)) {
+                    file_size = fat_entries[i].file_size;
+                    size_known = 1;
+                    break;
+                }
+            }
+        }
+    }
 
+    /* Refuse before reading: once read_file() has run there is no way to
+     * undo an overrun. */
+    if (size_known && file_size > FILE_BUF_CAP) {
+        respond_status(client, 413, (const uint8_t *)"Payload Too Large");
+        return;
+    }
+
+    guard_arm();
+
+    file_buf[0] = '\0';
+
+    int64_t ok;
+    if (base_path && base_path[0]) {
         /* Snapshot cwd, chdir to base_path, read, restore. */
         SysInfo_T si;
         si.system_path[0]  = '\0';
@@ -35,56 +111,43 @@ void route_file(TcpSocket_T *client, const uint8_t *name, uint8_t *buf, uint32_t
         read_sysinfo(&si);
         si.system_path[31] = '\0';
 
-        buf[0] = '\0';
         chdir(base_path);
-        int64_t ok = read_file(name, buf);
+        ok = read_file(name, file_buf);
         if (si.system_path[0])
             chdir(si.system_path);
-
-        if (!ok) {
-            const uint8_t b[] = "Not Found";
-            respond(client, 404, (const uint8_t *)"Not Found", (const uint8_t *)"text/plain", b, strlen(b));
-            return;
-        }
     } else {
-        /* Default: root-cluster FAT listing for file_size, then read_file. */
-        Entry_T *entries = (Entry_T *)buf;
-        if (list_dir(0, entries)) {
-            for (uint8_t i = 0; i < 32; i++) {
-                if (entries[i].name[0] == 0x00)
-                    break;
-                if (entries[i].name[0] == 0xe5)
-                    continue;
-                if (fat_name_eq(&entries[i], name)) {
-                    file_size = entries[i].file_size;
-                    break;
-                }
-            }
-        }
-
-        buf[0] = '\0';
-        if (!read_file(name, buf)) {
-            const uint8_t b[] = "Not Found";
-            respond(client, 404, (const uint8_t *)"Not Found", (const uint8_t *)"text/plain", b, strlen(b));
-            return;
-        }
+        ok = read_file(name, file_buf);
     }
 
-    /* Use FAT/VFS file_size when available; fall back to strlen otherwise. */
-    uint32_t len = file_size ? file_size : strlen(buf);
-    if (len > cap)
-        len = cap;
+    if (!ok) {
+        respond_status(client, 404, (const uint8_t *)"Not Found");
+        return;
+    }
+
+    if (!guard_intact()) {
+        /* The file was bigger than the buffer and its size was not known in
+         * advance, so the write has already run past the end.  Say so rather
+         * than serving whatever survived. */
+        print((const uint8_t *)"-> route_file: buffer overrun, file too large\n");
+        respond_status(client, 500, (const uint8_t *)"Internal Server Error");
+        return;
+    }
+
+    /* Use the filesystem size when we have it; fall back to strlen otherwise. */
+    uint32_t len = size_known ? file_size : strlen(file_buf);
+    if (len > FILE_BUF_CAP)
+        len = FILE_BUF_CAP;
 
     /* Send headers only (body=0 so respond() skips the body write). */
     respond(client, 200, (const uint8_t *)"OK", content_type_for(ext_of(name)), 0, len);
 
-    /* Send body in CHUNK_SIZE pieces — kernel packet buffer is limited. */
+    /* Send body in CHUNK_SIZE pieces --- kernel packet buffer is limited. */
     uint32_t sent = 0;
     while (sent < len) {
         uint32_t chunk = len - sent;
         if (chunk > CHUNK_SIZE)
             chunk = CHUNK_SIZE;
-        write(client, buf + sent, chunk);
+        write(client, file_buf + sent, chunk);
         sent += chunk;
     }
 }
