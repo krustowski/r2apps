@@ -43,6 +43,64 @@ static uint8_t eth_my_mac[6];
 static uint8_t eth_my_ip[4];
 
 void net_get_local_ip(uint8_t ip[4]) { memcpy(ip, eth_my_ip, 4); }
+
+/* The card's MAC, which the kernel knows once the card is up; the built-in
+ * one stays until it does (no card, or an older kernel).  Asked again on
+ * every frame until the answer is real: a service started just after eth can
+ * register while eth is still bringing the card up, before the kernel has
+ * its MAC. */
+static uint8_t eth_mac_synced = 0;
+
+static void eth_sync_mac(void) {
+    NetStatus_T ns;
+    for (uint32_t i = 0; i < sizeof(ns); i++)
+        ((uint8_t *)&ns)[i] = 0;
+    if (get_net_status(&ns) == 0 && (ns.mac[0] | ns.mac[1] | ns.mac[2] | ns.mac[3] | ns.mac[4] | ns.mac[5])) {
+        memcpy(eth_my_mac, ns.mac, 6);
+        eth_mac_synced = 1;
+    }
+}
+
+/* For a destination this process has not heard from: when it is off the
+ * local network, the frame goes to the gateway, whose MAC the eth driver
+ * resolved and published (syscall 0x3d) --- this process cannot ARP for it,
+ * the replies go to the driver.  0 when the destination is on-link, or the
+ * configuration has no gateway MAC (an older kernel, no eth driver). */
+static int eth_gateway_mac(const uint8_t dst[4], uint8_t mac[6]) {
+    NetConfig_T cfg;
+    for (uint32_t i = 0; i < sizeof(cfg); i++)
+        ((uint8_t *)&cfg)[i] = 0;
+    if (get_net_config(&cfg) != 0)
+        return 0;
+    if (!(cfg.gateway_mac[0] | cfg.gateway_mac[1] | cfg.gateway_mac[2] |
+          cfg.gateway_mac[3] | cfg.gateway_mac[4] | cfg.gateway_mac[5]))
+        return 0;
+    if (!(cfg.netmask[0] | cfg.netmask[1] | cfg.netmask[2] | cfg.netmask[3]))
+        return 0;
+    int on_link = 1;
+    for (int i = 0; i < 4; i++)
+        if ((dst[i] & cfg.netmask[i]) != (cfg.ip[i] & cfg.netmask[i]))
+            on_link = 0;
+    if (on_link)
+        return 0;
+    memcpy(mac, cfg.gateway_mac, 6);
+    return 1;
+}
+
+/* Our address is whatever the eth driver has put in sysinfo (by DHCP, --ip, or
+ * its fallback).  Re-read it when a frame turns up for an address that is not
+ * the one we have: the driver may have got a lease since we last looked.
+ * Multicast and broadcast never are ours and would only cost a syscall each. */
+static void eth_sync_ip(const uint8_t seen[4]) {
+    if (seen && (memcmp(seen, eth_my_ip, 4) == 0 || seen[0] >= 224))
+        return;
+    SysInfo_T si;
+    for (uint32_t i = 0; i < sizeof(si); i++)
+        ((uint8_t *)&si)[i] = 0;
+    read_sysinfo(&si);
+    if (si.ip_addr[0] | si.ip_addr[1] | si.ip_addr[2] | si.ip_addr[3])
+        memcpy(eth_my_ip, si.ip_addr, 4);
+}
 void net_get_local_mac(uint8_t mac[6]) { memcpy(mac, eth_my_mac, 6); }
 
 #define ETH_ARP_CACHE_SIZE 8
@@ -108,10 +166,24 @@ static void eth_send_arp_reply(const EthHdr_T *req_eth, const ArpPkt_T *req_arp)
     send_eth_frame(frame, ETH_HDR_LEN + ARP_PKT_LEN);
 }
 
-static uint8_t eth_drv_frame_buf[1514];
+/* 1518: the kernel hands frames over with the card's 4-byte CRC still on. */
+static uint8_t eth_drv_frame_buf[1518];
+
+static NetFrameSource_T eth_frame_source = 0;
+
+void net_set_frame_source(NetFrameSource_T fn) { eth_frame_source = fn; }
+
+/* One frame from wherever frames come from: see net_set_frame_source(). */
+static int64_t eth_next_frame(uint8_t blocking) {
+    if (!eth_mac_synced)
+        eth_sync_mac();
+    if (eth_frame_source)
+        return eth_frame_source(eth_drv_frame_buf, sizeof(eth_drv_frame_buf), blocking);
+    return blocking ? receive_data(RECV_ETH, eth_drv_frame_buf) : receive_data_nb(RECV_ETH, eth_drv_frame_buf);
+}
 
 static int eth_drv_recv(uint8_t *buf, uint32_t maxlen) {
-    int64_t n = receive_data(RECV_ETH, eth_drv_frame_buf);
+    int64_t n = eth_next_frame(1);
 
     if (n <= 0 || (uint32_t)n < ETH_HDR_LEN)
         return 0;
@@ -123,6 +195,7 @@ static int eth_drv_recv(uint8_t *buf, uint32_t maxlen) {
         if ((uint32_t)n < ETH_HDR_LEN + ARP_PKT_LEN)
             return 0;
         const ArpPkt_T *arp = (const ArpPkt_T *)(eth_drv_frame_buf + ETH_HDR_LEN);
+        eth_sync_ip(arp->tpa);
         if (htons(arp->oper) == 1 && memcmp(arp->tpa, eth_my_ip, 4) == 0) {
             /* ARP request for our IP — reply and learn sender */
             eth_arp_cache_update(arp->spa, eth->src);
@@ -145,6 +218,7 @@ static int eth_drv_recv(uint8_t *buf, uint32_t maxlen) {
             return 0;
 
         /* Learn sender's MAC for outgoing replies */
+        eth_sync_ip(ipv4.destination_addr);
         eth_arp_cache_update(ipv4.source_addr, eth->src);
 
         if (ipv4.protocol == 1) {
@@ -225,7 +299,7 @@ static int eth_drv_recv(uint8_t *buf, uint32_t maxlen) {
  *  when a frame IS available; only TCP payloads are returned to the caller.
  */
 static int eth_drv_recv_nb(uint8_t *buf, uint32_t maxlen) {
-    int64_t n = receive_data_nb(RECV_ETH, eth_drv_frame_buf);
+    int64_t n = eth_next_frame(0);
 
     if (n <= 0 || (uint32_t)n < ETH_HDR_LEN)
         return 0;
@@ -237,6 +311,7 @@ static int eth_drv_recv_nb(uint8_t *buf, uint32_t maxlen) {
         if ((uint32_t)n < ETH_HDR_LEN + ARP_PKT_LEN)
             return 0;
         const ArpPkt_T *arp = (const ArpPkt_T *)(eth_drv_frame_buf + ETH_HDR_LEN);
+        eth_sync_ip(arp->tpa);
         if (htons(arp->oper) == 1 && memcmp(arp->tpa, eth_my_ip, 4) == 0) {
             eth_arp_cache_update(arp->spa, eth->src);
             eth_send_arp_reply(eth, arp);
@@ -256,6 +331,7 @@ static int eth_drv_recv_nb(uint8_t *buf, uint32_t maxlen) {
         if (!ipv4_hdr_len)
             return 0;
 
+        eth_sync_ip(ipv4.destination_addr);
         eth_arp_cache_update(ipv4.source_addr, eth->src);
 
         if (ipv4.protocol == 1) {
@@ -309,6 +385,8 @@ static int eth_drv_recv_nb(uint8_t *buf, uint32_t maxlen) {
 int net_recv_nb(uint8_t *buf, uint32_t maxlen) { return eth_drv_recv_nb(buf, maxlen); }
 
 static void eth_drv_send(const uint8_t *ip_pkt, uint32_t len) {
+    if (!eth_mac_synced)
+        eth_sync_mac();
     (void)len;
     Ipv4Header_T ipv4;
     uint16_t hdr_len = parse_ipv4_packet(ip_pkt, &ipv4);
@@ -389,6 +467,8 @@ static void eth_drv_send(const uint8_t *ip_pkt, uint32_t len) {
 
     uint8_t dst_mac[6];
     int _arp_hit = eth_arp_cache_lookup(hdr->destination_addr, dst_mac);
+    if (!_arp_hit)
+        _arp_hit = eth_gateway_mac(hdr->destination_addr, dst_mac);
     if (!_arp_hit || memcmp(dst_mac, eth_my_mac, 6) == 0) {
         /* ARP unresolved, OR resolved to our own MAC (the remote is on the
          * same guest — e.g. Memento → chat server, both at 10.3.4.2).
@@ -449,8 +529,10 @@ int net_driver_select(const uint8_t *name) {
 
         memcpy(eth_my_mac, my_mac, 6);
         memcpy(eth_my_ip, my_ip, 4);
+        eth_sync_ip(0);
 
         net_register();
+        eth_sync_mac();
         net_drv.recv = eth_drv_recv;
         net_drv.send_ip = eth_drv_send;
         net_drv_is_eth = 1;
@@ -476,12 +558,14 @@ int net_driver_bind_port(const uint8_t *name, uint16_t port) {
 
         memcpy(eth_my_mac, my_mac, 6);
         memcpy(eth_my_ip, my_ip, 4);
+        eth_sync_ip(0);
 
         /* Become the global driver if nobody else has registered yet.
          * The kernel's register_driver is idempotent: first caller wins,
          * subsequent calls are no-ops.  This lets GARN or TNT bootstrap
          * the NIC without a separate eth.elf process. */
         net_register();
+        eth_sync_mac();
         net_bind_port(port);
         net_drv.recv = eth_drv_recv;
         net_drv.send_ip = eth_drv_send;

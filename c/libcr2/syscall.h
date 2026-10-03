@@ -39,7 +39,7 @@ typedef struct {
  *  type NetStatus_T structure
  *
  *  Filled by syscall 0x38 (ScNetStatus).
- *  mac: RTL8139 hardware MAC (cached in kernel when ETH driver registers).
+ *  mac: the network card's MAC (cached in kernel when ETH driver registers).
  *  ip:  IPv4 address (written by ETH driver via write_sysinfo / 0x01/0x02).
  *  drv_active: 1 if the global ETH driver process is registered.
  *  n_ports: number of active TCP port bindings.
@@ -52,6 +52,32 @@ typedef struct {
     uint8_t  n_ports;
     uint16_t ports[16];
 } __attribute__((packed)) NetStatus_T;
+
+/*
+ *  type NetConfig_T structure
+ *
+ *  The machine's network configuration, syscall 0x3d (ScNetConfig): what the
+ *  eth driver got by DHCP or was given, for every program to use instead of
+ *  addresses of its own.  Zeroes for what nobody has set.
+ *  gateway_mac: the gateway's MAC as the driver resolved it --- a process that
+ *               is not the driver cannot ARP for it, the replies go to eth.
+ *  source: 0 not set, 1 static, 2 DHCP, 3 fallback (no DHCP answer yet).
+ */
+typedef struct {
+    uint8_t ip[4];
+    uint8_t netmask[4];
+    uint8_t gateway[4];
+    uint8_t dns[4];
+    uint8_t mac[6];
+    uint8_t gateway_mac[6];
+    uint8_t source;
+    uint8_t _reserved;
+} __attribute__((packed)) NetConfig_T;
+
+#define NET_SOURCE_NONE     0
+#define NET_SOURCE_STATIC   1
+#define NET_SOURCE_DHCP     2
+#define NET_SOURCE_FALLBACK 3
 
 /*
  *  type Entry_T structure
@@ -91,7 +117,7 @@ typedef struct {
  *  type MountInfo_T structure
  *
  *  Describes one VFS mount point as returned by syscall 0x2C (ScListMounts).
- *  fs_type: 0=none, 1=rootfs, 2=fat12, 3=iso9660
+ *  fs_type: 0=none, 1=rootfs, 2=fat12, 3=iso9660, 4=tar
  */
 typedef struct {
     uint8_t path[32];
@@ -192,7 +218,11 @@ typedef enum SyscallNumber : int64_t {
     ScSendPort = 0x36,
     ScNetRegister = 0x37,
     ScNetStatus   = 0x38,
-    ScReadFileAt  = 0x39
+    ScReadFileAt  = 0x39,
+    ScWriteFileAt = 0x3a,
+    ScKillTask    = 0x3b,
+    ScMemInfo     = 0x3c,
+    ScNetConfig   = 0x3d
 } SyscallNo_T;
 
 /*
@@ -478,6 +508,82 @@ typedef struct {
 int64_t read_file_at(const uint8_t *name, uint8_t *buffer, uint64_t offset, uint64_t length);
 
 /*
+ *  WriteRange_T
+ *
+ *  The write half of ReadRange_T: where the bytes are, where in the file they
+ *  go, and how many of them.  Passed to the kernel by pointer.
+ */
+typedef struct {
+    uint64_t buffer;
+    uint64_t offset;
+    uint64_t length;
+} WriteRange_T;
+
+/*
+ *  int64_t write_file_at() prototype
+ *
+ *  Implementation of syscall 0x3a.
+ *
+ *  Writes <length> bytes from <buffer> into <name> starting <offset> bytes in,
+ *  creating the file if it is not there and growing it if it is too short.
+ *  What lies before <offset> is left as it was, so a file can be added to
+ *  rather than replaced -- write_file() takes a fixed 512-byte block and
+ *  replaces the whole file, which is no use to anything that grows.
+ *
+ *  Returns how many bytes were written, short if the disk filled up, or -1 on
+ *  an error.  FAT12 only: the ISO is read-only.
+ */
+int64_t write_file_at(const uint8_t *name, const uint8_t *buffer, uint64_t offset, uint64_t length);
+
+/*
+ *  int64_t kill_task() prototype
+ *
+ *  Implementation of syscall 0x3b.
+ *
+ *  Ends the process carrying <pid> -- the number list_tasks() reports, not a
+ *  slot.  Returns 1 when it was there to be killed, 0 otherwise.  This is the
+ *  way out of a program that has stopped answering its own keys.
+ */
+int64_t kill_task(uint64_t pid);
+
+/*
+ *  type MemInfo_T structure
+ *
+ *  What syscall 0x3c fills in; every figure is in bytes.  The user heap is the
+ *  one malloc() (syscall 0x0a) hands out from, shared by every process;
+ *  heap_by_slot says who holds what, by process slot ([16] is untagged), and
+ *  slot_task gives the task id in each slot (0xFF for a free one), so the
+ *  figures can be put next to list_tasks().  Slot n's private 2 MiB frame is
+ *  physical frame_base + n * frame_size, seen at frame_virt.
+ */
+typedef struct {
+    uint64_t version;
+    uint64_t total_ram;
+    uint64_t heap_start;
+    uint64_t heap_size;
+    uint64_t heap_used;
+    uint64_t heap_free;
+    uint64_t heap_largest_free;
+    uint64_t heap_blocks;
+    uint64_t heap_free_blocks;
+    uint64_t heap_by_slot[17];
+    uint64_t frame_base;
+    uint64_t frame_size;
+    uint64_t frame_virt;
+    uint64_t slots;
+    uint8_t slot_task[16];
+} __attribute__((packed)) MemInfo_T;
+
+/*
+ *  int64_t read_meminfo() prototype
+ *
+ *  Implementation of syscall 0x3c.  Returns 1 with <info> filled in, 0 when
+ *  the kernel is busy (the heap or the scheduler locked; try again) or does
+ *  not have the call.
+ */
+int64_t read_meminfo(MemInfo_T *info);
+
+/*
  *  int64_t write_file() prototype
  *
  *  Implementation of syscall 0x21.
@@ -526,9 +632,13 @@ int64_t list_dir(int64_t cluster, Entry_T entries[32]);
  *  type TaskInfo_T structure
  *
  *  One entry returned by list_tasks() / ScListTasks (0x2F).
- *  20 bytes: id(1) mode(1) status(1) _pad(1) name(16).
+ *  28 bytes: id(1) mode(1) status(1) _pad(1) name(16) rip(8).
  *  mode:   0=Kernel  1=User
  *  status: 0=Ready 1=Running 2=Idle 3=Blocked 4=Crashed 5=Dead
+ *
+ *  rip is where the task was when it was last put down, or 0 for the task
+ *  doing the asking.  A task that has stopped answering reports the same rip
+ *  every time, and that address says which code it is stuck in.
  */
 typedef struct {
     uint8_t id;
@@ -536,6 +646,7 @@ typedef struct {
     uint8_t status;
     uint8_t _pad;
     uint8_t name[16];
+    uint64_t rip;
 } __attribute__((packed)) TaskInfo_T;
 
 /*
@@ -686,6 +797,16 @@ int64_t net_bind_port(uint16_t port);
  *  Returns 0 on success, negative on error.
  */
 int64_t get_net_status(NetStatus_T *ns);
+
+/*
+ *  int64_t get_net_config() / set_net_config() prototypes
+ *
+ *  Implementation of syscall 0x3d.  get fills *cfg with the network
+ *  configuration; set publishes it, and only the registered global driver
+ *  (eth) may.  Both return 0 on success, non-zero on error.
+ */
+int64_t get_net_config(NetConfig_T *cfg);
+int64_t set_net_config(const NetConfig_T *cfg);
 
 /*
  *  int64_t send_eth_frame() prototype

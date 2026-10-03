@@ -107,6 +107,21 @@ extern NetDriver_T net_drv;
 int net_recv_nb(uint8_t *buf, uint32_t maxlen);
 
 /*
+ *  void net_set_frame_source() prototype
+ *
+ *  Where the Ethernet driver takes its frames from.  By default that is the
+ *  kernel's queue (syscall 0x35), which a process has one of: a program that
+ *  runs a second network stack of its own beside this one --- Memento, whose
+ *  web browser has its own TCP --- cannot let both read it, or each loses the
+ *  other's frames.  Such a program reads the queue once, sorts the frames, and
+ *  hands this driver its share through `fn`: it fills `buf` (at most `cap`
+ *  bytes) with one frame and returns its length, or 0 when there is none; a
+ *  `blocking` call waits for one.  Null goes back to the kernel's queue.
+ */
+typedef int64_t (*NetFrameSource_T)(uint8_t *buf, uint32_t cap, uint8_t blocking);
+void net_set_frame_source(NetFrameSource_T fn);
+
+/*
  *  void net_set_nonblocking() prototype
  *
  *  Switches the ETH driver between the blocking receive (the default, which

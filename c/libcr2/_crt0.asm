@@ -1,6 +1,14 @@
+; Size of the private stack, in KiB.  An app whose image needs the room can
+; assemble its own crt0 with -DR2_STACK_KB=<n>: everything a process has --
+; code, data, bss and this stack -- shares one 2 MiB mapping at 0x600000, so
+; a big static buffer has to be paid for out of a stack it does not use.
+%ifndef R2_STACK_KB
+%define R2_STACK_KB 1536
+%endif
+
 section .bss
 align 16
-r2_stack: resb 1024 * 1536   ; 1.5 MB private stack
+r2_stack: resb 1024 * R2_STACK_KB   ; private stack
 r2_stack_top:
 
 section .text

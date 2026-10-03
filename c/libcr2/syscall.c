@@ -311,6 +311,30 @@ int64_t list_dir_path(const uint8_t *path, VfsDirEntry_T buf[64]) {
     return syscall(ScListDirPath, (int64_t)path, (int64_t)buf, 0);
 }
 
+int64_t kill_task(uint64_t pid) { return syscall(ScKillTask, (int64_t)pid, 0, 0) == 0 ? 1 : 0; }
+
+int64_t read_meminfo(MemInfo_T *info) {
+    if (!info)
+        return 0;
+    info->version = 0;
+    if (syscall(ScMemInfo, (int64_t)info, 0, 0) != 0)
+        return 0;
+    return info->version >= 1 ? 1 : 0;
+}
+
+int64_t write_file_at(const uint8_t *name, const uint8_t *buffer, uint64_t offset, uint64_t length) {
+    WriteRange_T req;
+
+    if (!name || !name[0] || !buffer)
+        return -1;
+
+    req.buffer = (uint64_t)buffer;
+    req.offset = offset;
+    req.length = length;
+
+    return syscall(ScWriteFileAt, (int64_t)name, (int64_t)&req, 0);
+}
+
 int64_t read_file_at(const uint8_t *name, uint8_t *buffer, uint64_t offset, uint64_t length) {
     ReadRange_T req;
 
@@ -394,6 +418,10 @@ int64_t net_register(void) { return syscall(ScNetRegister, 0, 0, 0); }
 int64_t net_bind_port(uint16_t port) { return syscall(ScNetRegister, (int64_t)port, 0, 0); }
 
 int64_t get_net_status(NetStatus_T *ns) { return syscall(ScNetStatus, (int64_t)ns, 0, 0); }
+
+int64_t get_net_config(NetConfig_T *cfg) { return syscall(ScNetConfig, 0x01, (int64_t)cfg, 0); }
+
+int64_t set_net_config(const NetConfig_T *cfg) { return syscall(ScNetConfig, 0x02, (int64_t)cfg, 0); }
 
 int64_t send_eth_frame(const uint8_t *frame, uint32_t len) {
     (void)len;
