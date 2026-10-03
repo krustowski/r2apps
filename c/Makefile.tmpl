@@ -24,7 +24,8 @@ build_crt0:
 compile:
 	@cd ${BUILD_DIR} && gcc \
 		-c \
-		-O \
+		-O2 \
+		-flto \
 		-m64 \
 		-static \
 		-nostdlib \
