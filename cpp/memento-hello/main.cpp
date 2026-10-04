@@ -184,6 +184,7 @@ enum AppKind
     APP_MINES,
     APP_TELEGRAM,
     APP_VIDEO,
+    APP_SPOTIFY,
 };
 static void openApp(int kind);
 static void openFileViewer(const char *path, unsigned int size);
@@ -330,6 +331,7 @@ static bool openInEditor(const char *path)
 #include "windows/telegram_window.cpp"
 #include "windows/video_window.cpp"
 #include "windows/them_window.cpp"
+#include "windows/spotify_window.cpp"
 #include "windows/desktop_window.cpp"
 
 //  Y to the taskbar's "save it?" after PrintScreen: the clipboard's picture as
@@ -498,6 +500,7 @@ static void deleteViewer(void *p) { delete (FileViewerWindow *)p; }
 
 //  The userland shell in a window of its own (windows/shell_window.cpp).
 //  When it cannot be opened, g_launchError says why.
+static void deleteSpotify(void *p) { delete (SpotifyWindow *)p; }
 static void deleteShell(void *p) { delete (ShellWindow *)p; }
 static void deleteSnake(void *p) { delete (SnakeWindow *)p; }
 static void deleteMines(void *p) { delete (MinesWindow *)p; }
@@ -548,6 +551,20 @@ static void openApp(int kind)
 
     switch (kind)
     {
+    case APP_SPOTIFY:
+    {
+        SpotifyWindow *w = new SpotifyWindow();
+        if (!w || w->failed()) {
+            web::scopy(g_launchError, w ? w->why() : "Spotify: no memory for its window.", sizeof(g_launchError));
+            delete w;
+            return;
+        }
+        wnd = g_root->CreateWindow("Spotify / Go", SpotifyWindow::W, SpotifyWindow::H,
+            SpotifyWindow::onEvent, w, &g_appOpts, deleteSpotify, w);
+        if (wnd) w->SetWindow(wnd);
+        else { delete w; strcpy(g_launchError, "Spotify: no memory for its window."); }
+        break;
+    }
     case APP_SHELL:
         openShellWindow();
         return;
@@ -748,6 +765,7 @@ static void runForeground(const char *program, const char *args)
     {
         r2::sleep(500);
         editorKeepAlive(); // the Editor windows' editors wait for us meanwhile
+        spotifyKeepAlive();
         shellKeepAlive();  // and so do the Shell windows' shells
         r2::vector<r2::TaskInfo> tasks = r2::tasks();
         if (tasks.empty())
