@@ -49,6 +49,7 @@ package r2net
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/krustowski/rou2exOS-apps/go/libgor2"
@@ -92,6 +93,9 @@ const rxBudget = 64
 // and wrong on any other, so a caller with a configuration file should pass
 // what it was told.
 type Options struct {
+	// Check can cancel a blocking operation. It runs on the stack owner goroutine.
+	Check func() error
+
 	// Link is "eth" (the default) or "slip".
 	Link string
 
@@ -122,6 +126,8 @@ type Options struct {
 
 // Stack is an open network stack.  Create one with Open.
 type Stack struct {
+	check func() error
+
 	link link
 	eth  *ethLink // nil on SLIP
 
@@ -154,6 +160,7 @@ type Stack struct {
 // Open brings up a stack on the requested link.
 func Open(opts Options) (*Stack, error) {
 	s := &Stack{
+		check:    opts.Check,
 		localIP:  opts.LocalIP,
 		netmask:  opts.Netmask,
 		gateway:  opts.Gateway,
@@ -342,7 +349,7 @@ func (s *Stack) sendIP(dst IP, proto byte, payloadLen int) error {
 // the card's ring for the next tick.  So nothing is lost between the NIC and
 // this loop for being read late, and a quiet turn can sleep a tick without
 // costing a frame.  A turn that stopped at rxBudget left frames queued, so it
-// comes straight back for them instead.
+// yields to other Go tasks before taking the next batch.
 func (s *Stack) step() {
 	drained := false
 
@@ -366,13 +373,20 @@ func (s *Stack) step() {
 	}
 
 	if drained {
-		libgor2.SleepMS(1)
+		time.Sleep(time.Millisecond)
+	} else {
+		runtime.Gosched()
 	}
 }
 
 // waitUntil turns the loop until cond is true or the deadline passes.
 func (s *Stack) waitUntil(cond func() bool, deadline uint64) error {
 	for {
+		if s.check != nil {
+			if err := s.check(); err != nil {
+				return err
+			}
+		}
 		if cond() {
 			return nil
 		}

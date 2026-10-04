@@ -8,19 +8,9 @@ import (
 
 // TCP, client side.
 //
-// What is here is the smallest thing that can hold a conversation with a real
-// server and notice when it cannot: a three-way handshake, in-order data with
-// cumulative acknowledgements, one outstanding segment at a time, and a close.
-// What is not here is everything that makes TCP fast --- no window beyond one
-// segment, no fast retransmit, no congestion control, no selective
-// acknowledgement, no reassembly of segments that arrive out of order (they
-// are dropped and re-acknowledged, which makes the peer send them again in
-// order).
-//
-// That is the right trade for what this machine does.  A monitoring check is a
-// few hundred bytes out and a few kilobytes back; stop-and-wait costs it one
-// extra round trip and saves a send queue, a retransmission list and the
-// timers that go with them, in a program whose whole heap is 1.5 MiB.
+// Client-side stop-and-wait sends with cumulative receive acknowledgements.
+// A bounded queue retains out-of-order receive segments within the 16 KiB
+// receive window, so a single lost frame does not discard an entire CDN burst.
 
 const (
 	flagFIN = 0x01
@@ -89,8 +79,12 @@ type Conn struct {
 	sndUna uint32 // oldest sequence number we have sent and not seen acknowledged
 	rcv    uint32 // next sequence number we expect from the peer
 
-	rx      []byte
-	peerFIN bool
+	rx             []byte
+	reorder        tcpReorder
+	peerFIN        bool
+	received, gaps uint32
+	windowRetryAt  uint64
+	windowRetries  int
 
 	// The one unacknowledged segment.  pending is nil when there is
 	// nothing outstanding, which is also the signal that Write may send.
@@ -101,7 +95,8 @@ type Conn struct {
 	rto       uint64
 	retries   int
 
-	deadline uint64
+	advertisedWindow int
+	deadline         uint64
 }
 
 // Dial opens a connection to port on dst.
@@ -262,6 +257,12 @@ func (c *Conn) Read(b []byte) (int, error) {
 		n := copy(b, c.rx)
 
 		c.rx = c.rx[:copy(c.rx, c.rx[n:])]
+		if !c.peerFIN && tcpWindowNeedsUpdate(c.advertisedWindow, c.receiveWindow()) {
+			_ = c.send(flagACK, c.snd, nil)
+			// Window updates are not sequence-acknowledged; repeat a lost one.
+			c.windowRetryAt = libgor2.Ticks() + 250
+			c.windowRetries = 3
+		}
 
 		return n, nil
 	}
@@ -376,7 +377,7 @@ func (c *Conn) send(flags byte, seq uint32, data []byte) error {
 		return ErrTooLong
 	}
 
-	window := rxCap - len(c.rx)
+	window := c.receiveWindow()
 	if window < 0 {
 		window = 0
 	}
@@ -408,12 +409,21 @@ func (c *Conn) send(flags byte, seq uint32, data []byte) error {
 	c.s.logf("tx %v:%d -> %v:%d flags %02x seq %d ack %d len %d",
 		c.s.localIP, c.lport, c.remote, c.rport, flags, seq, c.rcv, len(data))
 
-	return c.s.sendIP(c.remote, protoTCP, len(segment))
+	err := c.s.sendIP(c.remote, protoTCP, len(segment))
+	if err == nil {
+		c.advertisedWindow = window
+	}
+	return err
 }
 
 // tick retransmits the outstanding segment when its timer has run out, and
 // gives up when it has run out too often.
 func (c *Conn) tick(now uint64) {
+	if c.windowRetries > 0 && now >= c.windowRetryAt && c.state == stateEstablished && c.receiveWindow() > 0 {
+		_ = c.send(flagACK, c.snd, nil)
+		c.windowRetries--
+		c.windowRetryAt = now + 1000
+	}
 	if c.pending == nil && c.pendFlags == 0 {
 		return
 	}
@@ -627,26 +637,35 @@ func (c *Conn) signalGap() {
 
 // onData takes in-order data and acknowledges it, and tells the peer about the
 // gap when there is one.
-func (c *Conn) onData(seq uint32, data []byte) {
-	if seq != c.rcv {
-		c.signalGap()
+func (c *Conn) receiveWindow() int { return rxCap - len(c.rx) - c.reorder.bytes }
 
+// ReceiveStats reports cumulative progress without exposing protocol payloads.
+func (c *Conn) ReceiveStats() (bytes, gaps uint32) { return c.received, c.gaps }
+func (c *Conn) onData(seq uint32, data []byte) {
+	if int32(seq-c.rcv) > 0 {
+		c.gaps++
+		c.reorder.store(c.rcv, seq, data, rxCap-len(c.rx))
+		c.signalGap()
 		return
 	}
-
-	space := rxCap - len(c.rx)
-
-	n := len(data)
-	if n > space {
-		// Only acknowledge what actually fit.  The peer will send the
-		// rest when Read has drained the buffer and the window we
-		// advertise reopens.
-		n = space
+	accepted := tcpPayload(c.rcv, seq, data, c.receiveWindow())
+	if len(accepted) == 0 {
+		c.signalGap()
+		return
 	}
-
-	c.rx = append(c.rx, data[:n]...)
-	c.rcv += uint32(n)
-
+	c.windowRetries = 0
+	c.rx = append(c.rx, accepted...)
+	c.rcv += uint32(len(accepted))
+	c.received += uint32(len(accepted))
+	for {
+		queued := c.reorder.take(c.rcv)
+		if len(queued) == 0 {
+			break
+		}
+		c.rx = append(c.rx, queued...)
+		c.rcv += uint32(len(queued))
+		c.received += uint32(len(queued))
+	}
 	_ = c.send(flagACK, c.snd, nil)
 }
 

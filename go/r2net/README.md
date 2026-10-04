@@ -116,23 +116,31 @@ the segments behind a gap arrive and produce those duplicates themselves, so
 
 ## What TCP here is and is not
 
-It is a client: a three-way handshake, in-order data, cumulative
+It is a client: a three-way handshake, cumulative
 acknowledgements, **one outstanding segment at a time**, exponential backoff
 over five retries, and a close that waits 300 ms for the peer's half before
-giving up.
+giving up. The receiver buffers up to sixteen disjoint out-of-order segments
+within its 16 KiB receive capacity and drains them when a gap fills. It repeats
+receive-window updates up to three times unless new data confirms progress.
 
 It is not fast.  There is no window beyond one segment, no congestion control,
-no selective acknowledgement, and no reassembly --- a segment that arrives out
-of order is dropped and re-acknowledged rather than held.  For a check that
+no selective acknowledgement, and no send queue. Receive segments beyond the
+bounded reassembly capacity are dropped and re-acknowledged. For a check that
 sends a few hundred bytes and reads a few kilobytes that costs one round trip
 per segment and saves a send queue, a retransmission list and the timers that
 go with them, in a program whose whole heap is 1.5 MiB.
 
-## No TLS
+## TLS adapter
 
-There will not be any: no entropy source, no big-integer arithmetic worth the
-name, and no room for a certificate chain in a 2 MiB frame.  `Do` refuses an
-`https://` URL with `ErrTLS` rather than quietly fetching it in the clear.
+The HTTP helpers in this package handle cleartext HTTP. Certificate-verified
+HTTPS is provided by [r2tls](../r2tls), which runs Memento's portable BearSSL
+over these TCP connections and is used by the Spotify client.
+
+TCP waits yield to the Go scheduler so an audio/UI goroutine can run while a
+request is blocked. `Options.Check` can return an error to cancel a pending
+operation; it runs on the stack's owner goroutine. Other goroutines must not
+call the stack directly. Reads advertise reopened receive-window space, and
+partly overlapping retransmissions preserve their new suffix.
 
 ## Addresses
 
@@ -151,5 +159,9 @@ when there is one.  Anything that runs outside this setup should pass its own.
   [../README.md](../README.md).
 - **A frame longer than 2048 bytes is dropped by the kernel**, so every buffer
   here is that size.  The advertised MSS is 1460, a full Ethernet frame.
-- **Floating point is not saved across a context switch.**  Nothing here uses
-  it; a program that does should read the same note.
+- The kernel now preserves floating-point state across context switches.
+  This TCP stack continues to use integer arithmetic.
+
+`ResolveTCP(name, timeout)` is also available for DNS servers that accept TCP
+queries on port 53. It works while another process owns the Ethernet driver,
+using a bound TCP source port. The Go Spotify client uses this path.
