@@ -20,7 +20,7 @@ if err := libgor2.ReadSysInfo(&info); err != nil {
 | `console.go` | Print, clear, flush. |
 | `fs.go` | Files, directories, mounts, `chdir`, fsck. |
 | `video.go` | Framebuffer, VGA modes, RGB/indexed blitting, presentation transactions, captures, the kernel font. |
-| `audio.go` | Speaker and MIDI. |
+| `audio.go` | Speaker, MIDI and nonblocking HD Audio PCM output. |
 | `net.go` | Ports, serial, packets, driver registration. |
 | `input.go` | Keyboard and mouse pipes. |
 | `mem.go` | The kernel's shared heap, `KBytes`, memory info. |

@@ -104,6 +104,7 @@ const (
 	ScKillTask    = 0x3b
 	ScMemInfo     = 0x3c
 	ScNetConfig   = 0x3d
+	ScAudio       = 0x3f
 )
 
 // Errno is a kernel return code.  Zero means success; every other value is one
