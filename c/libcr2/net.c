@@ -72,8 +72,7 @@ static int eth_gateway_mac(const uint8_t dst[4], uint8_t mac[6]) {
         ((uint8_t *)&cfg)[i] = 0;
     if (get_net_config(&cfg) != 0)
         return 0;
-    if (!(cfg.gateway_mac[0] | cfg.gateway_mac[1] | cfg.gateway_mac[2] |
-          cfg.gateway_mac[3] | cfg.gateway_mac[4] | cfg.gateway_mac[5]))
+    if (!(cfg.gateway_mac[0] | cfg.gateway_mac[1] | cfg.gateway_mac[2] | cfg.gateway_mac[3] | cfg.gateway_mac[4] | cfg.gateway_mac[5]))
         return 0;
     if (!(cfg.netmask[0] | cfg.netmask[1] | cfg.netmask[2] | cfg.netmask[3]))
         return 0;
@@ -695,6 +694,7 @@ uint16_t parse_tcp_packet(const uint8_t *packet, TcpHeader_T *header) {
     header->ack_num = swap32(header->ack_num);
     header->seq_num = swap32(header->seq_num);
     header->data_offset_reserved_flags = htons(header->data_offset_reserved_flags);
+    header->window_size = swap16(header->window_size);
 
     return header_len;
 }
@@ -875,6 +875,8 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
 
             new_conn->seq_num = 0;
             new_conn->ack_num = tcp_header->seq_num + 1;
+            new_conn->tx_acked = 0;
+            new_conn->peer_window = tcp_header->window_size;
 
             send_tcp_packet(new_conn, 0, 0, TCP_FLAG_SYN | TCP_FLAG_ACK);
             new_conn->seq_num = 1;
@@ -892,8 +894,7 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
          * SYN with a plain ACK (RFC 5961).  Send RST at the server's expected
          * seq to clear its stale state, then re-send SYN so the next incoming
          * SYN-ACK can complete the handshake. */
-        if (s->state == SOCKET_SYN_SENT && (flags & TCP_FLAG_ACK) && !(flags & TCP_FLAG_SYN) &&
-            memcmp(s->remote_ip, src_ip, 4) == 0 && s->remote_port == tcp_header->source_port) {
+        if (s->state == SOCKET_SYN_SENT && (flags & TCP_FLAG_ACK) && !(flags & TCP_FLAG_SYN) && memcmp(s->remote_ip, src_ip, 4) == 0 && s->remote_port == tcp_header->source_port) {
             s->seq_num = tcp_header->ack_num;
             s->ack_num = 0;
             send_tcp_packet(s, 0, 0, TCP_FLAG_RST);
@@ -907,6 +908,8 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
         if (s->state == SOCKET_SYN_SENT && (flags & TCP_FLAG_SYN) && (flags & TCP_FLAG_ACK) && memcmp(s->remote_ip, src_ip, 4) == 0 && s->remote_port == tcp_header->source_port) {
             memcpy(s->local_ip, dst_ip, 4);
             s->ack_num = tcp_header->seq_num + 1;
+            s->tx_acked = tcp_header->ack_num;
+            s->peer_window = tcp_header->window_size;
             s->state = SOCKET_ESTABLISHED;
             s->last_activity = net_now;
             send_tcp_packet(s, 0, 0, TCP_FLAG_ACK);
@@ -946,6 +949,17 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
             }
 
             s->last_activity = net_now;
+
+            /*
+             * Transmit-side flow control. ACK numbers are cumulative: tx_acked
+             * is the first sequence number the peer has not acknowledged yet.
+             * Never accept an ACK beyond bytes we have actually sent.
+             */
+            s->peer_window = tcp_header->window_size;
+
+            if ((flags & TCP_FLAG_ACK) && tcp_header->ack_num > s->tx_acked && tcp_header->ack_num <= s->seq_num) {
+                s->tx_acked = tcp_header->ack_num;
+            }
 
             if (data_len > 0) {
                 if (tcp_header->seq_num == s->ack_num) {
@@ -999,6 +1013,8 @@ static void socket_claim(TcpSocket_T *s, uint8_t i) {
     s->id = i;
     s->rx_len = 0;
     s->tx_len = 0;
+    s->tx_acked = 0;
+    s->peer_window = 0;
     s->last_activity = net_now;
 }
 
@@ -1066,6 +1082,8 @@ void socket_pool_init(TcpSocket_T sockets[MAX_SOCKETS]) {
         sockets[i].tx_len = 0;
         sockets[i].seq_num = 0;
         sockets[i].ack_num = 0;
+        sockets[i].tx_acked = 0;
+        sockets[i].peer_window = 0;
         sockets[i].last_activity = 0;
     }
 }
@@ -1111,6 +1129,13 @@ uint8_t socket_reap(TcpSocket_T sockets[MAX_SOCKETS], uint32_t idle_secs, Socket
     return freed;
 }
 
+uint32_t tcp_bytes_in_flight(const TcpSocket_T *sock) {
+    if (!sock || sock->seq_num <= sock->tx_acked)
+        return 0;
+
+    return sock->seq_num - sock->tx_acked;
+}
+
 SocketSet_T socket_select(TcpSocket_T sockets[MAX_SOCKETS], uint8_t events) {
     SocketSet_T result = 0;
     for (uint8_t i = 0; i < MAX_SOCKETS; i++) {
@@ -1120,7 +1145,7 @@ SocketSet_T socket_select(TcpSocket_T sockets[MAX_SOCKETS], uint8_t events) {
         uint8_t match = 0;
         if ((events & SEL_READ) && (s->state == SOCKET_ESTABLISHED || s->state == SOCKET_CLOSE_WAIT) && s->rx_len > 0)
             match = 1;
-        if ((events & SEL_WRITE) && s->state == SOCKET_ESTABLISHED)
+        if ((events & SEL_WRITE) && s->state == SOCKET_ESTABLISHED && s->peer_window > tcp_bytes_in_flight(s))
             match = 1;
         /* CLOSE_WAIT is an active state with a request still to be read, not a
          * stale one — reporting it here would invite callers to free it. */

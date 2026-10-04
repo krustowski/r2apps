@@ -46,10 +46,10 @@ typedef struct {
  *  ports[16]: bound TCP destination ports (0-padded).
  */
 typedef struct {
-    uint8_t  mac[6];
-    uint8_t  ip[4];
-    uint8_t  drv_active;
-    uint8_t  n_ports;
+    uint8_t mac[6];
+    uint8_t ip[4];
+    uint8_t drv_active;
+    uint8_t n_ports;
     uint16_t ports[16];
 } __attribute__((packed)) NetStatus_T;
 
@@ -74,9 +74,9 @@ typedef struct {
     uint8_t _reserved;
 } __attribute__((packed)) NetConfig_T;
 
-#define NET_SOURCE_NONE     0
-#define NET_SOURCE_STATIC   1
-#define NET_SOURCE_DHCP     2
+#define NET_SOURCE_NONE 0
+#define NET_SOURCE_STATIC 1
+#define NET_SOURCE_DHCP 2
 #define NET_SOURCE_FALLBACK 3
 
 /*
@@ -132,9 +132,9 @@ typedef struct {
  *  Works for both FAT12 and ISO9660.  name is NOT NUL-terminated; use name_len.
  */
 typedef struct {
-    uint8_t  name[32];
-    uint8_t  name_len;
-    uint8_t  is_dir;
+    uint8_t name[32];
+    uint8_t name_len;
+    uint8_t is_dir;
     uint32_t size;
 } __attribute__((packed)) VfsDirEntry_T;
 
@@ -179,9 +179,9 @@ typedef enum SyscallNumber : int64_t {
     ScPipeSubscribe = 0x03,
     ScGetTicks = 0x04,
     ScSleep = 0x05,
-    ScMalloc  = 0x0a,
+    ScMalloc = 0x0a,
     ScRealloc = 0x0b,
-    ScFree    = 0x0f,
+    ScFree = 0x0f,
     // Video + Audio Operations
     ScPrintString = 0x10,
     ScClearScreen = 0x11,
@@ -192,8 +192,11 @@ typedef enum SyscallNumber : int64_t {
     ScGetFBInfo = 0x16,
     ScBlitBuffer = 0x17,
     ScGetKernelFont = 0x18,
+    ScBlitIndexed = 0x19,
     ScPlayFreq = 0x1a,
     ScPlayFile = 0x1b,
+    ScCaptureFB = 0x1c,
+    ScCaptureFBRGB24Scaled = 0x1d,
     ScPlayStop = 0x1f,
     // Filesystem IO Operations
     ScReadFile = 0x20,
@@ -217,12 +220,12 @@ typedef enum SyscallNumber : int64_t {
     ScReceivePort = 0x35,
     ScSendPort = 0x36,
     ScNetRegister = 0x37,
-    ScNetStatus   = 0x38,
-    ScReadFileAt  = 0x39,
+    ScNetStatus = 0x38,
+    ScReadFileAt = 0x39,
     ScWriteFileAt = 0x3a,
-    ScKillTask    = 0x3b,
-    ScMemInfo     = 0x3c,
-    ScNetConfig   = 0x3d
+    ScKillTask = 0x3b,
+    ScMemInfo = 0x3c,
+    ScNetConfig = 0x3d
 } SyscallNo_T;
 
 /*
@@ -311,8 +314,8 @@ int64_t pipe_read(uint8_t *buffer);
  */
 typedef struct {
     uint8_t buttons;
-    int8_t  dx;
-    int8_t  dy;
+    int8_t dx;
+    int8_t dy;
 } __attribute__((packed)) MousePacket_T;
 
 /*
@@ -437,6 +440,31 @@ int64_t play_freq(uint16_t freq, uint16_t duration);
  *  Implementation of syscall 0x1b (arg1 0x01).
  */
 int64_t play_midi_file(const uint8_t *name);
+
+/*
+ * Capture the current VESA framebuffer into a tightly packed
+ * width × height array of 0x00RRGGBB pixels.
+ */
+int64_t capture_framebuffer(uint32_t *pixels);
+
+#define FB_CAPTURE_BUSY 0xFA
+
+/*
+ * Capture the current framebuffer, nearest-neighbour scale it to
+ * dst_width x dst_height, and return tightly packed RGB24 pixels.
+ *
+ * rgb must contain at least:
+ *
+ *     dst_width * dst_height * 3
+ *
+ * bytes.
+ *
+ * Returns 0 on success, FB_CAPTURE_BUSY if presentation overlapped the
+ * capture (discard the buffer and retry), or another nonzero error.
+ * Updated kernels serve 640x480 captures from completed indexed-frame
+ * snapshots in RAM when the presenter uses the begin/end protocol.
+ */
+int64_t capture_framebuffer_rgb24_scaled(uint8_t *rgb, uint32_t dst_width, uint32_t dst_height);
 
 /*
  *  int64_t stop_speaker() prototype

@@ -4,8 +4,8 @@ int64_t syscall(SyscallNo_T number, int64_t arg1, int64_t arg2, int64_t arg3) {
     int64_t ret;
     asm volatile("int $0x7f"
                  : "=a"(ret)
-                 /* RDX, RDI, RSI, RCX */
-                 : "d"(number), "D"(arg1), "S"(arg2), "c"(arg3)
+                 /* Current kernels read RAX; older ones read RDX. */
+                 : "a"(number), "d"(number), "D"(arg1), "S"(arg2), "c"(arg3)
                  : "r11", "memory");
     return ret;
 }
@@ -41,13 +41,9 @@ int64_t read_rtc(RTC_T *rtc_data) {
     return 1;
 }
 
-uint64_t get_ticks(void) {
-    return (uint64_t)syscall(ScGetTicks, 0, 0, 0);
-}
+uint64_t get_ticks(void) { return (uint64_t)syscall(ScGetTicks, 0, 0, 0); }
 
-void sleep_ms(uint64_t ms) {
-    syscall(ScSleep, (int64_t)ms, 0, 0);
-}
+void sleep_ms(uint64_t ms) { syscall(ScSleep, (int64_t)ms, 0, 0); }
 
 int64_t pipe_subscribe(const uint8_t *buffer) {
     if (syscall(ScPipeSubscribe, 0x01, (int64_t)buffer, 0)) {
@@ -73,17 +69,11 @@ int64_t pipe_read(uint8_t *buffer) {
     return 1;
 }
 
-int64_t pipe_mouse_subscribe(void) {
-    return syscall(ScPipeSubscribe, 0x04, 0, 0) == 0 ? 1 : 0;
-}
+int64_t pipe_mouse_subscribe(void) { return syscall(ScPipeSubscribe, 0x04, 0, 0) == 0 ? 1 : 0; }
 
-int64_t pipe_mouse_unsubscribe(void) {
-    return syscall(ScPipeSubscribe, 0x06, 0, 0) == 0 ? 1 : 0;
-}
+int64_t pipe_mouse_unsubscribe(void) { return syscall(ScPipeSubscribe, 0x06, 0, 0) == 0 ? 1 : 0; }
 
-int64_t pipe_mouse_read(MousePacket_T *buf) {
-    return syscall(ScPipeSubscribe, 0x05, (int64_t)buf, 0);
-}
+int64_t pipe_mouse_read(MousePacket_T *buf) { return syscall(ScPipeSubscribe, 0x05, (int64_t)buf, 0); }
 
 int64_t print(const uint8_t *str) {
     int64_t len = 0;
@@ -139,9 +129,7 @@ int64_t blit_buffer_scaled(const uint32_t *pixels, uint32_t src_w, uint32_t src_
     return syscall(ScBlitBuffer, (int64_t)pixels, dims, 0);
 }
 
-int64_t get_kernel_font(uint8_t *buf, uint64_t buf_size) {
-    return syscall(ScGetKernelFont, (int64_t)buf, (int64_t)buf_size, 0);
-}
+int64_t get_kernel_font(uint8_t *buf, uint64_t buf_size) { return syscall(ScGetKernelFont, (int64_t)buf, (int64_t)buf_size, 0); }
 
 int64_t play_freq(uint16_t freq, uint16_t duration) {
     if (syscall(ScPlayFreq, (int64_t)freq, (int64_t)duration, 0)) {
@@ -167,6 +155,22 @@ int64_t play_midi_file(const uint8_t *name) {
     return 0;
 }
 
+int64_t capture_framebuffer(uint32_t *pixels) { return syscall(ScCaptureFB, (int64_t)pixels, 0, 0); }
+
+int64_t capture_framebuffer_rgb24_scaled(uint8_t *rgb, uint32_t dst_width, uint32_t dst_height) {
+    uint64_t dimensions;
+
+    if (!rgb || !dst_width || !dst_height)
+        return -1;
+
+    if (dst_width > 0xFFFF || dst_height > 0xFFFF)
+        return -1;
+
+    dimensions = ((uint64_t)dst_width << 16) | (uint64_t)dst_height;
+
+    return syscall(ScCaptureFBRGB24Scaled, (int64_t)rgb, (int64_t)dimensions, 0);
+}
+
 int64_t stop_speaker() {
     if (syscall(ScPlayStop, 0, 0, 0)) {
         return 0;
@@ -177,9 +181,7 @@ int64_t stop_speaker() {
 
 void *malloc(uint64_t size) { return (void *)syscall(ScMalloc, (int64_t)size, 0, 0); }
 
-void *realloc(void *ptr, uint64_t size) {
-    return (void *)syscall(ScRealloc, (int64_t)ptr, (int64_t)size, 0);
-}
+void *realloc(void *ptr, uint64_t size) { return (void *)syscall(ScRealloc, (int64_t)ptr, (int64_t)size, 0); }
 
 void free(void *ptr) { syscall(ScFree, (int64_t)ptr, 0, 0); }
 
@@ -265,9 +267,7 @@ int64_t write_subdir(const uint8_t *parent_path, const uint8_t *name) {
     return 0;
 }
 
-int64_t chdir(const uint8_t *path) {
-    return syscall(ScChdir, (int64_t)path, 0, 0);
-}
+int64_t chdir(const uint8_t *path) { return syscall(ScChdir, (int64_t)path, 0, 0); }
 
 int64_t list_dir(int64_t cluster, Entry_T entries[32]) {
     if (syscall(ScListDir, cluster, (int64_t)entries, 0)) {
@@ -277,9 +277,7 @@ int64_t list_dir(int64_t cluster, Entry_T entries[32]) {
     return 1;
 }
 
-int64_t list_tasks(TaskInfo_T *buf, uint8_t max) {
-    return syscall(ScListTasks, (int64_t)buf, (int64_t)max, 0);
-}
+int64_t list_tasks(TaskInfo_T *buf, uint8_t max) { return syscall(ScListTasks, (int64_t)buf, (int64_t)max, 0); }
 
 int64_t run_elf(const uint8_t *name, const uint8_t *args, uint8_t *pid) {
     int64_t r = syscall(ScRunELF, (int64_t)name, (int64_t)args, 0);
@@ -298,18 +296,14 @@ int64_t run_fs_check(FsckReport_T *report) {
     return 1;
 }
 
-int64_t list_mounts(MountInfo_T *buf) {
-    return syscall(ScListMounts, 0, (int64_t)buf, 0);
-}
+int64_t list_mounts(MountInfo_T *buf) { return syscall(ScListMounts, 0, (int64_t)buf, 0); }
 
 /* buf MUST have room for 64 entries (64 * 38 = 2432 bytes).  Syscall 0x2D
  * takes no capacity argument and writes as many entries as the directory
  * holds, up to 64, so a smaller buffer is overrun with no diagnostic.
  * Returns the entry count, or -1 on error; treat anything outside [0, 64]
  * as an error. */
-int64_t list_dir_path(const uint8_t *path, VfsDirEntry_T buf[64]) {
-    return syscall(ScListDirPath, (int64_t)path, (int64_t)buf, 0);
-}
+int64_t list_dir_path(const uint8_t *path, VfsDirEntry_T buf[64]) { return syscall(ScListDirPath, (int64_t)path, (int64_t)buf, 0); }
 
 int64_t kill_task(uint64_t pid) { return syscall(ScKillTask, (int64_t)pid, 0, 0) == 0 ? 1 : 0; }
 

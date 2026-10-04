@@ -264,6 +264,8 @@ typedef struct TcpSocket_T {
     uint8_t used;
     uint32_t seq_num;
     uint32_t ack_num;
+    uint32_t tx_acked;
+    uint16_t peer_window;
     uint32_t last_activity; /* net_set_time() stamp of last traffic; see socket_reap() */
 } __attribute__((packed)) TcpSocket_T;
 
@@ -349,9 +351,9 @@ void net_set_debug(uint8_t on);
  */
 typedef uint8_t SocketSet_T;
 
-#define SEL_READ   0x01  /* ESTABLISHED and rx_len > 0 (data waiting) */
-#define SEL_WRITE  0x02  /* ESTABLISHED (ready to send) */
-#define SEL_EXCEPT 0x04  /* used but not ESTABLISHED or LISTENING (stale/error) */
+#define SEL_READ 0x01   /* ESTABLISHED and rx_len > 0 (data waiting) */
+#define SEL_WRITE 0x02  /* ESTABLISHED and peer TX window has room */
+#define SEL_EXCEPT 0x04 /* used but not ESTABLISHED or LISTENING (stale/error) */
 
 /*
  *  SocketSet_T socket_select() prototype
@@ -475,6 +477,8 @@ uint8_t parse_icmp_packet(const uint8_t *packet, IcmpHeader_T *header);
  *  A simple macro-like function to copy the packet data into the TCP header structure.
  */
 uint16_t parse_tcp_packet(const uint8_t *packet, TcpHeader_T *header);
+
+uint32_t tcp_bytes_in_flight(const TcpSocket_T *sock);
 
 #ifdef __cplusplus
 }
