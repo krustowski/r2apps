@@ -1,0 +1,20 @@
+{
+  "client_id": "",
+  "refresh_token": "",
+  "streaming_refresh_token": "",
+  "local_files": {},
+  "playlists": [
+    {
+      "id": "local-files",
+      "name": "My local WAV files",
+      "tracks": [
+        {
+          "id": "local-song",
+          "name": "My recording",
+          "artist": "Local file",
+          "file": "/mnt/tar/music/song.wav"
+        }
+      ]
+    }
+  ]
+}
