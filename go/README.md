@@ -9,6 +9,7 @@
 | `gfxdemo` | Graphics test: plasma, bouncing balls and kernel-font text, through whichever of the three display paths the machine has. | stable |
 | `routtest` | Goroutine evaluation: what one costs, how many fit, what the cooperative scheduler does, and where the collector has to be pushed. | stable |
 | `icmpresp` | ICMP Echo responder over SLIP. A port of `c/icmpresp`, and the proof that a Go program can be a real `r2` service. | stable |
+| `spotify` | Standalone Go Spotify playlist prototype hosted by Memento, with native HTTPS, local PCM playback and runtime statistics. | experimental |
 | `dish` | The [vxn.dev](https://github.com/thevxn/dish) one-shot monitoring service, ported: HTTP, TCP and ICMP checks, results pushed to plain-HTTP channels. | stable |
 
 Go on `r2` is TinyGo, not the `gc` toolchain.  What you get is the whole Go
