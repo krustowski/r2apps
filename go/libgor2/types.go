@@ -78,6 +78,7 @@ const (
 	FsRootfs  = 1
 	FsFat12   = 2
 	FsIso9660 = 3
+	FsTar     = 4
 )
 
 // MountInfo describes one VFS mount point (syscall 0x2c).
@@ -134,6 +135,19 @@ type FBInfo struct {
 	Height uint32
 	Pitch  uint32
 	BPP    uint32
+}
+
+// IndexedFrame is the argument block for syscall 0x19. Pixels points to
+// Width * Height palette indices; Palette points to 256 RGB byte triples.
+// FirstRow and Rows select the band to draw. BlitIndexed builds this block
+// from slices and validates their lengths.
+type IndexedFrame struct {
+	Pixels   uint64
+	Palette  uint64
+	Width    uint32
+	Height   uint32
+	FirstRow uint32
+	Rows     uint32
 }
 
 // NetStatus is the network status block (syscall 0x38).
@@ -290,6 +304,9 @@ const (
 
 	_ = uint(unsafe.Sizeof(FBInfo{}) - 16)
 	_ = uint(16 - unsafe.Sizeof(FBInfo{}))
+
+	_ = uint(unsafe.Sizeof(IndexedFrame{}) - 32)
+	_ = uint(32 - unsafe.Sizeof(IndexedFrame{}))
 
 	_ = uint(unsafe.Sizeof(NetStatus{}) - 44)
 	_ = uint(44 - unsafe.Sizeof(NetStatus{}))

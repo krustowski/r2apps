@@ -19,7 +19,7 @@ if err := libgor2.ReadSysInfo(&info); err != nil {
 | `system.go` | Exit, sysinfo, RTC, ticks, sleep, tasks, `Args`. |
 | `console.go` | Print, clear, flush. |
 | `fs.go` | Files, directories, mounts, `chdir`, fsck. |
-| `video.go` | Framebuffer, VGA modes, blitting, the kernel font. |
+| `video.go` | Framebuffer, VGA modes, RGB/indexed blitting, presentation transactions, captures, the kernel font. |
 | `audio.go` | Speaker and MIDI. |
 | `net.go` | Ports, serial, packets, driver registration. |
 | `input.go` | Keyboard and mouse pipes. |
@@ -50,6 +50,24 @@ n, err := libgor2.ReadFileAt("/mnt/fat/BIG.DAT", libgor2.KBytes(addr, 1<<20), 0)
 The check is against the region, not the slice: the kernel is still not told
 how long most buffers are, so a slice shorter than what a syscall writes is
 overrun into whatever follows it.
+
+## Indexed frames and capture
+
+`BlitIndexed(pixels, palette, width, height, firstRow, rows, clear)` draws
+selected rows of an 8-bit frame. Supply the complete frame and 256 RGB palette
+triples; the kernel centers the image at the largest integer scale that fits.
+`IndexedAvailable` probes framebuffer support.
+
+When `IndexedPresentAvailable` returns true, call `BeginIndexedPresent`, draw
+the row bands, then call `EndIndexedPresent` with the complete composed frame.
+Call `CancelIndexedPresent` if drawing fails. This protocol lets updated kernels
+serve stable 640x480 captures from a completed snapshot in RAM.
+
+`CaptureFramebuffer` fills a screen-sized `[]uint32` with `0x00RRGGBB` pixels
+and requires a 32bpp framebuffer. `CaptureFramebufferRGB24Scaled` fills a
+`[]byte` with tightly packed RGB triples at dimensions from 1 to 65535.
+Both validate destination capacity. If either returns `EBusy`, discard the
+captured contents and retry later.
 
 ## Structure layouts
 

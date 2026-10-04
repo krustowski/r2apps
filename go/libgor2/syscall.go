@@ -59,18 +59,21 @@ const (
 	ScFree          = 0x0f
 
 	// Video and audio
-	ScPrintString   = 0x10
-	ScClearScreen   = 0x11
-	ScWritePixel    = 0x12
-	ScWriteVGA      = 0x13
-	ScMapVram       = 0x14
-	ScSetVideoMode  = 0x15
-	ScGetFBInfo     = 0x16
-	ScBlitBuffer    = 0x17
-	ScGetKernelFont = 0x18
-	ScPlayFreq      = 0x1a
-	ScPlayFile      = 0x1b
-	ScPlayStop      = 0x1f
+	ScPrintString          = 0x10
+	ScClearScreen          = 0x11
+	ScWritePixel           = 0x12
+	ScWriteVGA             = 0x13
+	ScMapVram              = 0x14
+	ScSetVideoMode         = 0x15
+	ScGetFBInfo            = 0x16
+	ScBlitBuffer           = 0x17
+	ScGetKernelFont        = 0x18
+	ScBlitIndexed          = 0x19
+	ScPlayFreq             = 0x1a
+	ScPlayFile             = 0x1b
+	ScCaptureFB            = 0x1c
+	ScCaptureFBRGB24Scaled = 0x1d
+	ScPlayStop             = 0x1f
 
 	// Filesystem
 	ScReadFile    = 0x20
