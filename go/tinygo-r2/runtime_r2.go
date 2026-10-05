@@ -55,7 +55,11 @@ func preinit() {
 var (
 	stdoutBuf [256]byte
 	stdoutLen int
+	// Optional hosted-application sink; it must not print or allocate.
+	r2StdoutSink func([]byte)
 )
+
+func setR2StdoutSink(sink func([]byte)) { r2StdoutSink = sink }
 
 func putchar(c byte) {
 	// The kernel's print stops at the first NUL, so a NUL can never be sent
@@ -75,6 +79,9 @@ func putchar(c byte) {
 func flushStdout() {
 	if stdoutLen == 0 {
 		return
+	}
+	if r2StdoutSink != nil {
+		r2StdoutSink(stdoutBuf[:stdoutLen])
 	}
 
 	r2syscall(sysPrint, uintptr(unsafe.Pointer(&stdoutBuf[0])), uintptr(stdoutLen))
