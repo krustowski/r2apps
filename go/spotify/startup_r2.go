@@ -1,4 +1,4 @@
-//go:build r2 && !r2netcheck
+//go:build r2 && !r2netcheck && !r2faultcheck
 
 package main
 

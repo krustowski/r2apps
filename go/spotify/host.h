@@ -3,7 +3,7 @@
 // Pointer-free ABI shared with go/spotify/protocol. Control words use aligned
 // 32-bit atomics; snapshots are double-buffered with a reader lease.
 #define SPOTIFY_MAGIC 0x50533252u
-#define SPOTIFY_VERSION 3u
+#define SPOTIFY_VERSION 4u
 #define SPOTIFY_NONE 2u
 #define SPOTIFY_QUEUE 32u
 #define SPOTIFY_VISIBLE 10u
@@ -29,7 +29,9 @@ struct SpotifyHostBlock {
  uint32_t hostBeat, reading, quit, head;
  SpotifyCommand commands[SPOTIFY_QUEUE];
  SpotifySnapshot snapshots[2];
+ uint32_t exitReason;
+ char runtimeText[128];
 };
 static_assert(sizeof(SpotifySnapshot)==1804,"Spotify snapshot ABI");
-static_assert(sizeof(SpotifyHostBlock)==3908,"Spotify shared block ABI");
+static_assert(sizeof(SpotifyHostBlock)==4040,"Spotify shared block ABI");
 #endif

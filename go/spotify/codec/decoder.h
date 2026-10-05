@@ -1,5 +1,7 @@
 #ifndef R2_VORBIS_DECODER_H
 #define R2_VORBIS_DECODER_H
+typedef __SIZE_TYPE__ r2v_size_t;
+void r2v_memory(r2v_size_t *, r2v_size_t *);
 typedef struct r2v_decoder r2v_decoder;
 r2v_decoder *r2v_new(void);
 void r2v_close(r2v_decoder *);

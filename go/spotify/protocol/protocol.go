@@ -7,7 +7,7 @@ import "unsafe"
 
 const (
 	Magic     = 0x50533252 // "R2SP"
-	Version   = 3
+	Version   = 4
 	NoBuffer  = 2
 	QueueSize = 32
 	Visible   = 10
@@ -28,6 +28,13 @@ const (
 	VolumeUp
 	Mute
 	OpenPlaylist
+)
+
+const (
+	ExitHostClosed = iota + 1
+	ExitHostTimeout
+	ExitBadQueue
+	ExitRuntime
 )
 
 type Command struct{ Op, Value uint32 }
@@ -56,6 +63,8 @@ type Block struct {
 	HostBeat, Reading, Quit, Head          uint32 // host writes
 	Commands                               [QueueSize]Command
 	Snapshots                              [2]Snapshot
+	ExitReason                             uint32
+	RuntimeText                            [128]byte
 }
 
 func Text(dst []byte, s string) {
@@ -81,6 +90,6 @@ const (
 	_ = uint(76 - unsafe.Sizeof(Row{}))
 	_ = uint(unsafe.Sizeof(Snapshot{}) - 1804)
 	_ = uint(1804 - unsafe.Sizeof(Snapshot{}))
-	_ = uint(unsafe.Sizeof(Block{}) - 3908)
-	_ = uint(3908 - unsafe.Sizeof(Block{}))
+	_ = uint(unsafe.Sizeof(Block{}) - 4040)
+	_ = uint(4040 - unsafe.Sizeof(Block{}))
 )

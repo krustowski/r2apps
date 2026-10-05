@@ -140,5 +140,13 @@ func (r *Reader) Close() error {
 		C.r2v_close(r.decoder)
 		r.decoder = nil
 	}
+	r.source = nil
 	return nil
+}
+
+// MemoryStats reports decoder allocations outside Go's collector.
+func MemoryStats() (used, peak uint64) {
+	var live, high C.r2v_size_t
+	C.r2v_memory(&live, &high)
+	return uint64(live), uint64(high)
 }

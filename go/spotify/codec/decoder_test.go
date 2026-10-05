@@ -149,3 +149,36 @@ func TestDecoderCoalescesSmallPCMBlocks(t *testing.T) {
 		t.Fatalf("first PCM buffer: %d %v", n, e)
 	}
 }
+
+func TestRepeatedDecoderLifecycle(t *testing.T) {
+	data, err := os.ReadFile("testdata/tone.ogg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, _ := MemoryStats()
+	var pcm [8192]byte
+	for cycle := 0; cycle < 100; cycle++ {
+		r, err := Open(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(cycle, err)
+		}
+		if cycle%2 == 0 {
+			for {
+				_, err = r.Read(pcm[:])
+				if err != nil {
+					break
+				}
+			}
+			if err != io.EOF {
+				t.Fatal(cycle, err)
+			}
+		}
+		r.Close()
+		r.Close()
+		if live, peak := MemoryStats(); live != baseline {
+			t.Fatalf("cycle %d leaked %d bytes (peak %d)", cycle, live-baseline, peak)
+		}
+	}
+	_, peak := MemoryStats()
+	t.Logf("100 decoder reopen/finish/abort cycles, peak native bytes %d", peak)
+}

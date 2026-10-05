@@ -226,3 +226,22 @@ Native networking regression variant (for development only): compile with
 `-tags=r2netcheck`. At startup it checks TCP zero-window reopening, overlapping
 retransmissions, another Go task running during a quiet TCP read, cancellation,
 and a `/mnt/tmp/STEST.KEY` write/rotate/reopen. The normal build omits these checks.
+
+## Crash diagnostics
+
+The client writes its latest streaming stage and memory figures to
+`/mnt/tmp/SPOTIFY.LOG`. Runtime panic output is appended using fixed buffers,
+so an exhausted Go heap can still be reported. Memento displays the panic text,
+task fault address, or heartbeat exit reason. The log contains no account tokens
+and lasts until reboot; read it before restarting the application, which replaces it.
+
+This diagnostics update requires both the rebuilt `spotify.elf` and
+`memento.elf` (host ABI version 4). Rebuild the TinyGo image after runtime changes:
+`make -C ../tinygo-r2 image`, then rebuild the application and Memento.
+
+Decoder tests include 100 alternating finish/abort/reopen cycles and verify that
+native allocations return to their baseline. The optional `r2netcheck` build
+runs these cycles inside r2 using `/mnt/tar/opt/music/stress.ogg` (copy
+`codec/testdata/tone.ogg` there), alongside TCP and credential-cache checks.
+The separate `r2faultcheck` build intentionally panics to test crash reporting;
+never install it as the normal client.

@@ -107,6 +107,7 @@ func main() {
 		fmt.Println("Unsupported Spotify host protocol.")
 		return
 	}
+	startDiagnostics(block)
 	a := &app{netProgress: make(chan string, 1), streamPCM: make(chan *streamChunk, 8), streamPool: make(chan *streamChunk, 10), volume: 100, pSel: 0, tSel: 0, status: startupChecks(),
 		netJobs: make(chan netJob, 1), netResults: make(chan netResult, 1), audioJobs: make(chan audioJob, 8), audioEvents: make(chan audioEvent, 8), done: make(chan struct{}), audioDone: make(chan struct{}), networkDone: make(chan struct{})}
 	for i := 0; i < cap(a.streamPool); i++ {
@@ -125,6 +126,8 @@ func main() {
 	lastFrame := uint64(0)
 	for {
 		if atomic.LoadUint32(&block.Quit) != 0 {
+			atomic.StoreUint32(&block.ExitReason, protocol.ExitHostClosed)
+			diagnosticStage("host closed window")
 			break
 		}
 		beat := atomic.LoadUint32(&block.HostBeat)
@@ -132,11 +135,15 @@ func main() {
 			hostBeat = beat
 			hostSeen = r2.Ticks()
 		} else if r2.Ticks()-hostSeen > 10000 {
+			atomic.StoreUint32(&block.ExitReason, protocol.ExitHostTimeout)
+			diagnosticStage("Memento heartbeat timeout")
 			break
 		}
 		atomic.AddUint32(&block.ClientBeat, 1)
 		head, tail := atomic.LoadUint32(&block.Head), atomic.LoadUint32(&block.Tail)
 		if head-tail > protocol.QueueSize {
+			atomic.StoreUint32(&block.ExitReason, protocol.ExitBadQueue)
+			diagnosticStage("invalid host command queue")
 			a.status = "Invalid host command queue."
 			break
 		}
@@ -540,7 +547,13 @@ func (a *app) network() {
 					pending = nil
 				}
 				havePending = false
+				if transport != nil {
+					transport.Close()
+				}
+				// Reclaim previous-track input and metadata before new startup.
+				runtime.GC()
 				generation = job.generation
+				diagnosticStage("new song after cleanup")
 				duration = job.track.DurationMS
 				requestGeneration = generation
 				if generation != atomic.LoadUint32(&a.streamGeneration) {
@@ -611,6 +624,7 @@ func (a *app) network() {
 							}
 							return conn, e
 						}}
+						diagnosticStage("playback login")
 						err = session.Start(token)
 						if err != nil {
 							err = fmt.Errorf("playback login: %w", err)
@@ -619,6 +633,7 @@ func (a *app) network() {
 						if err == nil {
 							var source *stream.CDNReader
 							var key []byte
+							diagnosticStage("audio metadata and key")
 							source, key, err = session.Audio(job.track.ID)
 							if err == nil {
 								source.Do = transport.DoAudio
@@ -633,7 +648,9 @@ func (a *app) network() {
 									if tokens.Progress != nil {
 										tokens.Progress("Downloading Spotify Vorbis headers...")
 									}
+									diagnosticStage("Vorbis decoder startup")
 									active, err = codec.Open(decrypted)
+									diagnosticStage("Vorbis decoder startup returned")
 									if err != nil {
 										err = fmt.Errorf("audio headers: %w", err)
 									}
@@ -682,6 +699,7 @@ func (a *app) network() {
 				}
 				active.Close()
 				active = nil
+				diagnosticStage("stream closed after decode")
 			}
 			havePending = true
 		}
