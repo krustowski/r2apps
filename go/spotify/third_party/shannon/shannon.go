@@ -39,7 +39,7 @@ type Shannon struct {
 	nbuf  uint
 }
 
-type fullWordCallback func(*Shannon, *uint32)
+type fullWordCallback func(*Shannon, uint32) uint32
 type byteCallback func(*Shannon, *byte)
 
 // New creates a new instance of Shannon cipher
@@ -80,16 +80,21 @@ func (sInst *Shannon) reloadState() {
 
 func (sInst *Shannon) loadKey(key []byte) {
 	// start folding in key
-	for _, word := range chunkBytes(key, 4) {
+	for offset := 0; offset < len(key); offset += 4 {
+		end := offset + 4
+		if end > len(key) {
+			end = len(key)
+		}
+		word := key[offset:end]
 		if len(word) == 4 {
 			sInst.r[keyp] ^= readLittleEndian(word)
 		} else {
 			// if there were any extra key bytes, zero pad to a word
-			xtra := make([]byte, 4)
+			var xtra [4]byte
 			for i := 0; i < len(word); i++ {
 				xtra[i] = word[i]
 			}
-			sInst.r[keyp] ^= readLittleEndian(xtra)
+			sInst.r[keyp] ^= readLittleEndian(xtra[:])
 		}
 		sInst.cycle()
 	}
@@ -182,10 +187,11 @@ func (sInst *Shannon) process(buf []byte, fullWord fullWordCallback, partial byt
 	// handle whole words
 	length := len(buf) &^ 0x3
 	wbuf, extra := buf[:length], buf[length:]
-	for _, word := range chunkBytes(wbuf, 4) {
+	for offset := 0; offset < len(wbuf); offset += 4 {
+		word := wbuf[offset : offset+4]
 		sInst.cycle()
 		t := readLittleEndian(word)
-		fullWord(sInst, &t)
+		t = fullWord(sInst, t)
 		writeLittleEndian(word, t)
 	}
 
@@ -204,9 +210,9 @@ func (sInst *Shannon) process(buf []byte, fullWord fullWordCallback, partial byt
 // Encrypt encrypts bytes in buf
 func (sInst *Shannon) Encrypt(buf []byte) {
 	sInst.process(buf,
-		func(ctx *Shannon, word *uint32) {
-			ctx.macFunc(*word)
-			*word ^= ctx.sbuf
+		func(ctx *Shannon, word uint32) uint32 {
+			ctx.macFunc(word)
+			return word ^ ctx.sbuf
 		},
 		func(ctx *Shannon, b *byte) {
 			ctx.mbuf ^= uint32(*b) << (32 - ctx.nbuf)
@@ -217,9 +223,10 @@ func (sInst *Shannon) Encrypt(buf []byte) {
 // Decrypt decrypts bytes in buf
 func (sInst *Shannon) Decrypt(buf []byte) {
 	sInst.process(buf,
-		func(ctx *Shannon, word *uint32) {
-			*word ^= ctx.sbuf
-			ctx.macFunc(*word)
+		func(ctx *Shannon, word uint32) uint32 {
+			word ^= ctx.sbuf
+			ctx.macFunc(word)
+			return word
 		},
 		func(ctx *Shannon, b *byte) {
 			*b ^= byte((ctx.sbuf >> (32 - ctx.nbuf)) & 0xFF)
@@ -251,7 +258,12 @@ func (sInst *Shannon) Finish(buf []byte) {
 	sInst.diffuse()
 
 	// produce output from the stream buffer
-	for _, word := range chunkBytes(buf, 4) {
+	for offset := 0; offset < len(buf); offset += 4 {
+		end := offset + 4
+		if end > len(buf) {
+			end = len(buf)
+		}
+		word := buf[offset:end]
 		sInst.cycle()
 		if len(word) == 4 {
 			writeLittleEndian(word, sInst.sbuf)
@@ -265,9 +277,9 @@ func (sInst *Shannon) Finish(buf []byte) {
 
 // NonceU32 updates nonce as BigEndian uint32
 func (sInst *Shannon) NonceU32(n uint32) {
-	nonce := make([]byte, 4)
-	writeBigEndian(nonce, n)
-	sInst.Nonce(nonce)
+	var nonce [4]byte
+	writeBigEndian(nonce[:], n)
+	sInst.Nonce(nonce[:])
 }
 
 // CheckMac checks MAC integrity

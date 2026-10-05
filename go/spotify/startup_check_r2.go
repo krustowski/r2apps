@@ -13,6 +13,9 @@ import (
 )
 
 func startupChecks() string {
+	if failure := nativeHeapCheck(); failure != "" {
+		return failure
+	}
 	if e := r2net.NativeTCPCheck(); e != nil {
 		return "REGRESSION FAILED: " + e.Error()
 	}
@@ -77,5 +80,5 @@ func startupChecks() string {
 	if e != nil || restored != key {
 		return "TCP passed; tmp key reopen failed"
 	}
-	return "TCP + Vorbis book + 100 decoder cycles + tmp key passed."
+	return "8 MiB heap + Shannon + TCP + 100 decoders + key passed."
 }

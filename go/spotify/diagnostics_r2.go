@@ -52,6 +52,8 @@ func diagnosticStage(stage string) {
 	stackUsed, stackSize := r2.StackUsed()
 	b = append(b, "go heap: "...)
 	b = strconv.AppendUint(b, diagnosticMemory.HeapAlloc, 10)
+	b = append(b, "/"...)
+	b = strconv.AppendUint(b, diagnosticMemory.HeapSys, 10)
 	b = append(b, " native decoder: "...)
 	b = strconv.AppendUint(b, used, 10)
 	b = append(b, " peak: "...)

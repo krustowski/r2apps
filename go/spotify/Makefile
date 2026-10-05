@@ -10,7 +10,7 @@ build:
 	$(MAKE) -C ../r2tls
 	$(MAKE) -C codec
 	$(DOCKER) run --rm -v $(APP_ROOT):/src:ro -v $(GO_ROOT)/spotify:/out \
-	 -w /src/go/spotify $(IMAGE) tinygo build -target=r2 -stack-size=64KB -opt=$(OPT) -no-debug -o /out/spotify.elf .
+	 -w /src/go/spotify $(IMAGE) tinygo build -target=r2 -tags=r2largeheap -stack-size=64KB -opt=$(OPT) -no-debug -o /out/spotify.elf .
 	@stat -c 'spotify.elf: %s bytes' spotify.elf
 test:
 	$(MAKE) -C ../r2tls

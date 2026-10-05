@@ -223,7 +223,7 @@ Spotify references: [PKCE sign-in](https://developer.spotify.com/documentation/w
 [playlist items](https://developer.spotify.com/documentation/web-api/reference/get-playlists-items).
 
 Native networking regression variant (for development only): compile with
-`-tags=r2netcheck`. At startup it checks TCP zero-window reopening, overlapping
+`-tags=r2netcheck,r2largeheap`. At startup it checks TCP zero-window reopening, overlapping
 retransmissions, another Go task running during a quiet TCP read, cancellation,
 and a `/mnt/tmp/STEST.KEY` write/rotate/reopen. The normal build omits these checks.
 
@@ -245,3 +245,18 @@ runs these cycles inside r2 using `/mnt/tar/opt/music/stress.ogg` (copy
 `codec/testdata/tone.ogg` there), alongside TCP and credential-cache checks.
 The separate `r2faultcheck` build intentionally panics to test crash reporting;
 never install it as the normal client.
+
+### Go heap capacity
+
+Spotify enables `r2largeheap`: the runtime obtains an 8 MiB GC arena from the
+kernel's process-owned allocator before Go starts. The former arena was only
+what remained of its 2 MiB private frame after code, globals and the system
+stack. Startup falls back to 4 MiB, 2 MiB, then the private arena if allocation
+fails; larger arenas need a kernel with the user-heap extension enabled.
+`SPOTIFY.LOG` reports Go heap used/capacity so the selected size is visible.
+
+Shannon AP packet processing now iterates words without allocating a slice
+entry for each four bytes. A 65,535-byte packet formerly allocated about
+384 KiB for that table alone. Native regression builds hold a 2 MiB live object
+across collection and goroutine switches, and process 100 maximum-sized AP
+packets without further Go allocation, before the decoder lifecycle checks.
