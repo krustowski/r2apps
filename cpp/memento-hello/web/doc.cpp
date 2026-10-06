@@ -478,10 +478,18 @@ private:
         lastSpace_ = true;
     }
 
-    int32_t addLink(const char *href)
+    int32_t addLink(const char *href, const uint32_t *savedEvent = nullptr)
     {
+        uint32_t event[2];
+        if (savedEvent) { event[0] = savedEvent[0]; event[1] = savedEvent[1]; }
+        else {
+            const char *handler = attr("onclick"), *id = attr("id");
+            event[0] = d_.addString(handler ? handler : "", handler ? strlen(handler) : 0);
+            event[1] = d_.addString(id ? id : "", id ? strlen(id) : 0);
+        }
         uint32_t off = (uint32_t)d_.links_.len;
-        if (!d_.links_.append(href, strlen(href) + 1) || !d_.linkOffs_.append(&off, sizeof(off)))
+        if (!d_.links_.append(href, strlen(href) + 1) || !d_.linkOffs_.append(&off, sizeof(off)) ||
+            !d_.linkEvents_.append(event, sizeof(event)))
         {
             d_.oom_ = true;
             return -1;
@@ -490,12 +498,14 @@ private:
     }
 
     //  Forms.
-    int addControl(Control &c, const char *name, const char *value);
+    int addControl(Control &c, const char *name, const char *value, bool captureAttributes = true);
     int32_t controlLink(int ci)
     {
         char h[16] = "\x01";
         scatInt(h, ci, sizeof(h));
-        return addLink(h);
+        const Control &c = d_.control(ci);
+        const uint32_t event[2] = {c.onclick, c.id};
+        return addLink(h, event);
     }
     void cells(int ci, int width);
     void button(int ci, const char *label);
@@ -1223,8 +1233,14 @@ void HtmlParser::endTag(const char *name)
 
 // ─── Forms ───────────────────────────────────────────────────────────────────
 
-int HtmlParser::addControl(Control &c, const char *name, const char *value)
+int HtmlParser::addControl(Control &c, const char *name, const char *value, bool captureAttributes)
 {
+    if (captureAttributes) {
+        const char *domId = attr("id"), *handler = attr("onclick");
+        c.id = d_.addString(domId ? domId : "", domId ? strlen(domId) : 0);
+        c.onclick = d_.addString(handler ? handler : "", handler ? strlen(handler) : 0);
+    }
+
     c.form = (int16_t)form_;
     c.name = d_.addString(name ? name : "", name ? strlen(name) : 0);
     c.value = d_.addString(value ? value : "", value ? strlen(value) : 0);
@@ -1418,6 +1434,10 @@ size_t HtmlParser::selectElement(const uint8_t *s, size_t n, size_t i)
 //  <textarea>: its text is the initial value, read here through to the end tag.
 size_t HtmlParser::textareaElement(const uint8_t *s, size_t n, size_t i)
 {
+    Control c = {};
+    const char *domId = attr("id"), *handler = attr("onclick");
+    c.id = d_.addString(domId ? domId : "", domId ? strlen(domId) : 0);
+    c.onclick = d_.addString(handler ? handler : "", handler ? strlen(handler) : 0);
     const char *name = attr("name");
     char nameCopy[128];
     scopy(nameCopy, name ? name : "", sizeof(nameCopy));
@@ -1440,10 +1460,9 @@ size_t HtmlParser::textareaElement(const uint8_t *s, size_t n, size_t i)
     const char *value = attrPool_ + poolValue(s + cs, len);
     if (value[0] == '\n')
         value++; // a newline right after the tag is not part of the text
-    Control c = {};
     c.type = Control::TEXTAREA;
     c.width = (uint8_t)(cols < 10 ? 10 : (cols > 60 ? 60 : cols));
-    int ci = addControl(c, nameCopy, value);
+    int ci = addControl(c, nameCopy, value, false);
     if (ci >= 0)
         cells(ci, d_.control(ci).width);
     return after;
@@ -1927,6 +1946,7 @@ void Document::clear()
     items_.release();
     links_.release();
     linkOffs_.release();
+    linkEvents_.release();
     lines_.release();
     runs_.release();
     strings_.release();
@@ -2009,6 +2029,7 @@ void Document::loadHtml(const uint8_t *src, size_t n, const char *charset, const
     strings_.shrink();
     links_.shrink();
     linkOffs_.shrink();
+    linkEvents_.shrink();
     controls_.shrink();
 }
 
@@ -2033,6 +2054,27 @@ const char *Document::linkHref(int i) const
     return (const char *)links_.data + ((const uint32_t *)linkOffs_.data)[i];
 }
 
+const char *Document::linkHandler(int i) const
+{
+    return i >= 0 && size_t(i) < linkEvents_.len / 8 ? str(((uint32_t *)linkEvents_.data)[2*i]) : "";
+}
+void Document::controlSetText(int i, const char *text)
+{
+    if (i < 0 || i >= controlCount() || !control(i).isText()) return;
+    Control &c = control(i);
+    size_t n = strlen(text);
+    if (n > 65535) n = 65535;
+    if (!c.edit || n + 1 > c.editCap) {
+        char *fresh = (char *)big_realloc(c.edit, n + 1);
+        if (!fresh) { oom_ = true; return; }
+        c.edit = fresh; c.editCap = n + 1;
+    }
+    memcpy(c.edit, text, n); c.edit[n] = 0; c.editLen = n;
+}
+const char *Document::linkId(int i) const
+{
+    return i >= 0 && size_t(i) < linkEvents_.len / 8 ? str(((uint32_t *)linkEvents_.data)[2*i+1]) : "";
+}
 int Document::linkControl(int i) const
 {
     const char *h = linkHref(i);

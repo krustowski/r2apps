@@ -1,13 +1,14 @@
-# web — the browser engine behind Memento's Web window
+# web — the shared browser and Telegram engine
 
 A small web browser for rou2exOS: HTTP/1.1, TLS 1.2 by
-[BearSSL](https://bearssl.org/), and HTML without scripts or style sheets,
-drawn in the kernel's own fixed-width font.  The window is
-[`../windows/browser_window.cpp`](../windows/browser_window.cpp); everything
-it stands on is here.
+[BearSSL](https://bearssl.org/), and HTML with a small CSS subset, pictures and forms,
+drawn in the kernel's own fixed-width font. Memento's
+[`Web window`](../windows/browser_window.cpp) hosts the separate
+[`r2web.elf`](../../r2web/README.md) process. Its browser UI is now
+[`../../r2web/browser.cpp`](../../r2web/browser.cpp); its shared engine is here.
 
 ```
-browser_window.cpp   toolbar, page, status line, keys, history
+r2web/browser.cpp    toolbar, page, status line, keys, history
       │
    loader            resolve → connect → TLS → request → response → redirects
    │   │   │
@@ -29,7 +30,7 @@ web_r2.cpp           memory, clock, entropy and the date, on r2
 The Telegram window (`../windows/telegram_window.cpp`) uses the same loader,
 TLS and picture code for the Bot API.
 
-Nothing blocks.  The window turns the loader from Memento's idle loop, the
+Nothing blocks.  The browser process turns the loader from its own loop (Telegram uses Memento's idle loop), the
 loader turns the network stack, and the TLS engine is BearSSL's low-level one,
 which never touches a socket: bytes go in and come out through its buffers.
 
@@ -39,7 +40,9 @@ Headings (h1 and h2 at twice the size), paragraphs, lists (bullets, circles,
 numbers), block quotes, definition lists, `<pre>`, tables read row by row,
 links (underlined, walkable with Tab), bold (the font has none: the glyphs are
 drawn twice, one pixel apart), colours, horizontal rules, pictures, and
-forms.  `<script>`, `<svg>` and friends are skipped.
+forms.  `<script>` is skipped by this renderer; r2web runs classic scripts separately
+through MuJS and a small DOM adapter before laying out their output. `<svg>`
+and friends are skipped. See [r2web's JavaScript API](../../r2web/README.md#javascript).
 
 Text is decoded from UTF-8, windows-1252/ISO-8859-1, windows-1250 and
 ISO-8859-2, then mapped to CP437, which is what the font is for letters and
@@ -47,7 +50,7 @@ the Latin-1 symbols.  What CP437 does not have loses its accent (č → c,
 ř → r); the font's box-drawing and Greek rows are not CP437's, so those are
 not used.  `tools/gencharmap.py` generates the tables in `charmap.inc`.
 
-Not done: JavaScript, WebP and SVG pictures, cookies, compression (the
+Not done: a complete browser DOM/modern JavaScript, WebP and SVG pictures, cookies, compression (the
 request asks for `identity`), IPv6, TLS 1.3.
 
 ## Pictures
@@ -142,7 +145,8 @@ repeats it on 307 and 308).  Enter in a text field presses the form's first
 button, as browsers do.  A checkbox or radio button without a name is left
 out: it can send nothing, and on today's pages it is a CSS trick for opening
 menus.  Buttons of type `button` and controls outside any form need
-JavaScript; the status line says so.
+JavaScript; r2web handles supported inline `onclick` handlers through its
+DOM adapter and reports unsupported buttons in the status line.
 
 Each control sits in the page's text as a run of placeholder cells and in the
 link table as an entry of its own (`Document::linkControl`), so Tab, Enter,
@@ -193,10 +197,11 @@ not something to trust against an attacker who can model the machine's timing.
   user networking the same layout works without root:
   `-netdev user,id=n,net=10.3.4.0/24,host=10.3.4.1 -device rtl8139,netdev=n,mac=52:54:00:12:34:56`
 - It shares the process's one frame queue with c/libcr2's stack in the Chat
-  and IRC windows.  Neither reads the queue itself: `../netmux.cpp` does, and
+  and IRC windows.  Within Memento, neither reads the queue itself: `../netmux.cpp` does, and
   gives each stack the frames for its ports (the browser claims 47000-47015;
   ARP goes to both, ping to one).  A frame for the stack that is not asking
-  just now waits for it there, so a page and an IRC session run side by side.
+  just now waits for it there, so Telegram and an IRC session run side by side. r2web uses a
+  separate process and distinct bound ports for each browser.
 - TCP: one segment in flight when sending; three duplicate ACKs at once on
   a gap; retransmission with backoff.
 - Receiving: the window offered is sixteen full segments (`WEB_RX_SEGMENTS`,
@@ -212,9 +217,9 @@ not something to trust against an attacker who can model the machine's timing.
 
 ## Memory
 
-The whole Memento image is 2 MiB (see libc++r2's README); its heap arena is
-768 KiB of it, and grows onto the kernel's user heap when that is full.  The
-browser adds about 200 KiB of text --- BearSSL 68, stb_image 32, the engine
+Memento and r2web each have a private 2 MiB image (see libc++r2's README); its heap arena is
+768 KiB of it, and grows onto the kernel's user heap when that is full.  The shared
+engine adds about 200 KiB of text --- BearSSL 68, stb_image 32, the engine
 (with CSS, forms and pictures) the rest --- built with `-Os`.
 Check what is left below the 0x800000 line with
 `nm -n memento-hello.elf | grep ' _end$'` after adding anything.
@@ -226,7 +231,7 @@ full), which is why the arena is not: a 700 KiB page needs about 2.5 MiB of it, 
 grows while others do leaves holes.  So the body gets its Content-Length in
 one block, the text and items are reserved from the source's size before
 parsing, and all of them give back their growing room when they are done.
-Memento needs a kernel whose syscalls accept user-heap pointers
+Memento and r2web need a kernel whose syscalls accept user-heap pointers
 (`USER_REGIONS` in `src/abi/syscall.rs`).
 
 ## Tests

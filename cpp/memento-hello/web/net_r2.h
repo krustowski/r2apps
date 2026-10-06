@@ -9,11 +9,12 @@ namespace web {
 //
 //  There is one per process: the kernel queues frames for a process, not for
 //  a window, so two stacks in one process would take each other's frames.
-//  The same goes for c/libcr2's stack, which the chat and IRC windows use ---
-//  with one of those connected in the same Memento session, whichever polls
-//  first gets the frame.  Use one or the other at a time.
+//  Memento's netmux routes frames between this stack (Telegram) and the
+//  c/libcr2 stack (Chat/IRC). Hosted browsers use independent port ranges.
 //
 NetIf &r2Net();
+// Call before the first network operation; hosted processes have disjoint ports.
+void r2NetSetPortBase(uint16_t port);
 
 //  "10.3.4.2 via 10.3.4.1, DNS 1.1.1.1, driver" --- for the about page.
 void r2NetDescribe(char *out, size_t cap);

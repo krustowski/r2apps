@@ -11,6 +11,7 @@
 #  comes from libc++r2.
 #
 NAME     := memento-hello
+.DEFAULT_GOAL := build
 MEMENTO  := $(abspath ../../../Memento)
 LIBCXXR2 := $(abspath ../libc++r2)
 LIBCR2   := $(abspath ../../c/libcr2.a)
@@ -67,33 +68,7 @@ CXXFLAGS += $(EXTRA)
 #  process is 2 MiB and BearSSL is most of what the browser adds to it.
 #  web/bearssl.mk says which parts of BearSSL are left out and why.
 #
-WEB := web
-include $(WEB)/bearssl.mk
-GCC_INC := $(shell gcc -print-file-name=include)
-#  stb_image, for pictures (web/image.cpp, web/stb_image.c).
-STB := $(abspath ../third_party/stb)
-WEB_CFLAGS := -std=gnu99 -m64 -Os -ffreestanding -nostdlib -nostdinc \
-              -isystem $(GCC_INC) -I$(WEB)/libc -I$(WEB) \
-              -fno-stack-protector -fno-asynchronous-unwind-tables -fno-pie \
-              -fcf-protection=none -mno-red-zone -mgeneral-regs-only \
-              -ffunction-sections -fdata-sections -w \
-              $(BEARSSL_DEFS) $(BEARSSL_INC) -I$(STB)
-WEB_CXX_SRCS := $(WEB)/wbase.cpp $(WEB)/url.cpp $(WEB)/http.cpp $(WEB)/css.cpp $(WEB)/doc.cpp \
-                $(WEB)/loader.cpp $(WEB)/net_r2.cpp $(WEB)/web_r2.cpp $(WEB)/image.cpp $(WEB)/png.cpp \
-                $(WEB)/mp4.cpp
-WEB_C_SRCS   := $(WEB)/tls.c $(WEB)/sysrng_stub.c $(WEB)/stb_image.c $(WEB)/h264.c
-WEB_OBJS     := $(patsubst $(WEB)/%,$(BDIR)/web/%.o,$(basename $(WEB_CXX_SRCS) $(WEB_C_SRCS)))
-BEARSSL_LIB  := $(BDIR)/libbearssl.a
-BEARSSL_OBJS := $(patsubst $(BEARSSL)/src/%.c,$(BDIR)/bearssl/%.o,$(BEARSSL_SRCS))
-#  h264bsd, the H.264 (Baseline) decoder behind the MP4s Telegram makes of
-#  GIFs (web/mp4.cpp, web/h264.c).  Integer C only, so -mgeneral-regs-only
-#  costs it nothing; its malloc and free are the picture allocator's
-#  (web/h264_r2.h).  -Os like the rest: at -O2 it is 22 KiB bigger and no
-#  faster to notice, most of a GIF's time going on scaling and dithering.
-H264BSD      := $(abspath ../third_party/h264bsd/src)
-H264BSD_LIB  := $(BDIR)/libh264bsd.a
-H264BSD_OBJS := $(patsubst $(H264BSD)/%.c,$(BDIR)/h264bsd/%.o,$(wildcard $(H264BSD)/*.c))
-H264_CFLAGS  := $(WEB_CFLAGS) -I$(H264BSD) -include $(abspath $(WEB)/h264_r2.h)
+include web/build.mk
 
 LDFLAGS  := -nostdlib -nostartfiles -static -no-pie \
             -Wl,--gc-sections,--allow-multiple-definition \
@@ -138,7 +113,7 @@ WINDOWS := $(wildcard windows/*.cpp)
 
 OBJS += $(WEB_OBJS)
 
-.PHONY: check build install clean webtest
+.PHONY: check build install clean webtest browser
 
 # Compile-only check — no linking, so neither archive has to exist yet.
 # Without -MMD: with no -o to follow, it writes main.d and the rest into the
@@ -148,17 +123,23 @@ check:
 		g++ $(filter-out -MMD -MP,$(CXXFLAGS)) -fsyntax-only $$src || exit 1; \
 	done
 	@echo "All sources compile OK"
+	@$(MAKE) -C ../r2web check
 
-build: $(BDIR) $(CRT0_OBJ) $(OBJS) $(BEARSSL_LIB) $(H264BSD_LIB)
+build: $(BDIR) $(CRT0_OBJ) $(OBJS) $(BEARSSL_LIB) $(H264BSD_LIB) $(LIBRARY) $(COMPAT) browser
 	g++ $(LDFLAGS) $(CRT0_OBJ) $(OBJS) $(BEARSSL_LIB) $(H264BSD_LIB) $(LIBRARY) $(COMPAT) $(LIBCR2) -lgcc -o $(NAME).elf
 	llvm-objcopy -O binary $(NAME).elf $(NAME).bin
+	@python3 ../r2web/check_image.py $(NAME).elf
 	@echo "Built $(NAME).elf — install it with: make install"
 
 # The kernel loads 8.3 names from the FAT12 image, so the file goes on in
 # upper case and truncated to eight characters: MEMENTO.ELF, run with `fg MEMENTO`.
 install: build
 	@mcopy -o -i $(FLOPPY) $(NAME).elf ::MEMENTO.ELF
+	@mcopy -o -i $(FLOPPY) ../r2web/r2web.elf ::R2WEB.ELF
 	@echo "copied $(NAME).elf to $(FLOPPY) as MEMENTO.ELF"
+
+browser:
+	@$(MAKE) -C ../r2web build
 
 $(CRT0_OBJ): $(CRT0_SRC) | $(BDIR)
 	nasm -f elf64 -DR2_STACK_BYTES=$(STACK_BYTES) $< -o $@
@@ -196,40 +177,10 @@ $(BDIR)/R2_Vga.o:               	$(R2)/R2_Vga.cpp              			| $(BDIR) ; g+
 $(BDIR)/R2_WindowImpl.o:        	$(R2)/R2_WindowImpl.cpp       			| $(BDIR) ; g++ -c $(CXXFLAGS) $< -o $@
 $(BDIR)/R2_UIRootImpl.o:        	$(R2)/R2_UIRootImpl.cpp       			| $(BDIR) ; g++ -c $(CXXFLAGS) $< -o $@
 
-# The browser engine and BearSSL.  -Os here too: the engine is parsing and
-# bookkeeping, nothing that -O2 makes visibly faster, and every kilobyte of
-# text comes out of the same 2 MiB as the frame buffer and the heap.
-$(BDIR)/web/%.o: $(WEB)/%.cpp | $(BDIR)
-	@mkdir -p $(dir $@)
-	g++ -c $(CXXFLAGS) -Os -I$(WEB) $< -o $@
-
-$(BDIR)/web/h264.o: $(WEB)/h264.c | $(BDIR)
-	@mkdir -p $(dir $@)
-	gcc -c $(H264_CFLAGS) -MMD -MP $< -o $@
-
-$(BDIR)/web/%.o: $(WEB)/%.c | $(BDIR)
-	@mkdir -p $(dir $@)
-	gcc -c $(WEB_CFLAGS) -MMD -MP $< -o $@
-
-$(BDIR)/h264bsd/%.o: $(H264BSD)/%.c $(WEB)/h264_r2.h | $(BDIR)
-	@mkdir -p $(dir $@)
-	@gcc -c $(H264_CFLAGS) $< -o $@
-
-$(H264BSD_LIB): $(H264BSD_OBJS)
-	@rm -f $@
-	ar rcs $@ $^
-
-$(BDIR)/bearssl/%.o: $(BEARSSL)/src/%.c | $(BDIR)
-	@mkdir -p $(dir $@)
-	@gcc -c $(WEB_CFLAGS) $< -o $@
-
-$(BEARSSL_LIB): $(BEARSSL_OBJS)
-	@rm -f $@
-	ar rcs $@ $^
-
 # Host-side tests of the engine: make -C web/tests check
 webtest:
 	@$(MAKE) -C $(WEB)/tests check
+	@$(MAKE) -C ../r2web test
 
 clean:
 	rm -rf $(BDIR) $(NAME).elf $(NAME).bin *.o

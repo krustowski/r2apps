@@ -187,6 +187,7 @@ enum AppKind
     APP_SPOTIFY,
 };
 static void openApp(int kind);
+static bool openBrowserWindow(const char *url = nullptr);
 static void openFileViewer(const char *path, unsigned int size);
 
 //
@@ -542,6 +543,22 @@ static bool openShellWindow()
 //  Window sizes, in the coordinates the windows are written in. The root adds
 //  the frame and the title bar around them and finds them a place to sit.
 //
+static bool openBrowserWindow(const char *url)
+{
+    if (!g_root) return false;
+    BrowserWindow *w = new BrowserWindow(url);
+    if (!w || w->failed()) {
+        web::scopy(g_launchError, w ? w->why() : "Web: no memory for its window.", sizeof(g_launchError));
+        delete w; return false;
+    }
+    PlatformWindow *wnd = g_root->CreateWindow("Web", 310, 176,
+        BrowserWindow::onEvent, w, &g_appOpts, deleteWeb, w);
+    if (!wnd) {
+        delete w; strcpy(g_launchError, "Web: no room for another window."); return false;
+    }
+    w->SetWindow(wnd); wnd->SetVisible(true); return true;
+}
+
 static void openApp(int kind)
 {
     if (!g_root)
@@ -649,16 +666,8 @@ static void openApp(int kind)
         break;
     }
     case APP_WEB:
-    {
-        //  As large as the desktop leaves room for: pages want width.
-        BrowserWindow *w = new BrowserWindow();
-        wnd = g_root->CreateWindow("Web", 310, 176, BrowserWindow::onEvent, w, &g_appOpts, deleteWeb, w);
-        if (wnd)
-            w->SetWindow(wnd);
-        else
-            delete w;
-        break;
-    }
+        openBrowserWindow();
+        return;
     case APP_EDITOR:
         openInEditor(nullptr);
         return;
@@ -766,6 +775,7 @@ static void runForeground(const char *program, const char *args)
         r2::sleep(500);
         editorKeepAlive(); // the Editor windows' editors wait for us meanwhile
         spotifyKeepAlive();
+        browserKeepAlive();
         shellKeepAlive();  // and so do the Shell windows' shells
         r2::vector<r2::TaskInfo> tasks = r2::tasks();
         if (tasks.empty())

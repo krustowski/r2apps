@@ -124,6 +124,7 @@ struct Control
     uint16_t nOptions;
     uint32_t name;      // raw bytes, as the page had them
     uint32_t value;     // the initial value, or a button's value
+    uint32_t id, onclick; // DOM identity and an inline button handler
     uint32_t options;   // index of the first (value, label) pair in optionOffs_
     uint32_t textOff;   // where its placeholder cells are in the text
     char *edit;         // the current text of a text control
@@ -177,6 +178,8 @@ public:
     int linkCount() const { return (int)(linkOffs_.len / sizeof(uint32_t)); }
     const char *linkHref(int i) const;
     int linkControl(int i) const; // the control behind link i, or -1
+    const char *linkHandler(int i) const;
+    const char *linkId(int i) const;
 
     //  Where link i first appears, as a row; -1 if it is not laid out.
     int linkRow(int i) const;
@@ -212,6 +215,7 @@ public:
 
     //  Editing: the current text of a text control, and changing it.
     const char *controlText(int c) const;
+    void controlSetText(int c, const char *text);
     void controlInsert(int c, char ch);
     void controlBackspace(int c);
 
@@ -228,6 +232,7 @@ private:
     Buf items_{true};
     Buf links_{true};
     Buf linkOffs_{true};
+    Buf linkEvents_{true}; // pairs of string offsets: onclick, id
     Buf lines_{true};
     Buf runs_{true};
     Buf strings_{true};

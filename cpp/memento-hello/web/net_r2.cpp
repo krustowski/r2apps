@@ -73,9 +73,9 @@ const uint64_t ARP_RESEND_MS = 250; // between ARP requests for the same address
 //  once, and counting each 50 ms look as a retry gave up after 350 ms.
 const uint64_t ARP_GIVE_UP_MS = 5000;
 
-const uint16_t PORT_BASE = 47000; // eight local ports, reused round robin
+uint16_t PORT_BASE = 47000; // eight local ports, reused round robin
 const int PORT_COUNT = 8;
-const uint16_t DNS_PORT_LOCAL = 47010;
+uint16_t DNS_PORT_LOCAL = 47010;
 
 const int MAX_CONNS = 6;
 
@@ -1486,6 +1486,8 @@ void Stack::close(int h)
 Stack g_stack;
 
 } // namespace
+
+void r2NetSetPortBase(uint16_t port) { PORT_BASE = port; DNS_PORT_LOCAL = port + 10; }
 
 NetIf &r2Net() { return g_stack; }
 
