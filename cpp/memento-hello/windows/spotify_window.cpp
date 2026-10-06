@@ -62,7 +62,8 @@ private:
     SpotifyHostBlock *blk = nullptr;
     SpotifySnapshot snapshot{};
     uint8_t pid = 0;
-    uint64_t startedAt = 0, lastCheck = 0;
+    uint64_t startedAt = 0, lastCheck = 0, crashRip = 0;
+    uint8_t taskStatus = 0;
     uint32_t shownFrame = 0;
     char error[80] = {};
     bool playlistFocus = true;
@@ -80,8 +81,11 @@ private:
         auto tasks = r2::tasks();
         if (tasks.empty()) return true;
         for (size_t i = 0; i < tasks.size(); i++)
-            if (tasks[i].id == pid && tasks[i].status < 4 &&
-                (tasks[i].name[0] | 32) == 's' && (tasks[i].name[1] | 32) == 'p') return true;
+            if (tasks[i].id == pid &&
+                (tasks[i].name[0] | 32) == 's' && (tasks[i].name[1] | 32) == 'p') {
+                taskStatus = tasks[i].status; crashRip = tasks[i].rip;
+                return taskStatus < 4;
+            }
         return false;
     }
     void send(uint32_t op, uint32_t value = 0)
@@ -109,7 +113,28 @@ private:
         if (now - startedAt < 2000 || now - lastCheck < 1000) return;
         lastCheck = now;
         if (spotifyLoad(&blk->exited) || !alive()) {
-            strcpy(snapshot.status, "Go client ended. Close and reopen to restart.");
+            if (blk->runtimeText[0]) {
+                size_t i = 0;
+                while (i + 1 < sizeof(snapshot.status) && blk->runtimeText[i]) {
+                    snapshot.status[i] = blk->runtimeText[i]; i++;
+                }
+                snapshot.status[i] = 0;
+            } else if (spotifyLoad(&blk->exitReason) == 2) {
+                strcpy(snapshot.status, "Go client: Memento heartbeat timed out. See SPOTIFY.LOG.");
+            } else if (spotifyLoad(&blk->exitReason) == 3) {
+                strcpy(snapshot.status, "Go client: invalid host command queue. See SPOTIFY.LOG.");
+            } else if (spotifyLoad(&blk->exitReason) == 1) {
+                strcpy(snapshot.status, "Go client closed by host.");
+            } else if (taskStatus == 4) {
+                strcpy(snapshot.status, "Go client fault at 0x");
+                size_t at = strlen(snapshot.status);
+                for (int shift = 60; shift >= 0; shift -= 4)
+                    snapshot.status[at++] = "0123456789abcdef"[(crashRip >> shift) & 15];
+                snapshot.status[at] = 0;
+                web::scat(snapshot.status, "; see SPOTIFY.LOG.", sizeof(snapshot.status));
+            } else {
+                strcpy(snapshot.status, "Go client exited; see /mnt/tmp/SPOTIFY.LOG. Reopen to restart.");
+            }
             wnd->SetImmediateMode(false); wnd->Repaint();
         }
     }
