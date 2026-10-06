@@ -120,6 +120,16 @@ static float tje_floorf(float x) {
  */
 #define TJE_USE_FAST_DCT 1
 
+#ifndef TJE_SUBSAMPLING
+#define TJE_SUBSAMPLING 444
+#endif
+#if TJE_SUBSAMPLING != 444 && TJE_SUBSAMPLING != 420
+#error "TJE_SUBSAMPLING must be 444 or 420"
+#endif
+#ifndef TJE_YIELD
+#define TJE_YIELD() ((void)0)
+#endif
+
 /*
  * libcr2 applications don't have hosted logging.
  */
@@ -452,6 +462,18 @@ TJEI_FORCE_INLINE void tjei_calculate_variable_length_int(int value, uint16_t ou
 /* Bitstream                                                       */
 /* ------------------------------------------------------------- */
 
+/* Entropy output is mostly single bytes. Avoid the freestanding memcpy call
+ * and generic recursive writer for each of them. */
+static inline void tjei_emit_byte(TJEState *state, uint8_t value) {
+    state->output_buffer[state->output_buffer_count++] = value;
+    if (state->output_buffer_count == TJEI_BUFFER_SIZE - 1) {
+        state->write_context.func(state->write_context.context,
+                                 state->output_buffer,
+                                 (int)state->output_buffer_count);
+        state->output_buffer_count = 0;
+    }
+}
+
 TJEI_FORCE_INLINE void tjei_write_bits(TJEState *state, uint32_t *bitbuffer, uint32_t *location, uint16_t num_bits, uint16_t bits) {
     uint32_t nloc = *location + num_bits;
 
@@ -463,13 +485,11 @@ TJEI_FORCE_INLINE void tjei_write_bits(TJEState *state, uint32_t *bitbuffer, uin
 
         uint8_t c = (uint8_t)((*bitbuffer) >> 24);
 
-        tjei_write(state, &c, 1, 1);
+        tjei_emit_byte(state, c);
 
         if (c == 0xff) {
 
-            uint8_t z = 0;
-
-            tjei_write(state, &z, 1, 1);
+            tjei_emit_byte(state, 0);
         }
 
         *bitbuffer <<= 8;
@@ -631,6 +651,19 @@ static void tjei_encode_and_write_MCU(TJEState *state, float *mcu, float *qt, ui
     uint16_t vli[2];
 
     int i;
+    int constant = 1;
+
+    /* Desktop backgrounds and indexed games have many solid blocks. Their
+     * transform contains only DC: skip the copy, DCT and 63 AC quantizations.
+     * Multiplication by 64 exactly matches the AA&N DC sum for equal inputs. */
+    for (i = 1; i < 64; ++i) {
+        if (mcu[i] != mcu[0]) { constant = 0; break; }
+    }
+    if (constant) {
+        float dc = (mcu[0] * 64.0f) * qt[0];
+        du[0] = (int)(floorf(dc + 1024.5f) - 1024.0f);
+        goto dc_coefficient;
+    }
 
     /*
      * 64 floats = 256 bytes, safely below libcr2 memcpy's
@@ -662,6 +695,7 @@ static void tjei_encode_and_write_MCU(TJEState *state, float *mcu, float *qt, ui
      * DC coefficient.
      */
 
+dc_coefficient:
     {
         int diff = du[0] - *pred;
 
@@ -679,6 +713,11 @@ static void tjei_encode_and_write_MCU(TJEState *state, float *mcu, float *qt, ui
 
             tjei_write_bits(state, bitbuffer, location, huff_dc_len[0], huff_dc_code[0]);
         }
+    }
+
+    if (constant) {
+        tjei_write_bits(state, bitbuffer, location, huff_ac_len[0], huff_ac_code[0]);
+        return;
     }
 
     /*
@@ -908,7 +947,8 @@ static int tjei_encode_main(TJEState *state, const unsigned char *src_data, int 
 
             header.component_spec[i].component_id = (uint8_t)(i + 1);
 
-            header.component_spec[i].sampling_factors = 0x11;
+            header.component_spec[i].sampling_factors =
+                (TJE_SUBSAMPLING == 420 && i == 0) ? 0x22 : 0x11;
 
             header.component_spec[i].qt = tables[i];
         }
@@ -976,8 +1016,46 @@ static int tjei_encode_main(TJEState *state, const unsigned char *src_data, int 
      * Encode 8x8 MCUs.
      */
 
-    for (y = 0; y < height; y += 8) {
+    for (y = 0; y < height; y += (TJE_SUBSAMPLING == 420 ? 16 : 8)) {
+        if ((y & 15) == 0)
+            TJE_YIELD();
 
+#if TJE_SUBSAMPLING == 420
+        /* A 16x16 MCU contains four Y blocks and one averaged block for each
+         * chroma channel. Replicate edge pixels before averaging. */
+        for (x = 0; x < width; x += 16) {
+            for (int i = 0; i < 64; ++i)
+                du_b[i] = du_r[i] = 0.0f;
+            for (int block = 0; block < 4; ++block) {
+                int bx = (block & 1) * 8;
+                int by = (block >> 1) * 8;
+                for (int iy = 0; iy < 8; ++iy) {
+                    int row = tjei_min(y + by + iy, height - 1);
+                    for (int ix = 0; ix < 8; ++ix) {
+                        int col = tjei_min(x + bx + ix, width - 1);
+                        uint32_t p = ((uint32_t)row * width + col) * src_num_components;
+                        float r = src_data[p], g = src_data[p + 1], b = src_data[p + 2];
+                        int ci = ((by + iy) / 2) * 8 + (bx + ix) / 2;
+                        du_y[iy * 8 + ix] = 0.299f * r + 0.587f * g + 0.114f * b - 128.0f;
+                        du_b[ci] += (-0.1687f * r - 0.3313f * g + 0.5f * b) * 0.25f;
+                        du_r[ci] += (0.5f * r - 0.4187f * g - 0.0813f * b) * 0.25f;
+                    }
+                }
+                tjei_encode_and_write_MCU(state, du_y, pqt.luma,
+                    state->ehuffsize[TJEI_LUMA_DC], state->ehuffcode[TJEI_LUMA_DC],
+                    state->ehuffsize[TJEI_LUMA_AC], state->ehuffcode[TJEI_LUMA_AC],
+                    &pred_y, &bitbuffer, &location);
+            }
+            tjei_encode_and_write_MCU(state, du_b, pqt.chroma,
+                state->ehuffsize[TJEI_CHROMA_DC], state->ehuffcode[TJEI_CHROMA_DC],
+                state->ehuffsize[TJEI_CHROMA_AC], state->ehuffcode[TJEI_CHROMA_AC],
+                &pred_b, &bitbuffer, &location);
+            tjei_encode_and_write_MCU(state, du_r, pqt.chroma,
+                state->ehuffsize[TJEI_CHROMA_DC], state->ehuffcode[TJEI_CHROMA_DC],
+                state->ehuffsize[TJEI_CHROMA_AC], state->ehuffcode[TJEI_CHROMA_AC],
+                &pred_r, &bitbuffer, &location);
+        }
+#else
         for (x = 0; x < width; x += 8) {
 
             int off_y;
@@ -1027,6 +1105,7 @@ static int tjei_encode_main(TJEState *state, const unsigned char *src_data, int 
             tjei_encode_and_write_MCU(state, du_r, pqt.chroma, state->ehuffsize[TJEI_CHROMA_DC], state->ehuffcode[TJEI_CHROMA_DC], state->ehuffsize[TJEI_CHROMA_AC], state->ehuffcode[TJEI_CHROMA_AC],
                                       &pred_r, &bitbuffer, &location);
         }
+#endif
     }
 
     /*

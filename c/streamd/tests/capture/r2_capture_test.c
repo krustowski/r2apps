@@ -16,20 +16,54 @@ static int blit(Frame *f, uint32_t command) {
     return (int)syscall(ScBlitIndexed, (int64_t)f, command, 0);
 }
 int main(int argc, uint8_t **argv) {
-    if (argc > 1 && argv[1][0] == 'w') {
+    if (argc > 1 && argv[1][0] == 'm') {
+        Frame f = {(uint64_t)pixels, (uint64_t)palette, 640, 400, 0, 400};
+        palette[3] = 255;
+        for (uint32_t i = 0; i < sizeof(pixels); ++i) pixels[i] = 1;
+        syscall(ScBlitIndexed, 0, 2, 0);
+        blit(&f, 1); blit(&f, 3);
+        FBCaptureInfo_T info = {0};
+        if (capture_framebuffer_rgb24_scaled_if_new(rgb, 640, 480, &info) ||
+            !(info.flags & FB_CAPTURE_INFO_SNAPSHOT) || !info.frame_id) {
+            report("METADATA FAIL missing snapshot identity\n"); return 4;
+        }
+        uint64_t id = info.frame_id, stamp = info.timestamp_ms;
+        for (uint32_t i = 0; i < sizeof(rgb); ++i) rgb[i] = 37;
+        if (capture_framebuffer_rgb24_scaled_if_new(rgb, 640, 480, &info) != FB_CAPTURE_UNCHANGED ||
+            info.frame_id != id || info.timestamp_ms != stamp) {
+            report("METADATA FAIL unchanged result\n"); return 5;
+        }
+        for (uint32_t i = 0; i < sizeof(rgb); ++i) if (rgb[i] != 37) {
+            report("METADATA FAIL copied unchanged picture\n"); return 6;
+        }
+        // A legacy caller may have a live value in RCX: no opt-in bit means
+        // that value must not be interpreted as a metadata pointer.
+        uint64_t dims = ((uint64_t)640 << 16) | 480;
+        if (syscall(ScCaptureFBRGB24Scaled, (int64_t)rgb, dims, 1)) {
+            report("METADATA FAIL legacy caller compatibility\n"); return 7;
+        }
+        report("METADATA PASS identity, timestamp, no-copy reuse and legacy ABI\n");
+        return 0;
+    }
+    if (argc > 1 && (argv[1][0] == 'w' || argv[1][0] == 'f')) {
+        int rate_test = argv[1][0] == 'f';
         Frame f = {(uint64_t)pixels, (uint64_t)palette, 640, 400, 0, 400};
         palette[3] = 255; palette[8] = 255; // 1 = red, 2 = blue.
-        for (uint32_t frame = 0; frame < 120; ++frame) {
+        for (uint32_t frame = 0; frame < (rate_test ? 600U : 120U); ++frame) {
             for (uint32_t i = 0; i < sizeof(pixels); ++i)
                 pixels[i] = (uint8_t)(frame % 2 + 1);
             syscall(ScBlitIndexed, 0, 2, 0);
             f.first_row = 0; f.rows = 200;
             blit(&f, frame == 0 ? 1 : 0);
-            sleep_ms(30);
+            if (!rate_test) sleep_ms(30);
             f.first_row = 200; f.rows = 200;
             blit(&f, 0);
             blit(&f, 3);
-            sleep_ms(10);
+            sleep_ms(rate_test ? 16 : 10);
+        }
+        if (rate_test) {
+            int64_t length = read_file_at((const uint8_t *)"/mnt/tmp/STREAMD.LOG", rgb, 0, 4096);
+            if (length > 0) for (int64_t i = 0; i < length; ++i) write_port(0xe9, rgb[i]);
         }
         report("WRITER PASS split-band presents\n");
         return 0;
