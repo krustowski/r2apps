@@ -864,7 +864,7 @@ extern "C" int main()
     // --- Login, and the desktop sessions after it ---
     //
     // Esc on the desktop logs out: every window closes and the login dialog
-    // comes back.  Leaving the login dialog (Esc, Cancel, its close box)
+    // comes back. Leaving the login dialog (Esc or Cancel)
     // restarts the machine; on a kernel too old to do that, Memento ends as it
     // always did.
     while (wantsLogin)

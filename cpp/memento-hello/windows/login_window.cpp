@@ -33,7 +33,6 @@ private:
     // twenty-two characters across. The painter and the hit tests share them.
     static const int PAN_W = 116, PAN_H = 60;
     static const int TITLE_H = 10;
-    static const int CLOSE_W = 8, CLOSE_H = 6;
     static const int LABEL_X = 6, LABEL_W = 38;
     static const int FIELD_X = 46, FIELD_W = 64, FIELD_H = 10;
     static const int ROW1_Y = 15, ROW2_Y = 28;
@@ -88,18 +87,13 @@ private:
             {
                 return mx >= bx && mx < bx + bw && my >= by && my < by + bh;
             };
-            if (my >= panY && my < panY + TITLE_H && mx >= panX && mx < panX + PAN_W - CLOSE_W - 4)
+            if (my >= panY && my < panY + TITLE_H && mx >= panX && mx < panX + PAN_W)
             {
                 dragging = true;
                 dragMX0 = mx;
                 dragMY0 = my;
                 dragPX0 = panX;
                 dragPY0 = panY;
-                return;
-            }
-            if (hit(panX + PAN_W - CLOSE_W - 3, panY + 3, CLOSE_W, CLOSE_H))
-            {
-                wnd->Close();
                 return;
             }
             if (hit(panX + FIELD_X, panY + ROW1_Y, FIELD_W, FIELD_H))
@@ -302,7 +296,6 @@ private:
         target->FillRect(panX, panY, PAN_W, PAN_H, dark, false);
         target->FillRect(panX + 2, panY + 2, PAN_W - 4, PAN_H - 4, light, false);
         target->FillRect(panX + 2, panY + TITLE_H, PAN_W - 4, 1, dark, false); // title separator
-        target->FillRect(panX + PAN_W - CLOSE_W - 3, panY + 3, CLOSE_W, CLOSE_H, dark, false); // close button
 
         PlatformDrawTextOptions opts{};
         opts.font = font;
@@ -310,7 +303,7 @@ private:
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
 
-        target->DrawText(panX + 2, panY + 2, PAN_W - CLOSE_W - 8, TITLE_H - 2, "Login", &opts, false);
+        target->DrawText(panX + 2, panY + 2, PAN_W - 4, TITLE_H - 2, "Login", &opts, false);
 
         opts.horizontalAlign = PlatformAlign::Begin;
         target->DrawText(panX + LABEL_X, panY + ROW1_Y, LABEL_W, FIELD_H, "Login:", &opts, false);
