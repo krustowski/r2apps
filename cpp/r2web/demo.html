@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><title>r2web JavaScript demo</title></head><body>
+<h1>MuJS in a separate browser process</h1>
+<p id="answer">JavaScript has not run.</p>
+<input id="name" name="name" value="Memento">
+<button id="greet" type="button" onclick="document.getElementById('answer').textContent = 'Hello, ' + document.getElementById('name').value;">Greet</button>
+<script>
+var count = 6 * 7;
+document.getElementById('answer').textContent = 'JavaScript works: 6 * 7 = ' + count;
+document.write('<p>This paragraph was written by JavaScript.</p>');
+</script>
+<p><a href="javascript:document.title='JS link works';">Change the title</a></p>
+</body></html>

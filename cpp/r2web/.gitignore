@@ -1,0 +1,4 @@
+obj/
+*.elf
+*.bin
+tests/unit
