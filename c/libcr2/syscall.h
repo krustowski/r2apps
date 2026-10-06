@@ -448,6 +448,15 @@ int64_t play_midi_file(const uint8_t *name);
 int64_t capture_framebuffer(uint32_t *pixels);
 
 #define FB_CAPTURE_BUSY 0xFA
+#define FB_CAPTURE_UNCHANGED 0xF9
+#define FB_CAPTURE_INFO_SNAPSHOT 1U
+
+typedef struct {
+    uint64_t frame_id; /* Input: last accepted ID (0 = force a copy). */
+    uint64_t timestamp_ms;
+    uint32_t flags;    /* Output: FB_CAPTURE_INFO_SNAPSHOT for a stable RAM frame. */
+    uint32_t reserved;
+} FBCaptureInfo_T;
 
 /*
  * Capture the current framebuffer, nearest-neighbour scale it to
@@ -465,6 +474,14 @@ int64_t capture_framebuffer(uint32_t *pixels);
  * snapshots in RAM when the presenter uses the begin/end protocol.
  */
 int64_t capture_framebuffer_rgb24_scaled(uint8_t *rgb, uint32_t dst_width, uint32_t dst_height);
+
+/* Optional metadata extension to syscall 0x1D (bit 63 of arg2 opts into arg3).
+ * If the leased snapshot matches
+ * info->frame_id, returns FB_CAPTURE_UNCHANGED without copying RGB data.
+ * Set flags/timestamp to zero before calling: old kernels ignore metadata
+ * and perform an ordinary capture, allowing callers to compare pixels. */
+int64_t capture_framebuffer_rgb24_scaled_if_new(uint8_t *rgb, uint32_t dst_width,
+                                               uint32_t dst_height, FBCaptureInfo_T *info);
 
 /*
  *  int64_t stop_speaker() prototype
@@ -816,6 +833,8 @@ int64_t net_register(void);
  *  driver (net_register) must already be running to handle ARP and ICMP.
  */
 int64_t net_bind_port(uint16_t port);
+/* Release the caller's binding (syscall 0x37, arg2 = 1). */
+int64_t net_unbind_port(uint16_t port);
 
 /*
  *  int64_t get_net_status() prototype

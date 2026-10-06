@@ -9,6 +9,8 @@ LIBCR2		    ?= ../libcr2
 CRT0_ASM	    ?= ${LIBCR2}/_crt0.asm
 
 SOURCE_FILES	?= ../*.c
+OPT_LEVEL       ?= -O2
+EXTRA_CFLAGS    ?=
 
 export
 
@@ -18,13 +20,13 @@ export
 ensure_build_dir:
 	@mkdir -p ${BUILD_DIR}
 
-build_crt0:
+build_crt0: ensure_build_dir
 	@nasm -f elf64 ${CRT0_ASM} -o ${CRT0_OBJ}
 
-compile:
+compile: ensure_build_dir
 	@cd ${BUILD_DIR} && gcc \
 		-c \
-		-O2 \
+		${OPT_LEVEL} \
 		-flto \
 		-m64 \
 		-static \
@@ -32,12 +34,15 @@ compile:
 		-nostdinc \
 		-mno-red-zone \
 		-ffreestanding \
+		${EXTRA_CFLAGS} \
 		-I .. \
 		-I ../../libcr2/ \
 		${SOURCE_FILES}
 
-link:
+link: compile build_crt0
 	@gcc \
+		${OPT_LEVEL} \
+		-flto \
 		-nostdinc \
 		-nostdlib \
 		-nostartfiles \
@@ -49,7 +54,7 @@ link:
 		-Wl,-v \
 		-o ${NAME}.elf \
 
-build: ensure_build_dir build_crt0 compile link
+build: link
 
 clean:
 	@rm -rf ${BUILD_DIR} ./*.o

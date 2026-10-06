@@ -285,6 +285,11 @@ TcpSocket_T *tcp_connect(TcpSocket_T sockets[MAX_SOCKETS], const uint8_t remote_
  */
 void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8_t flags);
 
+/* Kernel TCP construction uses a 1400-byte buffer, including the 30-byte
+ * TcpPacketRequest_T. Bound payloads by this as well as the peer's MSS. */
+#define TCP_MAX_PAYLOAD 1370U
+uint16_t tcp_peer_mss(const TcpSocket_T *sock);
+
 /*
  *  TcpSocket_T *socket_tcp4() prototype
  *

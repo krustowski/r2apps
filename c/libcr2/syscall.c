@@ -6,7 +6,8 @@ int64_t syscall(SyscallNo_T number, int64_t arg1, int64_t arg2, int64_t arg3) {
                  : "=a"(ret)
                  /* Current kernels read RAX; older ones read RDX. */
                  : "a"(number), "d"(number), "D"(arg1), "S"(arg2), "c"(arg3)
-                 : "r11", "memory");
+                 /* The ISR carries the return value through R9. */
+                 : "r9", "r11", "memory");
     return ret;
 }
 
@@ -158,6 +159,11 @@ int64_t play_midi_file(const uint8_t *name) {
 int64_t capture_framebuffer(uint32_t *pixels) { return syscall(ScCaptureFB, (int64_t)pixels, 0, 0); }
 
 int64_t capture_framebuffer_rgb24_scaled(uint8_t *rgb, uint32_t dst_width, uint32_t dst_height) {
+    return capture_framebuffer_rgb24_scaled_if_new(rgb, dst_width, dst_height, 0);
+}
+
+int64_t capture_framebuffer_rgb24_scaled_if_new(uint8_t *rgb, uint32_t dst_width,
+                                               uint32_t dst_height, FBCaptureInfo_T *info) {
     uint64_t dimensions;
 
     if (!rgb || !dst_width || !dst_height)
@@ -167,8 +173,10 @@ int64_t capture_framebuffer_rgb24_scaled(uint8_t *rgb, uint32_t dst_width, uint3
         return -1;
 
     dimensions = ((uint64_t)dst_width << 16) | (uint64_t)dst_height;
+    /* Opt in explicitly: older two-argument wrappers may leave RCX live. */
+    if (info) dimensions |= (uint64_t)1 << 63;
 
-    return syscall(ScCaptureFBRGB24Scaled, (int64_t)rgb, (int64_t)dimensions, 0);
+    return syscall(ScCaptureFBRGB24Scaled, (int64_t)rgb, (int64_t)dimensions, (int64_t)info);
 }
 
 int64_t stop_speaker() {
@@ -410,6 +418,11 @@ int64_t send_data(uint8_t type, uint8_t *buffer) {
 int64_t net_register(void) { return syscall(ScNetRegister, 0, 0, 0); }
 
 int64_t net_bind_port(uint16_t port) { return syscall(ScNetRegister, (int64_t)port, 0, 0); }
+int64_t net_unbind_port(uint16_t port) {
+    if (!port)
+        return -1;
+    return syscall(ScNetRegister, (int64_t)port, 1, 0);
+}
 
 int64_t get_net_status(NetStatus_T *ns) { return syscall(ScNetStatus, (int64_t)ns, 0, 0); }
 

@@ -510,6 +510,44 @@ static uint8_t net_drv_is_eth = 0;
  * kernel console and slows transfers to the speed of the serial writes. */
 static uint8_t net_debug = 0;
 
+/* Keep MSS outside the public socket layout used by existing C++ callers.
+ * A missing/evicted entry safely falls back to the IPv4 default of 536. */
+static struct { const TcpSocket_T *socket; uint16_t mss; } peer_mss[MAX_SOCKETS];
+
+static void remember_mss(const TcpSocket_T *sock, uint16_t mss) {
+    uint32_t slot = sock->id % MAX_SOCKETS;
+    for (uint32_t i = 0; i < MAX_SOCKETS; ++i) {
+        if (peer_mss[i].socket == sock) { slot = i; break; }
+        if (!peer_mss[i].socket) slot = i;
+    }
+    peer_mss[slot].socket = sock;
+    peer_mss[slot].mss = mss ? mss : 536;
+}
+
+uint16_t tcp_peer_mss(const TcpSocket_T *sock) {
+    for (uint32_t i = 0; i < MAX_SOCKETS; ++i)
+        if (peer_mss[i].socket == sock)
+            return peer_mss[i].mss;
+    return 536;
+}
+
+static uint16_t syn_mss(const uint8_t *packet, uint32_t len, uint32_t header_len) {
+    if (!packet || header_len > len || header_len < 20) return 536;
+    for (uint32_t p = 20; p < header_len;) {
+        uint8_t kind = packet[p];
+        if (kind == 0) break;
+        if (kind == 1) { ++p; continue; }
+        if (p + 1 >= header_len || packet[p + 1] < 2 ||
+            packet[p + 1] > header_len - p) break;
+        if (kind == 2 && packet[p + 1] == 4) {
+            uint16_t mss = ((uint16_t)packet[p + 2] << 8) | packet[p + 3];
+            return mss ? mss : 536;
+        }
+        p += packet[p + 1];
+    }
+    return 536;
+}
+
 void net_set_debug(uint8_t on) { net_debug = on ? 1 : 0; }
 
 void net_set_time(uint32_t secs) { net_now = secs; }
@@ -563,9 +601,11 @@ int net_driver_bind_port(const uint8_t *name, uint16_t port) {
          * The kernel's register_driver is idempotent: first caller wins,
          * subsequent calls are no-ops.  This lets GARN or TNT bootstrap
          * the NIC without a separate eth.elf process. */
-        net_register();
+        if (net_register() != 0)
+            return -1;
         eth_sync_mac();
-        net_bind_port(port);
+        if (net_bind_port(port) != 0)
+            return -1;
         net_drv.recv = eth_drv_recv;
         net_drv.send_ip = eth_drv_send;
         net_drv_is_eth = 1;
@@ -746,14 +786,21 @@ uint32_t read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen) {
 }
 
 uint32_t write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len) {
+    if (!sock)
+        return 0;
+    uint32_t before = sock->seq_num;
     send_tcp_packet(sock, buf, len, TCP_FLAG_ACK);
+
+    uint32_t sent = sock->seq_num - before;
+    if (!sent)
+        return 0;
 
     /* Sending is activity.  This is what keeps a server-push stream (an SSE
      * connection, say) from being reaped: the peer never sends anything on it,
      * so inbound traffic alone would make it look abandoned. */
     sock->last_activity = net_now;
 
-    return len;
+    return sent;
 }
 
 void close(TcpSocket_T *sock) {
@@ -840,6 +887,7 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
                 if (dup->state == SOCKET_ESTABLISHED && dup->seq_num <= 1 && dup->rx_len == 0) {
                     /* Nothing has flowed on it yet — just repeat the SYN-ACK. */
                     dup->ack_num = tcp_header->seq_num + 1;
+                    remember_mss(dup, syn_mss(payload, len, tcp_hdr_len));
                     dup->seq_num = 0;
                     send_tcp_packet(dup, 0, 0, TCP_FLAG_SYN | TCP_FLAG_ACK);
                     dup->seq_num = 1;
@@ -877,6 +925,7 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
             new_conn->ack_num = tcp_header->seq_num + 1;
             new_conn->tx_acked = 0;
             new_conn->peer_window = tcp_header->window_size;
+            remember_mss(new_conn, syn_mss(payload, len, tcp_hdr_len));
 
             send_tcp_packet(new_conn, 0, 0, TCP_FLAG_SYN | TCP_FLAG_ACK);
             new_conn->seq_num = 1;
@@ -911,6 +960,7 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
             s->tx_acked = tcp_header->ack_num;
             s->peer_window = tcp_header->window_size;
             s->state = SOCKET_ESTABLISHED;
+            remember_mss(s, syn_mss(payload, len, tcp_hdr_len));
             s->last_activity = net_now;
             send_tcp_packet(s, 0, 0, TCP_FLAG_ACK);
             return;
@@ -957,7 +1007,9 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
              */
             s->peer_window = tcp_header->window_size;
 
-            if ((flags & TCP_FLAG_ACK) && tcp_header->ack_num > s->tx_acked && tcp_header->ack_num <= s->seq_num) {
+            if ((flags & TCP_FLAG_ACK) &&
+                (int32_t)(tcp_header->ack_num - s->tx_acked) > 0 &&
+                tcp_header->ack_num - s->tx_acked <= s->seq_num - s->tx_acked) {
                 s->tx_acked = tcp_header->ack_num;
             }
 
@@ -1011,6 +1063,7 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
 static void socket_claim(TcpSocket_T *s, uint8_t i) {
     s->used = 1;
     s->id = i;
+    remember_mss(s, 536);
     s->rx_len = 0;
     s->tx_len = 0;
     s->tx_acked = 0;
@@ -1076,6 +1129,7 @@ void socket_pool_init(TcpSocket_T sockets[MAX_SOCKETS]) {
         sockets[i].used = 0;
         sockets[i].state = SOCKET_CLOSED;
         sockets[i].id = i;
+        remember_mss(&sockets[i], 536);
         sockets[i].local_port = 0;
         sockets[i].remote_port = 0;
         sockets[i].rx_len = 0;
@@ -1130,7 +1184,7 @@ uint8_t socket_reap(TcpSocket_T sockets[MAX_SOCKETS], uint32_t idle_secs, Socket
 }
 
 uint32_t tcp_bytes_in_flight(const TcpSocket_T *sock) {
-    if (!sock || sock->seq_num <= sock->tx_acked)
+    if (!sock || (int32_t)(sock->seq_num - sock->tx_acked) <= 0)
         return 0;
 
     return sock->seq_num - sock->tx_acked;
@@ -1158,6 +1212,8 @@ SocketSet_T socket_select(TcpSocket_T sockets[MAX_SOCKETS], uint8_t events) {
 }
 
 void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8_t flags) {
+    if (!sock || len > TCP_MAX_PAYLOAD || (len && !data))
+        return;
     uint8_t packet_buf[1500];
     uint8_t tcp_packet[1500];
 

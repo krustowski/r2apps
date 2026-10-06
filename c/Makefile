@@ -4,10 +4,16 @@ all:
 	done
 
 .PHONY: libcr2
-libcr2:
-	@rm -f libcr2.a libcr2.so*
+LIBCR2_BUILD_DIR := build/libcr2
+LIBCR2_OBJECTS := $(patsubst libcr2/%.c,$(LIBCR2_BUILD_DIR)/%.o,$(wildcard libcr2/*.c))
+
+libcr2: libcr2.a
+
+$(LIBCR2_BUILD_DIR)/%.o: libcr2/%.c $(wildcard libcr2/*.h) Makefile
+	@mkdir -p $(LIBCR2_BUILD_DIR)
 	@gcc \
 		-c \
+		-O2 \
 		-m64 \
 		-static \
 		-nostdlib \
@@ -15,8 +21,11 @@ libcr2:
 		-mno-red-zone \
 		-ffreestanding \
 		-I ./libcr2/ \
-		./libcr2/*.c
+		$< -o $@
+
+libcr2.a: $(LIBCR2_OBJECTS)
+	@rm -f $@
 	@ar \
 		rcs \
-		libcr2.a \
-		./*.o
+		$@ \
+		$(LIBCR2_OBJECTS)
