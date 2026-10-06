@@ -64,8 +64,13 @@ $(BDIR)/stb_image.o: $(WEB)/stb_image.c $(STB)/stb_image.h
 $(BDIR)/mkcacerts: $(WEB)/tools/mkcacerts.c $(BDIR)/libbearssl.a
 	gcc $(CFLAGS) $< $(BDIR)/libbearssl.a -o $@
 
-check: unit
+check: unit net_unit
 	./unit
+	./net_unit
+
+# The production r2 stack with a host implementation of its kernel calls.
+net_unit: net.cpp $(WEB)/net_r2.cpp $(WEB)/net_r2.h $(WEB)/loader.h $(WEB)/http.h $(WEB)/url.h $(WEB)/wbase.h $(WEB)/wbase.cpp $(WEB)/url.cpp $(WEB)/../netmux.h $(wildcard include/r2/*.hpp)
+	g++ $(CXXFLAGS) -Iinclude net.cpp $(WEB)/wbase.cpp $(WEB)/url.cpp -o $@
 
 clean:
-	rm -rf $(BDIR) host_fetch unit
+	rm -rf $(BDIR) host_fetch unit net_unit

@@ -967,6 +967,7 @@ int Stack::allocConn()
 
 void Stack::freeConn(Tcp &c)
 {
+    uint16_t port = c.lport;
     //  From the big pool: the frames that cross the syscall boundary are
     //  txFrame_ and rxFrame_, and these buffers are only ever copied through.
     if (c.tx)
@@ -974,6 +975,14 @@ void Stack::freeConn(Tcp &c)
     if (c.rx)
         big_free(c.rx);
     c = Tcp{};
+    //  The sixteen kernel bindings are shared by every process. Keep a
+    //  binding through FIN_WAIT, then give it back along with the connection.
+    if (!driver_ && port >= PORT_BASE && port < PORT_BASE + PORT_COUNT)
+    {
+        uint32_t bit = 1u << (port - PORT_BASE);
+        if ((boundPorts_ & bit) && r2::raw_syscall(r2::Sys::NetRegister, port, 1) == 0)
+            boundPorts_ &= ~bit;
+    }
 }
 
 uint16_t Stack::allocPort()
@@ -1356,6 +1365,7 @@ int Stack::connect(const uint8_t ip[4], uint16_t port)
     }
     Tcp &c = conns_[h];
     c = Tcp{};
+    c.lport = lport; // freeConn must release the binding if allocation fails.
     c.tx = (uint8_t *)big_alloc(TX_CAP);
     c.rx = (uint8_t *)big_alloc(RX_CAP);
     if (!c.tx || !c.rx)
@@ -1366,7 +1376,6 @@ int Stack::connect(const uint8_t ip[4], uint16_t port)
     }
     memcpy(c.rip, ip, 4);
     c.rport = port;
-    c.lport = lport;
     c.state = Tcp::SYN_SENT;
     //  A sequence number that only grows, a thousand a millisecond (RFC 793's
     //  clock, give or take): the same eight local ports come back every few
