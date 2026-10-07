@@ -44,7 +44,7 @@ answers them with syscalls:
 | `sleepTicks` | syscall `0x05` |
 | `exit`, `abort` | syscall `0x00` |
 | `main` | called by `_start` after it switches stacks |
-| `preinit` | nothing: the kernel's ELF loader zeroes `.bss` for us |
+| `preinit` | selects the optional external GC arena; the ELF loader zeroes `.bss` |
 | `interrupt.Disable`/`Restore`/`In` | no-ops --- see below |
 
 `interrupt.Disable` has nothing to disable.  Programs run in ring 3, where
@@ -65,3 +65,17 @@ target has to supply its own.  `task_stack_r2.go` is a copy of the stock
 `internal/task/task_stack.go` with painting and reuse added, so diff the new
 version's file against it; the image build fails if the build-constraint line
 the Dockerfile edits has changed.
+
+## Larger Go applications
+
+Build with `-tags=r2largeheap` to select an 8 MiB collector arena from syscall
+`0x0a` before any Go allocation. The kernel owns and reclaims this block when
+its process exits or faults. Goroutine stacks and all Go objects use this arena;
+static globals and the system stack keep their linker addresses. The arena is
+aligned to GC blocks and remains at one address for the process lifetime.
+
+If 8 MiB is unavailable, startup tries 4 MiB, then 2 MiB, and finally retains
+the private linker arena. Large allocations require the kernel's user-heap
+extension support. This does not map arbitrary physical RAM or move live objects.
+Applications without the tag retain their previous memory layout. Spotify's
+Makefile enables the tag. Rebuild the runtime image before rebuilding the client.

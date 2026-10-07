@@ -5,8 +5,8 @@
 // r2 is a hosted target wearing baremetal clothes: there is a kernel, and it
 // offers a syscall ABI over `int 0x7f`, but it offers none of what TinyGo's
 // unix runtime expects --- no libc, no mmap, no signals, no threads.  So the
-// program is built as baremetal (heap and stack come from the linker script)
-// and the four things the runtime genuinely cannot do without --- write a
+// program is built as baremetal (the linker provides the stack and default
+// heap, while r2largeheap reserves a kernel block) and the four things the runtime genuinely cannot do without --- write a
 // character, read the clock, sleep and exit --- are syscalls.
 
 package runtime
@@ -42,7 +42,8 @@ func main() {
 }
 
 func preinit() {
-	// Nothing to do.  Unlike a microcontroller, we are started by a loader:
+	initR2Heap()
+	// Unlike a microcontroller, we are started by a loader:
 	// input/elf.rs zeroes everything between p_filesz and p_memsz, so .bss
 	// arrives zeroed, and there is no separate flash image to copy .data
 	// from.  Zeroing .bss here would in fact be harmful --- _start has

@@ -7,6 +7,8 @@
 
 FROM tinygo/tinygo:0.38.0
 
+COPY heap_r2_default.go /usr/local/tinygo/src/runtime/heap_r2_default.go
+COPY heap_r2_large.go /usr/local/tinygo/src/runtime/heap_r2_large.go
 COPY runtime_r2.go    /usr/local/tinygo/src/runtime/runtime_r2.go
 COPY interrupt_r2.go  /usr/local/tinygo/src/runtime/interrupt/interrupt_r2.go
 COPY r2.S             /usr/local/tinygo/targets/r2.S
