@@ -322,14 +322,32 @@ func (c *Conn) usable() error {
 func (c *Conn) drop() {
 	c.state = stateClosed
 	c.pending = nil
+	c.pendFlags = 0
+	c.rx = nil
+	c.reorder = tcpReorder{}
 
 	for i, other := range c.s.conns {
 		if other == c {
-			c.s.conns = append(c.s.conns[:i], c.s.conns[i+1:]...)
+			last := len(c.s.conns) - 1
+			copy(c.s.conns[i:], c.s.conns[i+1:])
+			// TinyGo scans the whole backing array, including unused capacity.
+			c.s.conns[last] = nil
+			c.s.conns = c.s.conns[:last]
 
 			break
 		}
 	}
+	if !c.s.driver && c.s.bound[c.lport] {
+		for _, other := range c.s.conns {
+			if other.lport == c.lport {
+				return
+			}
+		}
+		if libgor2.NetUnbindPort(c.lport) == nil {
+			delete(c.s.bound, c.lport)
+		}
+	}
+
 }
 
 // transmit sends one segment and, when it occupies sequence space, remembers

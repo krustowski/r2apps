@@ -292,18 +292,15 @@ func localAddressFromKernel() IP {
 	return defaultIP
 }
 
-// Close releases what can be released.  The Ethernet driver registration is
-// not one of those things --- the kernel holds it until the machine reboots
-// --- so this only drops the connections.
+// Close drops every connection and releases its TCP port bindings. The
+// global Ethernet driver registration lasts until this process exits.
 func (s *Stack) Close() {
 	// Over a copy: Close takes each connection off this same list.
 	open := make([]*Conn, len(s.conns))
 	copy(open, s.conns)
 
 	for _, c := range open {
-		if c.state != stateClosed {
-			c.Close()
-		}
+		c.Close()
 	}
 
 	s.conns = nil

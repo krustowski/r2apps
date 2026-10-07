@@ -77,6 +77,12 @@ func NativeTCPCheck() error {
 	if _, e = c.Read(buf[:]); e != cancelled {
 		return errors.New("TCP cancellation failed")
 	}
+	c.rx = make([]byte, 4096)
+	c.reorder.store(c.rcv, c.rcv+2, []byte("retained"), rxCap)
+	c.drop()
+	if len(s.conns) != 0 || s.conns[:cap(s.conns)][0] != nil || c.rx != nil || c.reorder.bytes != 0 {
+		return errors.New("closed TCP connection retained buffers")
+	}
 	_ = libgor2.Ticks() // The regression runs with the real r2 scheduler/clock.
 	return nil
 }

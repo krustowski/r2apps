@@ -255,7 +255,14 @@ func (c *tlsConn) Read(b []byte) (int, error) {
 		}
 	}
 }
-func (c *tlsConn) Close() { c.tcp.Close(); C.web_tls_free(c.engine) }
+func (c *tlsConn) Close() {
+	if c.engine == nil {
+		return
+	}
+	c.tcp.Close()
+	C.web_tls_free(c.engine)
+	c.engine = nil
+}
 
 func (c *Client) Do(method, url string, headers map[string]string, body []byte) (wire.Response, error) {
 	return c.request(method, url, headers, body, false, 60*time.Second)
