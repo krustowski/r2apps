@@ -15,7 +15,7 @@ build:
 test:
 	$(MAKE) -C ../r2tls
 	$(MAKE) -C codec test
-	go test ./model ./protocol ./stream ./codec ./third_party/shannon ../r2tls/wire
+	go test . ./model ./protocol ./stream ./codec ./third_party/shannon ../r2tls/wire
 	go test -tags=r2cryptotest ./stream
 	go test ../r2net/tcp_receive.go ../r2net/tcp_receive_test.go
 	go test ../r2net/dns_stream.go ../r2net/dns_stream_test.go

@@ -62,9 +62,12 @@ Copy `SPOTIFY.CFG` to the FAT root (`/mnt/fat/SPOTIFY.CFG`), or put its JSON in
 `r2_main/iso/opt/spotify/config.josn` to ship it on the boot medium. The read
 order is FAT, `/mnt/tar/opt/spotify/config.josn`, then `config.json` in the same
 directory, followed by the equivalent ISO paths. Both spellings are supported.
-Keep credential files private; don't commit them. The client persists rotated
-refresh tokens to FAT when Spotify returns a replacement. It reports a write
-failure rather than silently losing the replacement.
+A valid `/mnt/tmp/SPOTIFY.CFG` snapshot takes precedence over the boot config
+when the window reopens. Remove that temporary file to reload a changed boot
+config during the same boot. Keep credential files private; don't commit them.
+The client saves rotated refresh tokens in the temporary config, and also
+updates FAT credentials when FAT supplied the boot config. Save failures appear
+in the status line.
 
 Press **Refresh / R** to load account playlists. Arrow keys only highlight playlists; press Enter to load the highlighted
 playlist. Loading then focuses the song list. Clicking a playlist loads it directly. Playlists and songs are fetched ten at a time, with
@@ -79,15 +82,38 @@ status line displays **spotify.com/pair** and a code. Authorize that code with
 your Premium account from a browser. The r2 client polls the authorization
 endpoint itself, then starts the playback session. Stop cancels pairing.
 
-The client saves the renewable playback token and device ID to
-`/mnt/tmp/SPOTIFY.KEY`, then reuses them after closing, reopening or a crash.
+The client saves the renewable playback token and device ID as
+`streaming_refresh_token` and `streaming_device_id` in `/mnt/tmp/SPOTIFY.CFG`,
+then reuses them after closing, reopening or a crash. Existing
+`/mnt/tmp/SPOTIFY.KEY` files are imported when the temporary config has no
+playback token; new credentials are saved in the combined config.
 This RAM-disk cache lasts until reboot. `/mnt/fat/SPOTIFY.CFG` also receives
-`streaming_refresh_token` when it supplied the account config, allowing reuse
-across reboots. An ISO-only setup uses the RAM cache without attempting a floppy
-write on every playback sign-in. The
-config token is used when there is no valid RAM-disk key.
+these playback credentials when it supplied the boot config, allowing reuse
+across reboots. An ISO-only setup saves credentials in RAM.
 A save failure is reported and does not prevent playback in the current session.
 Do not reuse the developer application's `refresh_token` in this field.
+
+### Temporary session state
+
+`/mnt/tmp/SPOTIFY.CFG` contains the account configuration and a `session` object
+with the highlighted playlist, independently opened playlist, selected song,
+last played song, `position_ms`, volume and mute state. IDs identify saved rows;
+indices locate their pages. Offline selections restore immediately; live
+selections reload their playlist and song pages automatically on reopen.
+Unavailable saved rows fall back to an available row on the requested page.
+A failed network restore leaves the previous saved session intact.
+
+Selection and volume changes are saved within about one second. Playback is
+checkpointed about every five seconds, with the current position also saved on
+pause, stop and clean window close. Reopening restores the song and mark without
+starting audio. Press Play on the last played song to continue from that mark;
+completed songs and different songs start at the beginning. WAV files and test
+tones resume directly. Vorbis resume decodes and skips earlier frames, so later
+marks may take additional time to buffer; stop and close still cancel the work.
+Session state stays in RAM and is not written to FAT.
+
+Saved config records are bounded to 64 KiB and padded with JSON whitespace so
+shorter replacements overwrite old JSON and credential bytes.
 
 HTTPS requires Memento's `opt/memento/cacerts.bin` and a valid RTC. The client
 tries RDSEED, then RDRAND. If hardware randomness is absent or exhausts retries,
@@ -172,7 +198,7 @@ pairing, polling slowdown, cancellation, refresh rotation and read-only configs.
 
 Streaming prefers Vorbis 96 kbps, with 160/320 kbps as fallbacks. Client-token
 challenges other than a direct grant, unsupported login5 challenges, and tracks
-without a supported Vorbis file currently report errors. Seeking, automatic
+without a supported Vorbis file currently report errors. Interactive seeking, automatic
 cross-page track advancement and Spotify Connect discovery are not implemented.
 Stopping or selecting another song cancels the current generation; compressed
 input uses 4 KiB ranges for the first 16 KiB, then 16 KiB ranges over a reused

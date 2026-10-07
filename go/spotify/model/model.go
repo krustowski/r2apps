@@ -22,12 +22,14 @@ type Playlist struct {
 type Config struct {
 	StreamingAccessToken  string `json:"streaming_access_token,omitempty"`
 	StreamingRefreshToken string `json:"streaming_refresh_token,omitempty"`
+	StreamingDeviceID     string `json:"streaming_device_id,omitempty"`
 	ClientID              string `json:"client_id"`
 	RefreshToken          string `json:"refresh_token"`
 	AccessToken           string `json:"access_token,omitempty"`
 	// Optional local files for exercising PCM independently of Spotify streaming.
 	LocalFiles map[string]string `json:"local_files,omitempty"`
 	Playlists  []Playlist        `json:"playlists,omitempty"`
+	Session    *SessionState     `json:"session,omitempty"`
 }
 
 func ParseConfig(b []byte) (Config, error) {

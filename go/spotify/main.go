@@ -6,7 +6,6 @@ package main
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"runtime"
@@ -24,71 +23,6 @@ import (
 	"github.com/krustowski/rou2exOS-apps/go/spotify/protocol"
 	"github.com/krustowski/rou2exOS-apps/go/spotify/stream"
 )
-
-const streamJob = 100
-
-type streamChunk struct {
-	data             [8192]byte
-	n                int
-	rate, generation uint32
-	duration         uint32
-	end              bool
-	err              error
-}
-
-const configPath = "/mnt/fat/SPOTIFY.CFG"
-const playbackKeyPath = "/mnt/tmp/SPOTIFY.KEY"
-
-type netJob struct {
-	track      model.Track
-	generation uint32
-	kind       uint32
-	id         string
-	offset     int
-}
-type netResult struct {
-	job       netJob
-	playlists []model.Playlist
-	tracks    []model.Track
-	total     int
-	err       error
-}
-type audioJob struct {
-	op    uint32
-	track model.Track
-}
-type audioEvent struct {
-	playing, paused    bool
-	position, duration uint32
-	track              model.Track
-	message            string
-}
-
-type app struct {
-	config                                       model.Config
-	offline                                      []model.Playlist
-	playlists                                    []model.Playlist
-	tracks                                       []model.Track
-	loadedPlaylist                               model.Playlist
-	pTotal, tTotal, pOffset, tOffset, pSel, tSel int
-	live, busy                                   bool
-	configFromFAT                                bool
-	status                                       string
-	audio                                        audioEvent
-	netJobs                                      chan netJob
-	netResults                                   chan netResult
-	audioJobs                                    chan audioJob
-	audioEvents                                  chan audioEvent
-	done                                         chan struct{}
-	audioDone                                    chan struct{}
-	networkDone                                  chan struct{}
-	memory                                       runtime.MemStats
-	volume, muted                                uint32
-	streamGeneration                             uint32
-	streamPCM                                    chan *streamChunk
-	streamPool                                   chan *streamChunk
-	netProgress                                  chan string
-}
 
 func main() {
 	args := r2.Args()
@@ -109,7 +43,7 @@ func main() {
 	}
 	startDiagnostics(block)
 	a := &app{netProgress: make(chan string, 1), streamPCM: make(chan *streamChunk, 8), streamPool: make(chan *streamChunk, 10), volume: 100, pSel: 0, tSel: 0, status: startupChecks(),
-		netJobs: make(chan netJob, 1), netResults: make(chan netResult, 1), audioJobs: make(chan audioJob, 8), audioEvents: make(chan audioEvent, 8), done: make(chan struct{}), audioDone: make(chan struct{}), networkDone: make(chan struct{})}
+		netJobs: make(chan netJob, 1), netResults: make(chan netResult, 1), audioJobs: make(chan audioJob, 8), audioEvents: make(chan audioEvent, 8), audioFinal: make(chan audioEvent, 1), done: make(chan struct{}), audioDone: make(chan struct{}), networkDone: make(chan struct{})}
 	for i := 0; i < cap(a.streamPool); i++ {
 		a.streamPool <- new(streamChunk)
 	}
@@ -117,13 +51,16 @@ func main() {
 	a.offline = append([]model.Playlist{model.Demo()}, a.config.Playlists...)
 	a.offlinePlaylists(0)
 	a.openPlaylist(0)
+	a.restoreSession()
+	a.saveSession(true)
 	go a.network()
-	go a.playback()
+	go a.playback(a.audio)
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	hostBeat := atomic.LoadUint32(&block.HostBeat)
 	hostSeen := r2.Ticks()
 	lastFrame := uint64(0)
+	lastConfigSave := r2.Ticks()
 	for {
 		if atomic.LoadUint32(&block.Quit) != 0 {
 			atomic.StoreUint32(&block.ExitReason, protocol.ExitHostClosed)
@@ -163,10 +100,7 @@ func main() {
 		for drained := false; !drained; {
 			select {
 			case event := <-a.audioEvents:
-				a.audio = event
-				if event.message != "" {
-					a.status = event.message
-				}
+				a.receivedAudio(event)
 			default:
 				drained = true
 			}
@@ -174,6 +108,10 @@ func main() {
 		if now := r2.Ticks(); now-lastFrame >= 100 {
 			a.publish(block)
 			lastFrame = now
+		}
+		if now := r2.Ticks(); now-lastConfigSave >= 1000 {
+			a.saveSession(false)
+			lastConfigSave = now
 		}
 		<-ticker.C
 	}
@@ -189,234 +127,34 @@ func main() {
 	case <-a.networkDone:
 	case <-time.After(2 * time.Second):
 	}
+	select {
+	case event := <-a.audioFinal:
+		a.receivedAudio(event)
+	default:
+	}
+	a.saveSession(true)
 	atomic.StoreUint32(&block.Exited, 1)
 }
 
-func readConfig(path string) ([]byte, error) {
-	b := make([]byte, 64*1024+1)
+func readConfig(path string, limit int) ([]byte, error) {
+	b := make([]byte, limit+1)
 	n, e := r2.ReadFileAt(path, b, 0)
 	if e != nil {
 		return nil, e
 	}
-	if n > 64*1024 {
-		return nil, fmt.Errorf("configuration exceeds 64 KiB")
+	if n < 0 || n > limit {
+		return nil, fmt.Errorf("Spotify file exceeds size limit")
 	}
 	return b[:n], nil
 }
 func (a *app) loadConfig() {
-	for _, path := range []string{configPath, "/mnt/tar/opt/spotify/config.josn", "/mnt/tar/opt/spotify/config.json", "/mnt/iso/opt/spotify/config.josn", "/mnt/iso/opt/spotify/config.json"} {
-		b, err := readConfig(path)
-		if err != nil {
-			continue
-		}
-		c, err := model.ParseConfig(b)
-		if err != nil {
-			a.status = err.Error()
-			return
-		}
-		a.config = c
-		a.configFromFAT = path == configPath
-		return
+	a.store = &configStore{write: func(path string, b []byte) (int, error) {
+		return r2.WriteFileAt(path, b, 0)
+	}}
+	if status := a.store.load(readConfig); status != "" {
+		a.status = status
 	}
-}
-func (a *app) offlinePlaylists(offset int) {
-	if offset < 0 {
-		offset = 0
-	}
-	if offset >= len(a.offline) {
-		return
-	}
-	end := offset + protocol.Visible
-	if end > len(a.offline) {
-		end = len(a.offline)
-	}
-	a.playlists = a.offline[offset:end]
-	a.pTotal = len(a.offline)
-	a.pOffset = offset
-}
-func (a *app) selectedTrack() (model.Track, bool) {
-	i := a.tSel - a.tOffset
-	if i < 0 || i >= len(a.tracks) {
-		return model.Track{}, false
-	}
-	return a.tracks[i], true
-}
-func (a *app) request(job netJob) {
-	if a.busy {
-		a.status = "Wait for the current Spotify request."
-		return
-	}
-	select {
-	case a.netJobs <- job:
-		a.busy = true
-		a.status = "Connecting to Spotify..."
-	default:
-		a.status = "Network command queue is busy; retry."
-	}
-}
-func (a *app) selectPlaylist(index int) {
-	if index >= a.pOffset && index < a.pOffset+len(a.playlists) {
-		a.pSel = index
-	}
-}
-func (a *app) openPlaylist(index int) {
-	if a.busy {
-		a.status = "Wait for the current request before loading a playlist."
-		return
-	}
-	if index < a.pOffset || index >= a.pOffset+len(a.playlists) {
-		return
-	}
-	a.pSel = index
-	a.tSel = 0
-	a.tOffset = 0
-	a.tracks = nil
-	a.tTotal = 0
-	p := a.playlists[index-a.pOffset]
-	a.loadedPlaylist = p
-	if a.live {
-		a.request(netJob{kind: protocol.SelectPlaylist, id: p.ID})
-		return
-	}
-	end := len(p.Tracks)
-	if end > protocol.Visible {
-		end = protocol.Visible
-	}
-	a.tracks = p.Tracks[:end]
-	a.tTotal = len(p.Tracks)
-}
-func (a *app) sendAudio(job audioJob) {
-	select {
-	case a.audioJobs <- job:
-	default:
-		a.status = "Audio command queue is full; retry."
-	}
-}
-func (a *app) command(c protocol.Command) {
-	switch c.Op {
-	case protocol.SelectPlaylist:
-		a.selectPlaylist(int(c.Value))
-	case protocol.OpenPlaylist:
-		a.openPlaylist(int(c.Value))
-	case protocol.SelectTrack:
-		if int(c.Value) >= a.tOffset && int(c.Value) < a.tOffset+len(a.tracks) {
-			a.tSel = int(c.Value)
-		}
-	case protocol.PlayPause:
-		t, ok := a.selectedTrack()
-		if !ok {
-			return
-		}
-		if a.audio.playing && a.audio.track.ID == t.ID && a.audio.track.File == t.File {
-			a.sendAudio(audioJob{op: protocol.PlayPause})
-			return
-		}
-		a.sendAudio(audioJob{op: protocol.SelectTrack, track: t})
-	case protocol.Previous, protocol.Next:
-		delta := 1
-		if c.Op == protocol.Previous {
-			delta = -1
-		}
-		i := a.tSel + delta
-		if i < a.tOffset || i >= a.tOffset+len(a.tracks) {
-			a.status = "Use the track page buttons to browse more."
-			return
-		}
-		a.tSel = i
-		t, _ := a.selectedTrack()
-		a.sendAudio(audioJob{op: protocol.SelectTrack, track: t})
-	case protocol.VolumeDown, protocol.VolumeUp:
-		volume := atomic.LoadUint32(&a.volume)
-		if c.Op == protocol.VolumeDown {
-			if volume >= 10 {
-				volume -= 10
-			} else {
-				volume = 0
-			}
-		} else if volume <= 90 {
-			volume += 10
-		} else {
-			volume = 100
-		}
-		atomic.StoreUint32(&a.volume, volume)
-	case protocol.Mute:
-		atomic.StoreUint32(&a.muted, 1-atomic.LoadUint32(&a.muted))
-	case protocol.Collect:
-		runtime.GC()
-		a.status = "Go garbage collection completed."
-	case protocol.Stop:
-		a.sendAudio(audioJob{op: protocol.Stop})
-	case protocol.Refresh:
-		if a.busy {
-			return
-		}
-		if a.config.AccessToken == "" && a.config.RefreshToken == "" {
-			a.status = "Add Spotify credentials to SPOTIFY.CFG, then reopen this window."
-			return
-		}
-		a.request(netJob{kind: protocol.Refresh})
-	case protocol.PlaylistPage:
-		if a.busy {
-			return
-		}
-		offset := a.pOffset + int(int32(c.Value))*protocol.Visible
-		if offset < 0 || offset >= a.pTotal {
-			return
-		}
-		if a.live {
-			a.request(netJob{kind: protocol.PlaylistPage, offset: offset})
-		} else {
-			a.offlinePlaylists(offset)
-			a.selectPlaylist(offset)
-		}
-	case protocol.TrackPage:
-		if a.busy {
-			return
-		}
-		offset := a.tOffset + int(int32(c.Value))*protocol.Visible
-		if offset < 0 || offset >= a.tTotal {
-			return
-		}
-		if a.live {
-			p := a.loadedPlaylist
-			a.request(netJob{kind: protocol.TrackPage, id: p.ID, offset: offset})
-		} else {
-			p := a.loadedPlaylist
-			end := offset + protocol.Visible
-			if end > len(p.Tracks) {
-				end = len(p.Tracks)
-			}
-			a.tracks = p.Tracks[offset:end]
-			a.tOffset = offset
-			a.tSel = offset
-		}
-	}
-}
-func (a *app) received(r netResult) {
-	a.busy = false
-	if r.err != nil {
-		a.status = r.err.Error()
-		return
-	}
-	a.live = true
-	a.status = "Songs loaded. Select a song and press Play."
-	if r.job.kind == protocol.Refresh || r.job.kind == protocol.PlaylistPage {
-		a.playlists = r.playlists
-		a.pTotal = r.total
-		a.pOffset = r.job.offset
-		a.pSel = a.pOffset
-		a.tracks = nil
-		a.tTotal = 0
-		a.tSel = 0
-		a.tOffset = 0
-		a.loadedPlaylist = model.Playlist{}
-		a.status = "Select a playlist and press Enter to load songs."
-	} else {
-		a.tracks = r.tracks
-		a.tTotal = r.total
-		a.tOffset = r.job.offset
-		a.tSel = a.tOffset
-	}
+	a.config = a.store.config
 }
 func (a *app) network() {
 	defer close(a.networkDone)
@@ -433,8 +171,9 @@ func (a *app) network() {
 		}}
 	var active *codec.Reader
 	var generation uint32
-	var playbackDevice string
+	playbackDevice := config.StreamingDeviceID
 	var duration uint32
+	var skipBytes uint64
 	var requestGeneration uint32
 	check := func() error {
 		runtime.Gosched()
@@ -447,14 +186,6 @@ func (a *app) network() {
 			return fmt.Errorf("Spotify stream cancelled")
 		}
 		return nil
-	}
-	keyData := make([]byte, stream.CredentialFileSize)
-	if n, e := r2.ReadFileAt(playbackKeyPath, keyData, 0); e == nil && n >= 0 && n <= len(keyData) {
-		if key, e := stream.DecodeCredentials(keyData[:n]); e == nil {
-			tokens.AccessToken = ""
-			tokens.RefreshToken = key.RefreshToken
-			playbackDevice = key.Device
-		}
 	}
 	ready := make(chan struct{})
 	close(ready)
@@ -484,23 +215,7 @@ func (a *app) network() {
 		}
 		transport = &r2tls.Client{Stack: stack, Check: check}
 		api = &model.API{Config: &config, Do: transport.Do, Save: func() error {
-			b, err := json.Marshal(config)
-			if err != nil {
-				return err
-			}
-			old, readErr := readConfig(configPath)
-			if readErr == nil && len(old) > len(b) {
-				start := len(b)
-				b = append(b, make([]byte, len(old)-len(b))...)
-				for i := start; i < len(b); i++ {
-					b[i] = ' '
-				}
-			}
-			n, err := r2.WriteFileAt(configPath, b, 0)
-			if err != nil || n != len(b) {
-				return fmt.Errorf("cannot persist rotated Spotify token to SPOTIFY.CFG")
-			}
-			return nil
+			return a.store.saveCredentials(config)
 		}}
 		return nil
 	}
@@ -553,6 +268,7 @@ func (a *app) network() {
 				// Reclaim previous-track input and metadata before new startup.
 				runtime.GC()
 				generation = job.generation
+				skipBytes = 0
 				diagnosticStage("new song after cleanup")
 				duration = job.track.DurationMS
 				requestGeneration = generation
@@ -581,22 +297,11 @@ func (a *app) network() {
 					tokens.Save = func(access, refresh string) error {
 						config.StreamingAccessToken = ""
 						config.StreamingRefreshToken = refresh
-						record, e := (stream.Credentials{RefreshToken: refresh, Device: playbackDevice}).Encode()
-						if e == nil {
-							var n int
-							n, e = r2.WriteFileAt(playbackKeyPath, record, 0)
-							if n != len(record) && e == nil {
-								e = fmt.Errorf("short playback key write")
-							}
+						config.StreamingDeviceID = playbackDevice
+						if _, err := (stream.Credentials{RefreshToken: refresh, Device: playbackDevice}).Encode(); err != nil {
+							return err
 						}
-						if e == nil && !a.configFromFAT {
-							return nil
-						}
-						fatErr := api.Save()
-						if e == nil || fatErr == nil {
-							return nil
-						}
-						return fmt.Errorf("cannot save playback key to /mnt/tmp or FAT")
+						return api.Save()
 					}
 					token, err = tokens.Token(transport.Do, func(duration time.Duration) error {
 						for duration > 0 {
@@ -650,6 +355,9 @@ func (a *app) network() {
 									}
 									diagnosticStage("Vorbis decoder startup")
 									active, err = codec.Open(decrypted)
+									if err == nil {
+										skipBytes = positionBytes(job.position, active.Rate)
+									}
 									diagnosticStage("Vorbis decoder startup returned")
 									if err != nil {
 										err = fmt.Errorf("audio headers: %w", err)
@@ -690,6 +398,7 @@ func (a *app) network() {
 			pending.duration = duration
 			requestGeneration = generation
 			pending.n, pending.err = active.Read(pending.data[:])
+			pending.n = len(discardPCM(pending.data[:pending.n], &skipBytes))
 			requestGeneration = 0
 			runtime.Gosched()
 			if pending.err != nil {
@@ -700,6 +409,11 @@ func (a *app) network() {
 				active.Close()
 				active = nil
 				diagnosticStage("stream closed after decode")
+			}
+			if pending.n == 0 && !pending.end {
+				a.streamPool <- pending
+				pending = nil
+				continue
 			}
 			havePending = true
 		}
@@ -778,6 +492,7 @@ type pcmSource struct {
 	track               model.Track
 	rate                uint32
 	offset, bytes, sent uint64
+	skip                uint64
 	tone                int
 }
 
@@ -817,7 +532,8 @@ func openSource(t model.Track) (pcmSource, error) {
 }
 func (s *pcmSource) read(buf []byte) (int, error) {
 	if s.decoder != nil {
-		return s.decoder.Read(buf)
+		n, err := s.decoder.Read(buf)
+		return len(discardPCM(buf[:n], &s.skip)), err
 	}
 	want := len(buf)
 	if uint64(want) > s.bytes-s.sent {
@@ -844,7 +560,7 @@ func (s *pcmSource) read(buf []byte) (int, error) {
 	}
 	return want, nil
 }
-func (a *app) playback() {
+func (a *app) playback(initial audioEvent) {
 	defer close(a.audioDone)
 	var source pcmSource
 	defer func() {
@@ -854,7 +570,7 @@ func (a *app) playback() {
 	}()
 	streamMode, streamEnd, streamOpened := false, false, false
 	var generation uint32
-	var event audioEvent
+	event := initial
 	var buf [8192]byte
 	pending := buf[:0]
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -867,6 +583,19 @@ func (a *app) playback() {
 		default:
 		}
 	}
+	updatePosition := func() {
+		if source.rate == 0 || !event.playing {
+			return
+		}
+		played := source.sent
+		queued := r2.AudioQueued()
+		if queued <= played {
+			played -= queued
+		} else {
+			played = 0
+		}
+		event.position = uint32(played * 1000 / (uint64(source.rate) * 4))
+	}
 	for {
 		var input <-chan *streamChunk = a.streamPCM
 		if streamMode && (len(pending) > 0 || event.paused) {
@@ -874,6 +603,8 @@ func (a *app) playback() {
 		}
 		select {
 		case <-a.done:
+			updatePosition()
+			a.audioFinal <- event
 			return
 		case chunk := <-input:
 			valid := streamMode && chunk.generation == generation
@@ -886,6 +617,7 @@ func (a *app) playback() {
 				continue
 			}
 			if chunkErr != nil {
+				updatePosition()
 				r2.AudioClose()
 				event.playing = false
 				streamMode = false
@@ -919,6 +651,7 @@ func (a *app) playback() {
 					}
 					streamOpened = true
 					source.rate = rate
+					source.sent = positionBytes(event.position, rate)
 					event.message = "Playing Spotify audio inside rou2exOS."
 					report()
 				}
@@ -932,6 +665,7 @@ func (a *app) playback() {
 		case job := <-a.audioJobs:
 			switch job.op {
 			case protocol.Stop:
+				updatePosition()
 				atomic.AddUint32(&a.streamGeneration, 1)
 				streamMode = false
 				if source.decoder != nil {
@@ -942,11 +676,11 @@ func (a *app) playback() {
 				event.playing = false
 				event.paused = false
 				pending = buf[:0]
-				event.position = 0
 				event.message = "Stopped."
 				report()
 			case protocol.PlayPause:
 				if event.playing {
+					updatePosition()
 					event.paused = !event.paused
 					if event.paused {
 						r2.AudioPause()
@@ -965,7 +699,7 @@ func (a *app) playback() {
 					source.decoder = nil
 				}
 				r2.AudioClose()
-				event = audioEvent{track: job.track}
+				event = audioEvent{track: job.track, position: job.position}
 				pending = buf[:0]
 				if job.track.File == "" {
 					source = pcmSource{}
@@ -974,7 +708,7 @@ func (a *app) playback() {
 					streamMode = true
 					event.message = "Connecting Spotify playback session..."
 					select {
-					case a.netJobs <- netJob{kind: streamJob, track: job.track, generation: generation}:
+					case a.netJobs <- netJob{kind: streamJob, track: job.track, generation: generation, position: job.position}:
 					default:
 						event.playing = false
 						streamMode = false
@@ -984,6 +718,16 @@ func (a *app) playback() {
 					continue
 				}
 				s, err := openSource(job.track)
+				if err == nil {
+					s.sent = positionBytes(job.position, s.rate)
+					if s.sent >= s.bytes {
+						s.sent = 0
+						event.position = 0
+					}
+					if s.decoder != nil {
+						s.skip = s.sent
+					}
+				}
 				if err == nil {
 					err = r2.AudioOpen(s.rate)
 				}
@@ -1017,7 +761,11 @@ func (a *app) playback() {
 					source.decoder = nil
 					continue
 				}
+				if n == 0 && err == nil && source.decoder != nil {
+					continue
+				}
 				if err != nil && err != io.EOF || n%4 != 0 || n == 0 {
+					updatePosition()
 					r2.AudioClose()
 					event.playing = false
 					event.message = "Local audio file is truncated or unreadable."
@@ -1034,6 +782,7 @@ func (a *app) playback() {
 			if len(pending) > 0 {
 				n, err := r2.AudioWrite(pending)
 				if err != nil {
+					updatePosition()
 					atomic.AddUint32(&a.streamGeneration, 1)
 					streamMode = false
 					r2.AudioClose()
