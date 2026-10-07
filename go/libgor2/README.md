@@ -25,6 +25,16 @@ if err := libgor2.ReadSysInfo(&info); err != nil {
 | `input.go` | Keyboard and mouse pipes. |
 | `mem.go` | The kernel's shared heap, `KBytes`, memory info. |
 | `stack.go` | Goroutine stack depth and reuse counters, the stack cache limit. |
+| [`memento/`](memento/README.md) | Hosted-window commands, snapshots, heartbeats, shutdown and runtime reporting, with a C++ host helper. |
+
+## Memento windows
+
+Use [`libgor2/memento`](memento/README.md) for a Go app that runs inside a
+`cpp/memento-hello` window. Memento owns the window and paints snapshots; the
+Go process owns the app state and consumes commands. The package extracts the
+shared transport used by Spotify, preserving its version 4 ABI, and includes
+a small counter app as a starting point. It can be tested with stock Go;
+the kernel syscall bindings in this directory still require TinyGo.
 
 ## Calling convention
 

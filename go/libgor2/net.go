@@ -186,6 +186,14 @@ func NetBindPort(port uint16) error {
 	return err(Syscall(ScNetRegister, uintptr(port), 0))
 }
 
+// NetUnbindPort releases this process's TCP port binding (syscall 0x37).
+func NetUnbindPort(port uint16) error {
+	if port == 0 {
+		return EInvalidInput
+	}
+	return err(Syscall(ScNetRegister, uintptr(port), 1))
+}
+
 // ReadNetConfig fills cfg with the network configuration the Ethernet driver
 // published: address, netmask, gateway and its MAC, DNS (syscall 0x3d).  An
 // error on a kernel without the syscall.

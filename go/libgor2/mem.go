@@ -2,17 +2,15 @@ package libgor2
 
 import "unsafe"
 
-// The kernel's userland heap (0xC00000-0xFFFFFF) is a separate 4 MiB region
-// shared by every process, handed out by syscalls 0x0a/0x0b/0x0f.  It is not
-// where Go allocations come from: those live in the process's own frame, which
-// the linker script carves up, and are managed by the garbage collector.
+// The kernel's userland heap is shared by every process and supplied by
+// syscalls 0x0a/0x0b/0x0f. It starts at 0xC00000-0xFFFFFF and newer kernels
+// can extend it. Ordinary KMalloc blocks are managed explicitly, outside the
+// collector's arena. The runtime uses the private linker arena by default;
+// r2largeheap instead reserves one kernel block as its entire Go GC arena.
 //
-// It is the one way to get memory beyond the ~1.5 MiB the collector has, and
-// memory it never scans: a large file read with ReadFileAt, or a frame buffer
-// for Blit, that would otherwise take most of the Go heap and be walked on
-// every collection.  Syscalls accept a heap block for any pointer argument as
-// long as the buffer the call uses fits inside the heap, so KBytes turns a
-// block into a slice the rest of this package takes like any other.
+// Individual KMalloc blocks are useful for large file reads and frame buffers
+// that should not enter Go's heap. Syscalls accept these buffers, and KBytes
+// turns a block into a slice usable with the rest of this package.
 //
 // Each block is tagged with the process that allocated it and freed by the
 // kernel when that process exits, is killed or crashes.  A resized block keeps
