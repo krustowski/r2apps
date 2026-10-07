@@ -4,11 +4,11 @@ package main
 
 import (
 	r2 "github.com/krustowski/rou2exOS-apps/go/libgor2"
+	"github.com/krustowski/rou2exOS-apps/go/libgor2/memento"
 	"github.com/krustowski/rou2exOS-apps/go/spotify/codec"
 	"github.com/krustowski/rou2exOS-apps/go/spotify/protocol"
 	"runtime"
 	"strconv"
-	"sync/atomic"
 	"unsafe"
 )
 
@@ -16,14 +16,14 @@ import (
 var diagnosticPath = [...]byte{'/', 'm', 'n', 't', '/', 't', 'm', 'p', '/', 'S', 'P', 'O', 'T', 'I', 'F', 'Y', '.', 'L', 'O', 'G', 0}
 var diagnosticData [1024]byte
 var diagnosticRequest struct{ buffer, offset, length uint64 }
-var diagnosticBlock *protocol.Block
+var diagnosticHost *memento.Client[protocol.Snapshot]
 var diagnosticEnd int
 var diagnosticMemory runtime.MemStats
 var diagnosticHeap r2.MemInfo
 var diagnosticInitialized bool
 
-func startDiagnostics(block *protocol.Block) {
-	diagnosticBlock = block
+func startDiagnostics(host *memento.Client[protocol.Snapshot]) {
+	diagnosticHost = host
 	r2.SetConsoleSink(captureRuntimeOutput)
 	diagnosticStage("started")
 }
@@ -74,24 +74,10 @@ func diagnosticStage(stage string) {
 	writeDiagnostics()
 }
 func captureRuntimeOutput(output []byte) {
-	if diagnosticBlock == nil {
+	if diagnosticHost == nil {
 		return
 	}
-	// Panic output can arrive in several fragments. Preserve its first 127 bytes.
-	n := 0
-	for n < len(diagnosticBlock.RuntimeText)-1 && diagnosticBlock.RuntimeText[n] != 0 {
-		n++
-	}
-	for _, c := range output {
-		if n < len(diagnosticBlock.RuntimeText)-1 {
-			if c < ' ' {
-				c = ' '
-			}
-			diagnosticBlock.RuntimeText[n] = c
-			n++
-		}
-	}
-	atomic.StoreUint32(&diagnosticBlock.ExitReason, protocol.ExitRuntime)
+	diagnosticHost.RuntimeOutput(output)
 	for _, c := range output {
 		if diagnosticEnd < len(diagnosticData) {
 			diagnosticData[diagnosticEnd] = c

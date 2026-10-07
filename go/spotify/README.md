@@ -5,6 +5,11 @@ shared-user-heap arrangement as `sh.elf` and theM. The Memento adapter draws
 snapshots and forwards mouse/keyboard commands. Go owns playlists, Spotify API
 requests, PCM playback, goroutines, channels, file access and the model.
 
+The reusable window bridge lives in [`libgor2/memento`](../libgor2/memento/README.md).
+Both the Go client and C++ window use its commands, snapshot handoff, heartbeat
+and shutdown helpers. Spotify's operations, snapshot and painter remain here;
+the shared block still uses the 4040-byte version 4 ABI.
+
 The experimental streaming engine runs inside rou2exOS: Spotify AP login and
 Shannon transport, audio-key requests, bounded HTTPS range downloads, AES-CTR
 decryption, and integer Ogg Vorbis decoding to HD Audio. Go owns the protocol

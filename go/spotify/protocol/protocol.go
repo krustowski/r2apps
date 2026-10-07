@@ -1,15 +1,19 @@
 // Package protocol defines the pointer-free shared block used by spotify.elf
-// and Memento. host.h is its C++ counterpart. Only atomic control words are
-// shared concurrently; snapshots are protected by front/reading ownership.
+// and Memento. host.h is its C++ counterpart. The window transport lives in
+// libgor2/memento; only Spotify's operations and snapshot belong here.
 package protocol
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/krustowski/rou2exOS-apps/go/libgor2/memento"
+)
 
 const (
 	Magic     = 0x50533252 // "R2SP"
 	Version   = 4
-	NoBuffer  = 2
-	QueueSize = 32
+	NoBuffer  = memento.NoBuffer
+	QueueSize = memento.QueueSize
 	Visible   = 10
 )
 
@@ -31,13 +35,13 @@ const (
 )
 
 const (
-	ExitHostClosed = iota + 1
-	ExitHostTimeout
-	ExitBadQueue
-	ExitRuntime
+	ExitHostClosed  = memento.ExitHostClosed
+	ExitHostTimeout = memento.ExitHostTimeout
+	ExitBadQueue    = memento.ExitBadQueue
+	ExitRuntime     = memento.ExitRuntime
 )
 
-type Command struct{ Op, Value uint32 }
+type Command = memento.Command
 
 type Row struct {
 	Index uint32
@@ -57,32 +61,10 @@ type Snapshot struct {
 	Tracks                                  [Visible]Row
 }
 
-type Block struct {
-	Magic, Version                         uint32
-	ClientBeat, Frame, Front, Exited, Tail uint32 // client writes
-	HostBeat, Reading, Quit, Head          uint32 // host writes
-	Commands                               [QueueSize]Command
-	Snapshots                              [2]Snapshot
-	ExitReason                             uint32
-	RuntimeText                            [128]byte
-}
+type Block = memento.Block[Snapshot]
 
 func Text(dst []byte, s string) {
-	for i := range dst {
-		dst[i] = 0
-	}
-	// Memento's small font is single-byte; do not split UTF-8 into garbage.
-	n := 0
-	for _, r := range s {
-		if n == len(dst)-1 {
-			break
-		}
-		if r < 32 || r > 126 {
-			r = '?'
-		}
-		dst[n] = byte(r)
-		n++
-	}
+	memento.Text(dst, s)
 }
 
 const (

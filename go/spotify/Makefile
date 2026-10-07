@@ -15,6 +15,7 @@ build:
 test:
 	$(MAKE) -C ../r2tls
 	$(MAKE) -C codec test
+	$(MAKE) -C ../libgor2/memento test
 	go test . ./model ./protocol ./stream ./codec ./third_party/shannon ../r2tls/wire
 	go test -tags=r2cryptotest ./stream
 	go test ../r2net/tcp_receive.go ../r2net/tcp_receive_test.go

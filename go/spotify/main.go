@@ -13,9 +13,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	r2 "github.com/krustowski/rou2exOS-apps/go/libgor2"
+	"github.com/krustowski/rou2exOS-apps/go/libgor2/memento"
 	"github.com/krustowski/rou2exOS-apps/go/r2net"
 	"github.com/krustowski/rou2exOS-apps/go/r2tls"
 	"github.com/krustowski/rou2exOS-apps/go/spotify/codec"
@@ -30,18 +30,12 @@ func main() {
 		fmt.Println("Spotify Go prototype: launch from Memento's Spotify icon.")
 		return
 	}
-	address, err := strconv.ParseUint(args[2], 0, 64)
-	size := uint64(unsafe.Sizeof(protocol.Block{}))
-	if err != nil || address%4 != 0 || address < 0xc00000 || address >= 0x1000000 || size > 0x1000000-address {
-		fmt.Println("Invalid Spotify host block.")
+	host, err := memento.Attach[protocol.Snapshot](args, protocol.Magic, protocol.Version, r2.Ticks())
+	if err != nil {
+		fmt.Println("Spotify host:", err)
 		return
 	}
-	block := (*protocol.Block)(unsafe.Pointer(uintptr(address)))
-	if block.Magic != protocol.Magic || block.Version != protocol.Version {
-		fmt.Println("Unsupported Spotify host protocol.")
-		return
-	}
-	startDiagnostics(block)
+	startDiagnostics(host)
 	a := &app{netProgress: make(chan string, 1), streamPCM: make(chan *streamChunk, 8), streamPool: make(chan *streamChunk, 10), volume: 100, pSel: 0, tSel: 0, status: startupChecks(),
 		netJobs: make(chan netJob, 1), netResults: make(chan netResult, 1), audioJobs: make(chan audioJob, 8), audioEvents: make(chan audioEvent, 8), audioFinal: make(chan audioEvent, 1), done: make(chan struct{}), audioDone: make(chan struct{}), networkDone: make(chan struct{})}
 	for i := 0; i < cap(a.streamPool); i++ {
@@ -57,38 +51,24 @@ func main() {
 	go a.playback(a.audio)
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
-	hostBeat := atomic.LoadUint32(&block.HostBeat)
-	hostSeen := r2.Ticks()
 	lastFrame := uint64(0)
 	lastConfigSave := r2.Ticks()
 	for {
-		if atomic.LoadUint32(&block.Quit) != 0 {
-			atomic.StoreUint32(&block.ExitReason, protocol.ExitHostClosed)
-			diagnosticStage("host closed window")
-			break
+		reason := host.Poll(r2.Ticks())
+		if reason == memento.Running {
+			reason = host.DrainCommands(a.command)
 		}
-		beat := atomic.LoadUint32(&block.HostBeat)
-		if beat != hostBeat {
-			hostBeat = beat
-			hostSeen = r2.Ticks()
-		} else if r2.Ticks()-hostSeen > 10000 {
-			atomic.StoreUint32(&block.ExitReason, protocol.ExitHostTimeout)
-			diagnosticStage("Memento heartbeat timeout")
+		if reason != memento.Running {
+			switch reason {
+			case memento.ExitHostClosed:
+				diagnosticStage("host closed window")
+			case memento.ExitHostTimeout:
+				diagnosticStage("Memento heartbeat timeout")
+			case memento.ExitBadQueue:
+				diagnosticStage("invalid host command queue")
+				a.status = "Invalid host command queue."
+			}
 			break
-		}
-		atomic.AddUint32(&block.ClientBeat, 1)
-		head, tail := atomic.LoadUint32(&block.Head), atomic.LoadUint32(&block.Tail)
-		if head-tail > protocol.QueueSize {
-			atomic.StoreUint32(&block.ExitReason, protocol.ExitBadQueue)
-			diagnosticStage("invalid host command queue")
-			a.status = "Invalid host command queue."
-			break
-		}
-		for tail != head {
-			cmd := block.Commands[tail%protocol.QueueSize]
-			tail++
-			atomic.StoreUint32(&block.Tail, tail)
-			a.command(cmd)
 		}
 		select {
 		case progress := <-a.netProgress:
@@ -106,7 +86,7 @@ func main() {
 			}
 		}
 		if now := r2.Ticks(); now-lastFrame >= 100 {
-			a.publish(block)
+			a.publish(host)
 			lastFrame = now
 		}
 		if now := r2.Ticks(); now-lastConfigSave >= 1000 {
@@ -133,7 +113,7 @@ func main() {
 	default:
 	}
 	a.saveSession(true)
-	atomic.StoreUint32(&block.Exited, 1)
+	host.Close()
 }
 
 func readConfig(path string, limit int) ([]byte, error) {
@@ -420,15 +400,7 @@ func (a *app) network() {
 	}
 }
 
-func (a *app) publish(b *protocol.Block) {
-	front := atomic.LoadUint32(&b.Front)
-	if front > 1 {
-		front = 0
-	}
-	back := 1 - front
-	if atomic.LoadUint32(&b.Reading) == back {
-		return
-	}
+func (a *app) publish(host *memento.Client[protocol.Snapshot]) {
 	s := protocol.Snapshot{Volume: atomic.LoadUint32(&a.volume), Muted: atomic.LoadUint32(&a.muted), PlaylistCount: uint32(a.pTotal), TrackCount: uint32(a.tTotal), PlaylistSelected: uint32(a.pSel), TrackSelected: uint32(a.tSel), PlaylistOffset: uint32(a.pOffset), TrackOffset: uint32(a.tOffset), PositionMS: a.audio.position, DurationMS: a.audio.duration}
 	if a.audio.playing {
 		s.Playing = 1
@@ -466,9 +438,7 @@ func (a *app) publish(b *protocol.Block) {
 		s.Tracks[i].Index = uint32(a.tOffset + i)
 		protocol.Text(s.Tracks[i].Text[:], t.Name+" - "+t.Artist)
 	}
-	b.Snapshots[back] = s
-	atomic.StoreUint32(&b.Front, back)
-	atomic.AddUint32(&b.Frame, 1)
+	host.Publish(&s)
 }
 
 type fileReader string
