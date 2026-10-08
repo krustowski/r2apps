@@ -2,13 +2,14 @@
 
 | Project name | Purpose | State |
 | ------------ | ------- | ----- |
+| `bsh` | The base shell: the commands `r2sh` and `tnt` share, compiled into both (see its [README](bsh/README.md)). | unstable |
 | `fsck` | FAT12 filesystem check report parser. | stable |
 | `garn` | Sample HTTP server implementation. | stable |
 | `hello-fs` | Example with filesystem-related operations. | stable |
 | `hello-world` | Example to show minimal C program crafted for use with the `r2` kernel. | stable |
 | `icmpresp` | ICMP responder. Sample ICMP Echo service to demonstrate portions of implemented networking. | stable |
 | `nsk` | Networking swiss knife. Lists live hosts in a subnet given in CIDR notation. | stable |
-| `r2sh` | Custom userland shell for `r2`. | unstable |
+| `r2sh` | Custom userland shell for `r2`, on `bsh`. | unstable |
 | `them` | A simple 16-bit CPU emulator focused on MS-DOS; runs full screen, or in a Memento window from its file manager (see its [README](them/README.md)). | unstable |
 
 ## crt0

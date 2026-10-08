@@ -8,7 +8,8 @@ LIBCR2		?= ../libcr2
 
 CRT0_ASM	?= ${LIBCR2}/_crt0.asm
 
-SOURCE_FILES	?= *.c
+#  The shell's commands are bsh's (../bsh), compiled in with r2sh's own files.
+SOURCE_FILES	?= *.c ../bsh/*.c
 
 export
 
@@ -28,6 +29,7 @@ compile:
 		-mno-red-zone \
 		-ffreestanding \
 		-I . \
+		-I ../bsh/ \
 		-I ../libcr2/ \
 		${SOURCE_FILES}
 

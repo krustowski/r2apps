@@ -20,9 +20,6 @@
 
 #define XFER_PORT 8023
 
-/* xfer_file_size(): readable, but its directory does not say how big it is. */
-#define XFER_SIZE_UNKNOWN (-2)
-
 typedef enum {
     XFER_OK,
     XFER_NO_SOCKET, /* the socket pool is full */
@@ -45,13 +42,9 @@ typedef struct {
 /* Call once with the driver name ("eth"/"slip") the process runs on. */
 void xfer_init(const uint8_t *net_name);
 
-/* Size of <path> (absolute), -1 when it cannot be read as a file, or
- * XFER_SIZE_UNKNOWN. */
-int64_t xfer_file_size(const uint8_t *path);
-
 /*
  *  Waits for one client on <port> and sends it <path>.  <size> is what
- *  xfer_file_size() said.  Blocks until the transfer is over; a key pressed
+ *  bsh_file_size() said (BSH_SIZE_UNKNOWN: send until the file ends).  Blocks until the transfer is over; a key pressed
  *  in <session> cancels it.
  */
 XferStatus_T xfer_send(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *session, const uint8_t *path, const uint8_t *name, int64_t size, uint16_t port, XferResult_T *res);

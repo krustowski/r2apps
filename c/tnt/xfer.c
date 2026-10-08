@@ -45,46 +45,6 @@ static uint32_t crc32_update(uint32_t crc, const uint8_t *p, uint32_t n) {
     return ~crc;
 }
 
-static uint8_t lower(uint8_t c) { return (c >= 'A' && c <= 'Z') ? (uint8_t)(c + 32) : c; }
-
-int64_t xfer_file_size(const uint8_t *path) {
-    uint8_t probe;
-
-    /* A directory, or nothing at all, is an error here; an empty file reads 0. */
-    if (read_file_at(path, &probe, 0, 1) < 0)
-        return -1;
-
-    uint8_t parent[64];
-    uint32_t last = 0;
-    uint32_t i;
-    for (i = 0; path[i] && i < 63; i++) {
-        parent[i] = path[i];
-        if (path[i] == '/')
-            last = i;
-    }
-    const uint8_t *name = path + last + 1;
-    uint32_t name_len = strlen(name);
-
-    parent[last ? last : 1] = '\0'; /* "/x" lists "/" */
-
-    static VfsDirEntry_T entries[64];
-    int64_t count = list_dir_path(parent, entries);
-    if (count < 0 || count > 64)
-        return XFER_SIZE_UNKNOWN;
-
-    for (int64_t e = 0; e < count; e++) {
-        if (entries[e].is_dir || entries[e].name_len != name_len)
-            continue;
-        uint32_t k = 0;
-        while (k < name_len && lower(entries[e].name[k]) == lower(name[k]))
-            k++;
-        if (k == name_len)
-            return entries[e].size;
-    }
-
-    return XFER_SIZE_UNKNOWN;
-}
-
 /*
  *  The stream: header bytes, then the file through a cache of one aligned
  *  block, so the resends after a loss (always within the last few KiB) do not

@@ -21,6 +21,12 @@ The kernel must support releasing port bindings via syscall `0x37`, arg2 = 1,
 for this version's file-transfer cleanup. Update the kernel together with TNT
 and the Go network applications. A full binding table now reports an error
 instead of evicting port 23; Go connections release their bindings on close.
+## Commands
+
+The shell's commands are [bsh](../bsh/README.md)'s, the same as `r2sh`'s (`ls`, `cd`, `mkdir`,
+`rmdir`, `rm`, `mount`, `bg`, `ts`, `kill`, `meminfo`, `heap`, `play`, ...); `help` lists them.
+tnt adds `get` and `net`, and has a `read` of its own that streams the file over TCP.
+
 ## Logging in
 
 Until someone gives Memento a login or a password, the system is `root` with no password and a

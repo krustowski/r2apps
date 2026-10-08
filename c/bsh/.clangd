@@ -1,6 +1,4 @@
 CompileFlags:
   Add:
     - "-I../libcr2"
-    - "-I../bsh"
     - "-I."
-    #- "-std=gnu2x"
