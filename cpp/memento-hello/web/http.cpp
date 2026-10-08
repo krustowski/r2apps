@@ -47,7 +47,7 @@ bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool po
 void HttpResponse::reset()
 {
     status = 0;
-    reason[0] = location[0] = contentType[0] = charset[0] = 0;
+    reason[0] = location[0] = contentType[0] = charset[0] = lastModified[0] = 0;
     headersDone = done = failed = truncated = false;
     error[0] = 0;
     body.release();
@@ -139,6 +139,10 @@ void HttpResponse::parseHead()
         else if (headerValue(line, "Location", v, sizeof(v)))
         {
             scopy(location, v, sizeof(location));
+        }
+        else if (headerValue(line, "Last-Modified", v, sizeof(v)))
+        {
+            scopy(lastModified, v, sizeof(lastModified));
         }
         else if (headerValue(line, "Content-Type", v, sizeof(v)))
         {

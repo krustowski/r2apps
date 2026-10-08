@@ -98,6 +98,7 @@ enum class Sys : int64_t {
     Power = 0x3e,
     Audio = 0x3f,
     FsStat = 0x40,
+    Cmdline = 0x41,
 };
 
 /*  Return codes the ABI uses in place of the 0 it returns on success.  */

@@ -26,7 +26,7 @@ private:
     // Painting, hit testing and keyboard navigation share these dimensions.
     static const int BSIZ = 15;
     static const int COLS = 6;
-    static const int ICONS = 16;
+    static const int ICONS = 17;
     static const int CELL_W = 24, CELL_H = 29;
     static const int LW = CELL_W, LH = 9;
     static const int FW = COLS * CELL_W + 20;
@@ -59,6 +59,7 @@ private:
     PlatformBitmap *bmpTelegram = nullptr;
     PlatformBitmap *bmpVideo = nullptr;
     PlatformBitmap *bmpSpotify = nullptr;
+    PlatformBitmap *bmpJug = nullptr;
 
     // Hand-tuned at the displayed size: no resampling of one-pixel strokes.
     void MakeIcon(PlatformDrawingContext *dc, PlatformBitmap *&bitmap,
@@ -380,6 +381,25 @@ private:
         };
         MakeIcon(dc, bmpSpotify, spotify);
 
+        static const char *const jug[BSIZ] = {
+            "...............",
+            ".....#####.....",
+            ".....#####.....",
+            "......###......",
+            "....#######....",
+            "...#########...",
+            "..###########..",
+            "..##.......##..",
+            "..##...#...##..",
+            "..##...#...##..",
+            "..##..###..##..",
+            "..##...#...##..",
+            "..###########..",
+            "...#########...",
+            "...............",
+        };
+        MakeIcon(dc, bmpJug, jug);
+
     }
 
     void BlitIcon(PlatformBitmap *t, PlatformBitmap *bm, int ix, int iy, bool s)
@@ -512,12 +532,12 @@ private:
         PlatformBitmap *icons[ICONS] = {
             bmpClock, bmpShell, bmpNet, bmpMount, bmpTasks, bmpChat,
             bmpCalc, bmpIRC, bmpMidi, bmpWeb, bmpEditor, bmpSnake,
-            bmpMines, bmpTelegram, bmpVideo, bmpSpotify,
+            bmpMines, bmpTelegram, bmpVideo, bmpSpotify, bmpJug,
         };
         static const char *const labels[ICONS] = {
             "Clock", "Shell", "Net", "Mount", "Tasks", "Chat",
             "Calc", "IRC", "Music", "Web", "Editor", "Snake",
-            "Mines", "Telegram", "Video", "Spotify",
+            "Mines", "Telegram", "Video", "Spotify", "Jug",
         };
         for (int i = 0; i < ICONS; i++)
         {

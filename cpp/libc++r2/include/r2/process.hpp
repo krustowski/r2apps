@@ -69,6 +69,14 @@ optional<uint8_t> spawn(string_view path, string_view args = string_view());
 bool kill(uint8_t id);
 
 /*
+ *  The command line task `id` was started with, argv[0] first ("tnt eth"),
+ *  as spawn() or the shell's fg/bg gave it (syscall 0x41) --- what it takes
+ *  to start the program again the same way.  Empty for a kernel task; nullopt
+ *  when no task has that id, or on a kernel without the call.
+ */
+optional<string> command_line(uint8_t id);
+
+/*
  *  The machine's memory (syscall 0x3c): RAM, the process frames and the user
  *  heap, with who holds what.  Empty when the kernel is busy at that instant
  *  (ask again) or older than the call.

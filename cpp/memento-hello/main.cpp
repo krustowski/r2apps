@@ -185,6 +185,7 @@ enum AppKind
     APP_TELEGRAM,
     APP_VIDEO,
     APP_SPOTIFY,
+    APP_JUG,
 };
 static void openApp(int kind);
 static bool openBrowserWindow(const char *url = nullptr);
@@ -359,7 +360,9 @@ static bool openInEditor(const char *path)
 #include "windows/clock_window.cpp"
 #include "windows/irc_window.cpp"
 #include "windows/midi_window.cpp"
+#include "windows/hosted_window.cpp"
 #include "windows/browser_window.cpp"
+#include "windows/jug_window.cpp"
 #include "windows/editor_window.cpp"
 #include "windows/shell_window.cpp"
 #include "windows/snake_window.cpp"
@@ -505,6 +508,8 @@ static void deleteCalc(void *p) { delete (CalculatorWindow *)p; }
 static void deleteIRC(void *p) { delete (IRCWindow *)p; }
 static void deleteMidi(void *p) { delete (MidiWindow *)p; }
 static void deleteWeb(void *p) { delete (BrowserWindow *)p; }
+static PlatformWindow *g_jugWindow = nullptr;
+static void deleteJug(void *p) { g_jugWindow = nullptr; delete (JugHostWindow *)p; }
 static void deleteTelegram(void *p) { delete (TelegramWindow *)p; }
 static void deleteVideo(void *p) { delete (VideoWindow *)p; }
 static void deleteEditor(void *p) { delete (EditorWindow *)p; }
@@ -727,6 +732,20 @@ static void openApp(int kind)
             delete w;
         break;
     }
+    case APP_JUG:
+    {
+        // One Jug window shares the registry and its fixed network ports.
+        if (g_jugWindow) { strcpy(g_launchError, "Jug is already open."); return; }
+        JugHostWindow *w = new JugHostWindow();
+        if (!w || w->failed()) {
+            web::scopy(g_launchError, w ? w->why() : "Jug: no memory for its window.", sizeof(g_launchError));
+            delete w; return;
+        }
+        wnd = g_root->CreateWindow("Jug", 300, 170, JugHostWindow::onEvent, w, &g_appOpts, deleteJug, w);
+        if (wnd) { g_jugWindow = wnd; w->SetWindow(wnd); g_launchError[0] = 0; }
+        else { delete w; strcpy(g_launchError, "Jug: no room for another window."); }
+        break;
+    }
     case APP_WEB:
         openBrowserWindow();
         return;
@@ -837,7 +856,7 @@ static void runForeground(const char *program, const char *args)
         r2::sleep(500);
         editorKeepAlive(); // the Editor windows' editors wait for us meanwhile
         spotifyKeepAlive();
-        browserKeepAlive();
+        hostedKeepAlive();
         shellKeepAlive();  // and so do the Shell windows' shells
         r2::vector<r2::TaskInfo> tasks = r2::tasks();
         if (tasks.empty())

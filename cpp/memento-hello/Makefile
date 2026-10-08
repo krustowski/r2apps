@@ -113,7 +113,7 @@ WINDOWS := $(wildcard windows/*.cpp)
 
 OBJS += $(WEB_OBJS)
 
-.PHONY: check build install clean webtest browser
+.PHONY: check build install clean webtest browser jug
 
 # Compile-only check — no linking, so neither archive has to exist yet.
 # Without -MMD: with no -o to follow, it writes main.d and the rest into the
@@ -125,7 +125,7 @@ check:
 	@echo "All sources compile OK"
 	@$(MAKE) -C ../r2web check
 
-build: $(BDIR) $(CRT0_OBJ) $(OBJS) $(BEARSSL_LIB) $(H264BSD_LIB) $(LIBRARY) $(COMPAT) browser
+build: $(BDIR) $(CRT0_OBJ) $(OBJS) $(BEARSSL_LIB) $(H264BSD_LIB) $(LIBRARY) $(COMPAT) browser jug
 	g++ $(LDFLAGS) $(CRT0_OBJ) $(OBJS) $(BEARSSL_LIB) $(H264BSD_LIB) $(LIBRARY) $(COMPAT) $(LIBCR2) -lgcc -o $(NAME).elf
 	llvm-objcopy -O binary $(NAME).elf $(NAME).bin
 	@python3 ../r2web/check_image.py $(NAME).elf
@@ -136,10 +136,14 @@ build: $(BDIR) $(CRT0_OBJ) $(OBJS) $(BEARSSL_LIB) $(H264BSD_LIB) $(LIBRARY) $(CO
 install: build
 	@mcopy -o -i $(FLOPPY) $(NAME).elf ::MEMENTO.ELF
 	@mcopy -o -i $(FLOPPY) ../r2web/r2web.elf ::R2WEB.ELF
+	@mcopy -o -i $(FLOPPY) ../jug/jug.elf ::JUG.ELF
 	@echo "copied $(NAME).elf to $(FLOPPY) as MEMENTO.ELF"
 
 browser:
 	@$(MAKE) -C ../r2web build
+
+jug:
+	@$(MAKE) -C ../jug build
 
 $(CRT0_OBJ): $(CRT0_SRC) | $(BDIR)
 	nasm -f elf64 -DR2_STACK_BYTES=$(STACK_BYTES) $< -o $@

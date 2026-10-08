@@ -34,6 +34,9 @@ public:
     char location[Url::PATH_CAP] = {};
     char contentType[64] = {};
     char charset[24] = {};
+    //  "Wed, 08 Oct 2026 10:42:07 GMT", as the server sent it; empty when it
+    //  did not (jug shows it as the age of a list that does not say).
+    char lastModified[40] = {};
 
     bool headersDone = false;
     bool done = false;      // the whole body is in

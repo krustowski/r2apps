@@ -107,6 +107,20 @@ bool kill(uint8_t id) {
     return raw_syscall(Sys::KillTask, (int64_t)id, 0) == 0;
 }
 
+optional<string> command_line(uint8_t id) {
+    constexpr int64_t BUSY = 0xfa; /*  the scheduler was locked: ask again  */
+    char line[128];
+    for (int tries = 0; tries < 8; tries++) {
+        int64_t n = raw_syscall(Sys::Cmdline, (int64_t)id, (int64_t)line);
+        if (n == BUSY)
+            continue;
+        if (n < 0 || n > (int64_t)sizeof(line))
+            return nullopt;
+        return string(line, (size_t)n);
+    }
+    return nullopt;
+}
+
 bool reboot() noexcept {
     raw_syscall(Sys::Power, 0x01, 0);
     return false; // still here: a kernel without the call
