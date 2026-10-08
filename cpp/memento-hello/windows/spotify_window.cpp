@@ -3,12 +3,10 @@
 #include "../../../go/spotify/host.h"
 
 static SpotifyHostBlock *g_spotifyBlocks[4] = {};
-static uint32_t spotifyLoad(const uint32_t *p) { return __atomic_load_n(p, __ATOMIC_ACQUIRE); }
-static void spotifyStore(uint32_t *p, uint32_t v) { __atomic_store_n(p, v, __ATOMIC_RELEASE); }
 static void spotifyKeepAlive()
 {
     for (SpotifyHostBlock *b : g_spotifyBlocks)
-        if (b) spotifyStore(&b->hostBeat, spotifyLoad(&b->hostBeat) + 1);
+        if (b) SpotifyHost(b).keepAlive();
 }
 
 class SpotifyWindow
@@ -23,14 +21,12 @@ public:
         blk = (SpotifyHostBlock *)r2::heap::kernel_allocate(sizeof(SpotifyHostBlock));
         if (!blk) { strcpy(error, "No memory for the Spotify host block."); return; }
         memset(blk, 0, sizeof(*blk));
-        blk->magic = SPOTIFY_MAGIC; blk->version = SPOTIFY_VERSION;
-        blk->reading = SPOTIFY_NONE; blk->hostBeat = 1;
+        host().initialize(SPOTIFY_MAGIC, SPOTIFY_VERSION);
         g_spotifyBlocks[slot] = blk;
-        char args[64] = "spotify.elf --host 0x";
-        size_t at = strlen(args);
-        uintptr_t addr = (uintptr_t)blk;
-        for (int shift = 28; shift >= 0; shift -= 4) args[at++] = "0123456789abcdef"[(addr >> shift) & 15];
-        args[at] = 0;
+        char args[64];
+        if (!r2memento::launchArguments(args, sizeof(args), "spotify.elf", blk)) {
+            strcpy(error, "Could not prepare Spotify host arguments."); release(); return;
+        }
         auto id = r2::spawn("spotify.elf", args);
         if (!id) { strcpy(error, "Install spotify.elf in /mnt/tar/bin or /mnt/iso/bin."); release(); return; }
         pid = *id; startedAt = r2::ticks();
@@ -40,12 +36,12 @@ public:
     ~SpotifyWindow()
     {
         if (!blk) return;
-        spotifyStore(&blk->quit, 1);
-        for (int i = 0; i < 50 && !spotifyLoad(&blk->exited) && alive(); i++) {
-            spotifyStore(&blk->hostBeat, spotifyLoad(&blk->hostBeat) + 1);
+        host().requestClose();
+        for (int i = 0; i < 50 && !host().exited() && alive(); i++) {
+            host().keepAlive();
             r2::sleep(20);
         }
-        if (spotifyLoad(&blk->exited) || !alive()) release();
+        if (host().exited() || !alive()) release();
         else {
             // Never free memory still used by the child. Stop heartbeats so
             // it exits by timeout; the parent's process owns the leftover block.
@@ -88,42 +84,31 @@ private:
             }
         return false;
     }
+    SpotifyHost host() const { return SpotifyHost(blk); }
     void send(uint32_t op, uint32_t value = 0)
     {
-        if (!blk || spotifyLoad(&blk->exited)) return;
-        uint32_t h = spotifyLoad(&blk->head);
-        if (h - spotifyLoad(&blk->tail) >= SPOTIFY_QUEUE) return;
-        blk->commands[h % SPOTIFY_QUEUE] = {op, value};
-        spotifyStore(&blk->head, h + 1);
+        if (blk) host().send(op, value);
     }
     void idle()
     {
         if (!blk) return;
-        spotifyStore(&blk->hostBeat, spotifyLoad(&blk->hostBeat) + 1);
-        uint32_t frame = spotifyLoad(&blk->frame);
-        if (frame != shownFrame) {
-            uint32_t f = spotifyLoad(&blk->front);
-            if (f < 2) {
-                spotifyStore(&blk->reading, f);
-                if (spotifyLoad(&blk->front) == f) { snapshot = blk->snapshots[f]; shownFrame = frame; wnd->Repaint(); }
-                spotifyStore(&blk->reading, SPOTIFY_NONE);
-            }
-        }
+        host().keepAlive();
+        if (host().read(snapshot, shownFrame)) wnd->Repaint();
         uint64_t now = r2::ticks();
         if (now - startedAt < 2000 || now - lastCheck < 1000) return;
         lastCheck = now;
-        if (spotifyLoad(&blk->exited) || !alive()) {
+        if (host().exited() || !alive()) {
             if (blk->runtimeText[0]) {
                 size_t i = 0;
                 while (i + 1 < sizeof(snapshot.status) && blk->runtimeText[i]) {
                     snapshot.status[i] = blk->runtimeText[i]; i++;
                 }
                 snapshot.status[i] = 0;
-            } else if (spotifyLoad(&blk->exitReason) == 2) {
+            } else if (host().exitReason() == r2memento::ExitHostTimeout) {
                 strcpy(snapshot.status, "Go client: Memento heartbeat timed out. See SPOTIFY.LOG.");
-            } else if (spotifyLoad(&blk->exitReason) == 3) {
+            } else if (host().exitReason() == r2memento::ExitBadQueue) {
                 strcpy(snapshot.status, "Go client: invalid host command queue. See SPOTIFY.LOG.");
-            } else if (spotifyLoad(&blk->exitReason) == 1) {
+            } else if (host().exitReason() == r2memento::ExitHostClosed) {
                 strcpy(snapshot.status, "Go client closed by host.");
             } else if (taskStatus == 4) {
                 strcpy(snapshot.status, "Go client fault at 0x");

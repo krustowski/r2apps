@@ -81,6 +81,10 @@ int web_tls_error_is_untrusted(int err);
  *  or -1 when there were none to read.  */
 int web_tls_anchor_count(void);
 
+/*  SHA-256 of `len` bytes into `out` (32 bytes): BearSSL's, for whoever else
+ *  in the process wants a hash (the session lock's SESSION.CFG).  */
+void web_sha256(const void *data, unsigned long len, unsigned char out[32]);
+
 /*  Filled in by the platform (web_r2.cpp, or the host test).  */
 void *web_tls_alloc(unsigned long n);
 void web_tls_release(void *p);

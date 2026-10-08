@@ -18,7 +18,7 @@
 //        Alt+F makes the window as large as the screen allows.
 //
 
-#include "../../../c/them/winhost.h"
+#include "../../../c/them/winhost_lifetime.h"
 
 class ThemWindow
 {
@@ -54,7 +54,10 @@ public:
         if (blk->exited || !emulatorAlive())
             release();
         else
-            blk = nullptr; // still holding it: left to it rather than freed under it
+        {
+            ThemWinLifetime::retire(blk, pid);
+            blk = nullptr;
+        }
     }
 
     static void onEvent(void *instance, struct PlatformWindowInterfaceInputEvent *data)
@@ -69,6 +72,23 @@ public:
     }
 
     const char *Title() const { return title; }
+
+    // Called by the root's background idle hook, including after this window
+    // has been destroyed or the desktop has returned to the login dialog.
+    static void ReapClosed()
+    {
+        if (!ThemWinLifetime::pending())
+            return;
+        static uint64_t lastSweep = 0;
+        uint64_t now = r2::ticks();
+        if (now - lastSweep < 1000)
+            return;
+        lastSweep = now;
+        r2::vector<r2::TaskInfo> tasks = r2::tasks();
+        ThemWinLifetime::collect(
+            [&tasks](uint8_t id) { return taskAlive(id, tasks); },
+            [](ThemWinLifetime::Allocation *entry) { r2::heap::kernel_deallocate(entry); });
+    }
 
     //  A 320x200 picture at 1.4 pixels to its one, with the status line under
     //  it: fits the VGA desktop.  Alt+F gives it the whole screen.
@@ -108,7 +128,8 @@ private:
             return;
         }
         //  The kernel heap hands blocks back zeroed.
-        blk = (ThemWinBlock *)r2::heap::kernel_allocate(sizeof(ThemWinBlock));
+        ReapClosed();
+        blk = (ThemWinBlock *)r2::heap::kernel_allocate(sizeof(ThemWinLifetime::Allocation));
         if (!blk)
         {
             strcpy(status, "No memory for the picture (it takes 600 KiB).");
@@ -165,8 +186,11 @@ private:
             strcpy(status, "The emulator stopped. Enter runs it again, Esc closes.");
         if (blk && (blk->exited || !emulatorAlive()))
             release();
-        else
+        else if (blk)
+        {
+            ThemWinLifetime::retire(blk, pid);
             blk = nullptr;
+        }
         wnd->SetImmediateMode(false);
         wnd->Repaint();
     }
@@ -192,13 +216,14 @@ private:
 
     //  The emulator's task is still in the table.  A table that cannot be
     //  read just now counts as alive.
-    bool emulatorAlive()
+    bool emulatorAlive() { return taskAlive(pid, r2::tasks()); }
+
+    static bool taskAlive(uint8_t id, const r2::vector<r2::TaskInfo> &tasks)
     {
-        r2::vector<r2::TaskInfo> tasks = r2::tasks();
         if (tasks.empty())
             return true;
         for (size_t i = 0; i < tasks.size(); i++)
-            if (tasks[i].id == pid && tasks[i].status < 4 && (tasks[i].name[0] | 0x20) == 't' &&
+            if (tasks[i].id == id && tasks[i].status < 4 && (tasks[i].name[0] | 0x20) == 't' &&
                 (tasks[i].name[1] | 0x20) == 'h')
                 return true;
         return false;

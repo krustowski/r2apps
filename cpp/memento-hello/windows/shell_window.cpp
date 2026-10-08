@@ -55,7 +55,9 @@ static void shellKeepAlive()
 class ShellWindow
 {
 public:
-    ShellWindow()
+    //  With <script>, the shell runs it first (r2sh --run, bsh's `bsh`) and
+    //  stays for more.
+    explicit ShellWindow(const char *script = nullptr)
     {
         error[0] = 0;
         clearScreen();
@@ -79,12 +81,28 @@ public:
         blk->hostBeat = 1;
         g_shBlocks[slot] = blk;
 
-        char args[64] = "sh.elf --host 0x";
+        //  --color: this window shows the shell's ANSI colours (put()).  The
+        //  kernel takes 127 characters of arguments.
+        char args[128] = "sh.elf --color --host 0x";
         size_t at = strlen(args);
         uint64_t addr = (uint64_t)(uintptr_t)blk;
         for (int shift = 28; shift >= 0; shift -= 4)
             args[at++] = "0123456789ABCDEF"[(addr >> shift) & 15];
         args[at] = 0;
+        if (script && *script)
+        {
+            if (at + 7 + strlen(script) >= sizeof(args))
+            {
+                strcpy(error, "The script's path is too long.");
+                release();
+                return;
+            }
+            for (const char *k = " --run "; *k; k++)
+                args[at++] = *k;
+            for (const char *k = script; *k; k++)
+                args[at++] = *k;
+            args[at] = 0;
+        }
         r2::optional<uint8_t> id = r2::spawn("sh.elf", args);
         if (!id)
         {
@@ -149,11 +167,22 @@ private:
     //  The terminal: line n lives at lines[n % Keep]; `last` is the line the
     //  cursor is on, `first` the oldest one still kept.
     char lines[Keep][Cols];
+    //  And each cell's colours: the foreground in the low nibble and the
+    //  background in the high one, as VGA has them (palette below).
+    uint8_t attrs[Keep][Cols];
+    static const uint8_t Plain = 0x07; // light grey on black
+    uint8_t attr = Plain;              // what put() writes with now
+    //  An ANSI escape sequence being read (ESC [ n ; n m): 0 none, 1 after
+    //  ESC, 2 in the parameters.
+    int esc = 0;
+    uint8_t escArgs[8];
+    int escN = 0;
     long first = 0, last = 0;
     int col = 0;
     int back = 0; // lines scrolled back from the bottom
 
     PlatformColor *bg = nullptr, *fg = nullptr, *dim = nullptr, *cursor = nullptr;
+    PlatformColor *palette[16] = {};
     PlatformFont *font = nullptr;
     double cw = 3, ch = 6;
 
@@ -189,25 +218,107 @@ private:
 
     char *row(long n) { return lines[n % Keep]; }
 
+    uint8_t *attrRow(long n) { return attrs[n % Keep]; }
+
     void clearScreen()
     {
         first = last = 0;
         col = 0;
         back = 0;
         memset(lines[0], ' ', Cols);
+        memset(attrs[0], attr, Cols);
     }
 
     void newLine()
     {
         last++;
         memset(row(last), ' ', Cols);
+        memset(attrRow(last), attr, Cols);
         if (last - first >= Keep)
             first = last - Keep + 1;
         col = 0;
     }
 
+    //  One SGR parameter onto `attr`, the way the kernel's console takes it:
+    //  0 resets, 1 brightens, 30-37/90-97 the foreground, 40-47/100-107 the
+    //  background, 39/49 the defaults.
+    void sgr(uint8_t a)
+    {
+        static const uint8_t ansi[8] = {0, 4, 2, 6, 1, 5, 3, 7}; // ANSI's order in VGA's
+        uint8_t f = attr & 15, b = attr >> 4;
+        if (a == 0)
+            f = Plain & 15, b = Plain >> 4;
+        else if (a == 1)
+            f |= 8;
+        else if (a == 22)
+            f &= 7;
+        else if (a >= 30 && a <= 37)
+            f = (uint8_t)(ansi[a - 30] | (f & 8));
+        else if (a == 39)
+            f = Plain & 15;
+        else if (a >= 40 && a <= 47)
+            b = ansi[a - 40];
+        else if (a == 49)
+            b = Plain >> 4;
+        else if (a >= 90 && a <= 97)
+            f = (uint8_t)(ansi[a - 90] | 8);
+        else if (a >= 100 && a <= 107)
+            b = (uint8_t)(ansi[a - 100] | 8);
+        attr = (uint8_t)(b << 4 | f);
+    }
+
+    //  Takes <c> when it belongs to an escape sequence.  Only colours (the
+    //  final 'm') do anything; any other sequence is swallowed, and a control
+    //  byte in the middle of one ends it and is put as ever.
+    bool escape(uint8_t c)
+    {
+        if (esc == 0)
+        {
+            if (c != 0x1b)
+                return false;
+            esc = 1;
+            return true;
+        }
+        if (esc == 1)
+        {
+            esc = 0;
+            if (c != '[')
+                return false;
+            esc = 2;
+            memset(escArgs, 0, sizeof(escArgs));
+            escN = 0;
+            return true;
+        }
+        if (c >= '0' && c <= '9')
+        {
+            if (escN < 8)
+                escArgs[escN] = (uint8_t)(escArgs[escN] * 10 + (c - '0'));
+            return true;
+        }
+        if (c == ';')
+        {
+            if (escN < 8)
+                escN++;
+            return true;
+        }
+        if (c >= 0x40 && c <= 0x7e)
+        {
+            esc = 0;
+            if (c == 'm')
+                for (int i = 0; i <= escN && i < 8; i++)
+                    sgr(escArgs[i]);
+            return true;
+        }
+        if (c >= 0x20)
+            return true;
+        esc = 0;
+        return false;
+    }
+
     void put(uint8_t c)
     {
+        if (escape(c))
+            return;
         switch (c)
         {
         case '\n': newLine(); return;
@@ -229,6 +340,7 @@ private:
             return;
         if (col >= Cols)
             newLine();
+        attrRow(last)[col] = attr;
         row(last)[col++] = (char)c;
     }
 
@@ -345,6 +457,11 @@ private:
         fg = dc->CreateColor(0xFFAAAAAA, nullptr, nullptr);
         dim = dc->CreateColor(0xFF555555, nullptr, nullptr);
         cursor = dc->CreateColor(0xFFFFFFFF, nullptr, nullptr);
+        static const uint32_t vga[16] = {0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA,
+                                         0xAA5500, 0xAAAAAA, 0x555555, 0x5555FF, 0x55FF55, 0x55FFFF,
+                                         0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF};
+        for (int i = 0; i < 16; i++)
+            palette[i] = dc->CreateColor(0xFF000000 | vga[i], nullptr, nullptr);
         font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         if (font)
         {
@@ -398,20 +515,34 @@ private:
         for (long n = top; n <= bottom && n <= last; n++)
         {
             const char *r = row(n);
+            const uint8_t *a = attrRow(n);
+            //  Up to the last cell that shows anything: a character, or a
+            //  background of its own.
             int len = Cols;
-            while (len > 0 && r[len - 1] == ' ')
+            while (len > 0 && r[len - 1] == ' ' && !(a[len - 1] >> 4))
                 len--;
-            if (!len)
-                continue;
-            for (int k = 0; k < len; k++)
-            {
-                uint8_t c = (uint8_t)r[k];
-                text[k] = c < 0x20 ? ' ' : (char)c;
-            }
-            text[len] = 0;
             double y = oy + (n - top) * ch;
-            target->DrawText(Coord(ox), Coord(y), Coord(len * cw + cw), Coord(ch), (const mchar *)text, &o, false);
+            //  In runs of one colour.
+            for (int k = 0; k < len;)
+            {
+                int end = k;
+                while (end < len && a[end] == a[k])
+                    end++;
+                for (int j = k; j < end; j++)
+                {
+                    uint8_t c = (uint8_t)r[j];
+                    text[j - k] = c < 0x20 ? ' ' : (char)c;
+                }
+                text[end - k] = 0;
+                double x = ox + k * cw;
+                if ((a[k] >> 4) && palette[a[k] >> 4])
+                    target->FillRect(Coord(x), Coord(y), Coord((end - k) * cw), Coord(ch), palette[a[k] >> 4], false);
+                o.foreground = palette[a[k] & 15] ? palette[a[k] & 15] : fg;
+                target->DrawText(Coord(x), Coord(y), Coord((end - k) * cw + cw), Coord(ch), (const mchar *)text, &o, false);
+                k = end;
+            }
         }
+        o.foreground = fg;
 
         if (back == 0)
         {

@@ -439,10 +439,13 @@ private:
         auto *key = data->Data.OnKeyEvent.key;
         if (!key->isKeyDown)
             return;
-        //  Esc logs out: the windows close with the desktop, and main()
-        //  shows the login dialog again.
+        //  Esc locks the session, as Alt+L does.  With no memory for the
+        //  lock screen it logs out instead: the windows close with the
+        //  desktop, and main() shows the login dialog again.
         if (key->isEscape)
         {
+            if (lockSession())
+                return;
             g_logout = true;
             static_cast<MementoR2Impl::R2_WindowImpl *>(wnd)->CloseOtherWindows();
             wnd->Close();

@@ -202,9 +202,16 @@ static bool launchProgram(const char *program, const char *args);
 //  Why the last program could not be started, for the desktop to say.
 static char g_launchError[64];
 
-//  Esc on the desktop: the session ends and the login dialog comes back
-//  (rather than Memento ending).  Set by the desktop before it closes.
+//  Esc on the desktop, when the lock screen cannot be had (no memory for
+//  its window): the session ends and the login dialog comes back (rather
+//  than Memento ending).  Set by the desktop before it closes.
 static bool g_logout = false;
+
+//  Alt+L anywhere, or Esc on the desktop: the lock screen goes over the
+//  session, which goes on running under it, until the session's login and
+//  password are given (windows/login_window.cpp).  False when the lock
+//  screen could not be made; true too when it is already up.
+static bool lockSession();
 
 //  The Editor in a window of its own (windows/editor_window.cpp).
 static bool openEditorWindow(const char *path);
@@ -212,6 +219,11 @@ static bool openEditorWindow(const char *path);
 //  A DOS program in the theM emulator, in a window of its own
 //  (windows/them_window.cpp).  False when the window could not be made.
 static bool openThemWindow(const char *path);
+
+//  The userland shell (r2sh) in a window of its own; with <script>, it runs
+//  that .BSH file first (windows/shell_window.cpp).  When it cannot be
+//  opened, g_launchError says why.
+static bool openShellWindow(const char *script = nullptr);
 
 //  Draws the desktop again, wallpaper and all (after the file manager has
 //  set a new wallpaper).  Nothing when there is no desktop.
@@ -221,6 +233,29 @@ static void repaintDesktop();
 //  Ctrl+C in a window puts something here, Ctrl+V types it back in.  It is
 //  plain bytes in the font's code page; nothing survives the process.
 static char g_clipboard[1200];
+
+//  Who is at the keyboard, as the kernel has it (syscall 0x01): the login
+//  Memento set as the system user (windows/login_window.cpp), or "root" when
+//  the login was left empty.  The windows that need a name for the person ---
+//  IRC's and Chat's nick, Telegram's own messages --- start from it.  Empty
+//  when the kernel would not say.
+static const char *systemUser()
+{
+    static char name[32];
+    name[0] = 0;
+    for (int tries = 0; tries < 3; tries++)
+    {
+        auto info = r2::sysinfo(); // Busy now and then: the config lock
+        if (!info)
+            continue;
+        size_t n = 0;
+        for (; n < sizeof(name) - 1 && info->system_user[n] > ' ' && info->system_user[n] < 0x7f; n++)
+            name[n] = (char)info->system_user[n];
+        name[n] = 0;
+        break;
+    }
+    return name;
+}
 
 //  And an image: the last PrintScreen, as the screen had it --- palette
 //  indices and the palette they index.  Whichever of the two was put on the
@@ -393,6 +428,7 @@ static const mchar *onSaveScreenshot()
 //
 static UIRootImpl *g_root = nullptr;
 static UIRootImpl::PlatformWindowOptions g_appOpts{};
+static UIRootImpl::PlatformWindowOptions g_fullOpts{}; // whole screen, no frame
 
 static PlatformWindow *g_desktopWnd = nullptr;
 static void repaintDesktop()
@@ -435,6 +471,32 @@ static bool launchProgram(const char *program, const char *args)
 }
 
 static void deleteClock(void *p) { delete (ClockWindow *)p; }
+static void deleteLock(void *p) { delete (LoginWindow *)p; }
+
+static bool lockSession()
+{
+    if (MementoR2Impl::R2_Locked())
+        return true;
+    if (!g_root || !g_desktopWnd)
+        return false; // no session: the landing screen, the login
+    int32 w = 640, h = 400;
+    MementoR2Impl::R2_Vga640x400::ScreenSize(w, h);
+    LoginWindow *lw = new LoginWindow(true);
+    MementoR2Impl::R2_LockNextWindow(true);
+    PlatformWindow *wnd = g_root->CreateWindow(
+        "Locked", Coord(w / 2.0), Coord(h / 2.0), LoginWindow::onEvent, lw, &g_fullOpts, deleteLock, lw);
+    MementoR2Impl::R2_LockNextWindow(false);
+    if (!wnd)
+    {
+        delete lw;
+        return false;
+    }
+    lw->SetWindow(wnd);
+    wnd->SetVisible(true);
+    return true;
+}
+
+static void onLockKey() { (void)lockSession(); }
 static void deleteNet(void *p) { delete (NetWindow *)p; }
 static void deleteMount(void *p) { delete (MountWindow *)p; }
 static void deleteTasks(void *p) { delete (TasksWindow *)p; }
@@ -505,12 +567,12 @@ static void deleteSpotify(void *p) { delete (SpotifyWindow *)p; }
 static void deleteShell(void *p) { delete (ShellWindow *)p; }
 static void deleteSnake(void *p) { delete (SnakeWindow *)p; }
 static void deleteMines(void *p) { delete (MinesWindow *)p; }
-static bool openShellWindow()
+static bool openShellWindow(const char *script)
 {
     if (!g_root)
         return false;
     g_launchError[0] = 0;
-    ShellWindow *w = new ShellWindow();
+    ShellWindow *w = new ShellWindow(script);
     if (!w)
     {
         strcpy(g_launchError, "Shell: no memory left for it.");
@@ -824,6 +886,8 @@ extern "C" int main()
     g_root = root;
     MementoR2Impl::PrintScreenHook = onPrintScreen;
     MementoR2Impl::SaveScreenshotHook = onSaveScreenshot;
+    MementoR2Impl::BackgroundIdleHook = ThemWindow::ReapClosed;
+    MementoR2Impl::LockSessionHook = onLockKey;
 
     // The screen is 640x400. At 192 DPI a window measures half that in the
     // coordinates these windows are written in, so the layouts are unchanged
@@ -835,6 +899,7 @@ extern "C" int main()
     fullScreen.undecorated = true;   // no frame: these cover the whole area
     fullScreen.hideOnTaskbar = true; // and they are not something to switch to
 
+    g_fullOpts = fullScreen;
     g_appOpts = fullScreen;
     g_appOpts.undecorated = false;   // the root frames the floating windows
     g_appOpts.hideOnTaskbar = false; // and lists them along the bottom
@@ -863,10 +928,11 @@ extern "C" int main()
 
     // --- Login, and the desktop sessions after it ---
     //
-    // Esc on the desktop logs out: every window closes and the login dialog
-    // comes back. Leaving the login dialog (Esc or Cancel)
-    // restarts the machine; on a kernel too old to do that, Memento ends as it
-    // always did.
+    // Esc on the desktop, or Alt+L anywhere, locks the session (lockSession);
+    // only when the lock screen cannot be made does Esc log out instead:
+    // every window closes and the login dialog comes back. Leaving the login
+    // dialog (Esc or Cancel) restarts the machine; on a kernel too old to do
+    // that, Memento ends as it always did.
     while (wantsLogin)
     {
         bool wantsDesktop = false;

@@ -14,8 +14,9 @@
 //      F8  Delete the file, or the directory if it is empty
 //      F2 or Ctrl+R  read both panes again
 //      Alt+Space, Shift+F10 or a right click   the menu for the entry under
-//          the bar: Run in theM (an .EXE or .COM), Set as wallpaper (a .PNG),
-//          View, Edit, Copy, Move, Delete, and so on
+//          the bar: Run in theM (an .EXE or .COM), Run in shell (a .BSH
+//          script, in a Shell window), Set as wallpaper (a .PNG), View, Edit,
+//          Copy, Move, Delete, and so on
 //
 // Enter on an .EXE or .COM runs it in theM, the DOS emulator, in a window of
 // its own (windows/them_window.cpp); on anything else it opens the viewer.
@@ -111,7 +112,7 @@ private:
     {
         char path[128];
         char mountRoot[40];
-        unsigned char fsType; // of the mount it is in: 1 rootfs, 2 fat12, 3 iso9660, 4 tar
+        unsigned char fsType; // of the mount it is in: 1 rootfs, 2 fat12, 3 iso9660, 4 tar, 5 memdisk
         bool atMounts;
         VfsDirEntry_T entries[MAX_ENTRIES];
         unsigned char order[MAX_ENTRIES];
@@ -137,6 +138,7 @@ private:
     enum MenuCmd
     {
         M_RUN_THEM,
+        M_RUN_SHELL,
         M_WALLPAPER,
         M_OPEN,
         M_VIEW,
@@ -278,6 +280,8 @@ private:
             return "iso9660";
         if (t == 4)
             return "tar";
+        if (t == 5)
+            return "memdisk"; // /mnt/tmp: FAT12 in RAM
         return "none";
     }
 
@@ -475,6 +479,15 @@ private:
         return (x[0] == 'e' && x[1] == 'x' && x[2] == 'e') || (x[0] == 'c' && x[1] == 'o' && x[2] == 'm');
     }
 
+    // A script for the shell (bsh): .BSH.
+    static bool isScript(const VfsDirEntry_T &e)
+    {
+        int n = e.name_len < 32 ? e.name_len : 32;
+        if (e.is_dir || n < 5 || e.name[n - 4] != '.')
+            return false;
+        return (e.name[n - 3] | 0x20) == 'b' && (e.name[n - 2] | 0x20) == 's' && (e.name[n - 1] | 0x20) == 'h';
+    }
+
     // A picture the wallpaper can be: .PNG.
     static bool isPng(const VfsDirEntry_T &e)
     {
@@ -496,6 +509,16 @@ private:
         }
         copyStr(note, sizeof(note), "Wallpaper set.");
         repaintDesktop();
+    }
+
+    //  In a Shell window of its own, which stays open after the script.
+    void runInShell(const char *path)
+    {
+        if (!openShellWindow(path))
+        {
+            strncpy(note, g_launchError[0] ? g_launchError : "Shell: could not start.", sizeof(note) - 1);
+            wnd->Repaint();
+        }
     }
 
     void runInThem(const char *path)
@@ -535,6 +558,8 @@ private:
             {
                 if (isProgram(e))
                     addItem(M_RUN_THEM, "Run in theM", "Enter", 'R');
+                if (isScript(e))
+                    addItem(M_RUN_SHELL, "Run in shell", "", 'R');
                 if (isPng(e))
                     addItem(M_WALLPAPER, "Set as wallpaper", "", 'W');
                 addItem(M_VIEW, "View", "F3", 'V');
@@ -580,6 +605,10 @@ private:
         case M_RUN_THEM:
             if (ei >= 0 && ei < p.nEntries)
                 runInThem(entryPath(p, ei));
+            break;
+        case M_RUN_SHELL:
+            if (ei >= 0 && ei < p.nEntries)
+                runInShell(entryPath(p, ei));
             break;
         case M_WALLPAPER:
             if (ei >= 0 && ei < p.nEntries)
@@ -777,7 +806,8 @@ private:
     }
 
     // The floppy can be written; the CD cannot.
-    static bool writable(const Pane &p) { return !p.atMounts && (p.fsType == 1 || p.fsType == 2); }
+    //  The floppy and the RAM disk are FAT12 alike; the CD and the tar are not.
+    static bool writable(const Pane &p) { return !p.atMounts && (p.fsType == 1 || p.fsType == 2 || p.fsType == 5); }
 
     void say(const char *s)
     {

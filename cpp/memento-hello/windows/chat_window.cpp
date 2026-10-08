@@ -43,6 +43,9 @@ class ChatWindow
     char inputBuf[IN_CAP + 1] = {};
     int inputLen = 0;
     char nick[17] = {};
+    //  The nick Enter takes on an empty line: the system user, at most 16
+    //  characters of it; empty when there is none, and then one is typed.
+    char defNick[17] = {};
 
     PlatformWindow *wnd = nullptr;
     PlatformColor *dark = nullptr;
@@ -287,7 +290,17 @@ class ChatWindow
             synRetries = 0;
             addLine("[connected]");
             if (!have_nick)
-                addLine("[enter your nick]");
+            {
+                web::scopy(defNick, systemUser(), sizeof(defNick));
+                char ask[MSG_W + 1] = "[enter your nick]";
+                if (defNick[0])
+                {
+                    web::scopy(ask, "[enter your nick, or Enter for ", sizeof(ask));
+                    web::scat(ask, defNick, sizeof(ask));
+                    web::scat(ask, "]", sizeof(ask));
+                }
+                addLine(ask);
+            }
             wnd->Repaint();
         }
         if (connected && chat_sock && chat_sock->state == SOCK_CLOSED)
@@ -384,11 +397,17 @@ class ChatWindow
                 return;
             }
             // PH_CHAT: send nick or message
-            if (inputLen == 0)
+            if (inputLen == 0 && (have_nick || !connected || !defNick[0]))
                 return;
             if (!have_nick)
             {
                 have_nick = true;
+                if (inputLen == 0)
+                {
+                    // Enter alone: the system user, as if it had been typed
+                    web::scopy(inputBuf, defNick, sizeof(inputBuf));
+                    inputLen = (int)strlen(inputBuf);
+                }
                 int ni = 0;
                 while (ni < inputLen && ni < 16)
                 {
@@ -540,9 +559,11 @@ class ChatWindow
             }
             else if (connected)
             {
-                const char *s = "enter nick:";
+                const char *s = defNick[0] ? "enter nick, Enter for " : "enter nick:";
                 while (*s && ni < 34)
                     nickLine[ni++] = *s++;
+                for (int i = 0; defNick[i] && ni < 34; i++)
+                    nickLine[ni++] = defNick[i];
             }
             else
             {

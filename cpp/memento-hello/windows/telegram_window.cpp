@@ -800,7 +800,7 @@ private:
         }
         char quote[64];
         quoteOf(member(m, e, "reply_to_message"), e, quote, sizeof(quote));
-        addMsg(chatFor(id, name), mine, mine ? "me" : who, text, number(member(m, e, "message_id"), e), quote);
+        addMsg(chatFor(id, name), mine, mine ? myName() : who, text, number(member(m, e, "message_id"), e), quote);
     }
 
     //  The message a reply answers, as the line over it: "Name: the start of
@@ -816,7 +816,7 @@ private:
         str(member(from, e, "first_name"), e, who, sizeof(who));
         raw(member(from, e, "is_bot"), e, isBot, sizeof(isBot));
         if (!strcmp(isBot, "true") && botName[0] && usernameIs(from, e))
-            web::scopy(who, "me", sizeof(who));
+            web::scopy(who, myName(), sizeof(who));
         if (!who[0])
             str(member(member(r, e, "chat"), e, "title"), e, who, sizeof(who));
         if (!str(member(r, e, "text"), e, what, sizeof(what)) && !str(member(r, e, "caption"), e, what, sizeof(what)))
@@ -1484,6 +1484,14 @@ private:
             if (!p.pic.px)
                 p.seq = -1; // nothing left to show: a free slot
         }
+    }
+
+    //  What the bot's messages --- what is typed here --- are signed with on
+    //  this side: the system user, or "me" when there is none.
+    static const char *myName()
+    {
+        const char *u = systemUser();
+        return u[0] ? u : "me";
     }
 
     bool usernameIs(const char *from, const char *e)

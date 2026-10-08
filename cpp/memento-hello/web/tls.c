@@ -367,3 +367,11 @@ const char *web_tls_error_text(int err)
         return "TLS failure";
     }
 }
+
+void web_sha256(const void *data, unsigned long len, unsigned char out[32])
+{
+    br_sha256_context ctx;
+    br_sha256_init(&ctx);
+    br_sha256_update(&ctx, data, len);
+    br_sha256_out(&ctx, out);
+}

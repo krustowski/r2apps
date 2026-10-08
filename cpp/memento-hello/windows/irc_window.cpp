@@ -42,6 +42,36 @@ class IRCWindow
 
     char nick[17] = {};
     char channel[33] = {};
+
+    //  The nick Enter takes on an empty field: the system user, in what IRC
+    //  allows in a nick (letters, digits and []\`_^{|}-, not starting with
+    //  a digit or '-'), or "r2user" when there is none.
+    char defNick[17] = {};
+    char defHint[56] = {};
+
+    const char *defaultNick()
+    {
+        if (defNick[0])
+            return defNick;
+        const char *u = systemUser();
+        size_t n = 0;
+        if ((*u >= '0' && *u <= '9') || *u == '-')
+            defNick[n++] = '_';
+        for (; *u && n < sizeof(defNick) - 1; u++)
+        {
+            char c = *u;
+            bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                      strchr("[]\\`_^{|}-", c);
+            defNick[n++] = ok ? c : '_';
+        }
+        defNick[n] = 0;
+        if (!n)
+            scopy(defNick, "r2user", sizeof(defNick));
+        scopy(defHint, "default ", sizeof(defHint));
+        web::scat(defHint, defNick, sizeof(defHint));
+        web::scat(defHint, "   [Enter] next   [Esc] back", sizeof(defHint));
+        return defNick;
+    }
     bool registered = false;
     bool imEnabled = false;
     bool netInit = false;
@@ -1013,7 +1043,7 @@ class IRCWindow
                 }
                 else
                 {
-                    scopy(nick, "r2user", sizeof(nick));
+                    scopy(nick, defaultNick(), sizeof(nick));
                 }
                 phase = PH_CHAN;
                 inputLen = 0;
@@ -1205,8 +1235,8 @@ class IRCWindow
             else if (phase == PH_NICK)
             {
                 prompt = "Nick:";
-                hint = "default r2user   [Enter] next   [Esc] back";
-                defval = "r2user";
+                defval = defaultNick();
+                hint = defHint;
             }
             else
             {
