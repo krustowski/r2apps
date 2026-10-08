@@ -107,6 +107,21 @@ bool kill(uint8_t id) {
     return raw_syscall(Sys::KillTask, (int64_t)id, 0) == 0;
 }
 
+namespace {
+int64_t desktop_control(int64_t op, int64_t id) {
+    for (int tries = 0; tries < 8; ++tries) {
+        int64_t result = raw_syscall(Sys::DesktopRelaunch, op, id);
+        if (result != 0xfa)
+            return result;
+    }
+    return 0xfa;
+}
+}
+
+bool request_desktop_relaunch(uint8_t id) { return desktop_control(0, id) == 0; }
+bool register_desktop_relaunch() { return desktop_control(2, 0) == 0; }
+bool desktop_relaunch_pending() { return desktop_control(1, 0) == 1; }
+
 optional<string> command_line(uint8_t id) {
     constexpr int64_t BUSY = 0xfa; /*  the scheduler was locked: ask again  */
     char line[128];

@@ -434,6 +434,8 @@ static UIRootImpl::PlatformWindowOptions g_appOpts{};
 static UIRootImpl::PlatformWindowOptions g_fullOpts{}; // whole screen, no frame
 
 static PlatformWindow *g_desktopWnd = nullptr;
+static bool g_relaunch = false;
+static bool g_relaunchSupported = false;
 static void repaintDesktop()
 {
     if (g_desktopWnd)
@@ -500,6 +502,22 @@ static bool lockSession()
 }
 
 static void onLockKey() { (void)lockSession(); }
+
+// Called outside window callbacks. The normal root/window destructors stop
+// hosted children before freeing their shared blocks. The reserved exit code
+// commits the request only after all that cleanup has completed.
+static void desktopIdle()
+{
+    ThemWindow::ReapClosed();
+    if (g_relaunchSupported && !g_relaunch && g_desktopWnd &&
+        !MementoR2Impl::R2_Locked() && r2::desktop_relaunch_pending())
+    {
+        g_relaunch = true;
+        g_logout = false;
+        g_launch.pending = false;
+        g_desktopWnd->Close();
+    }
+}
 static void deleteNet(void *p) { delete (NetWindow *)p; }
 static void deleteMount(void *p) { delete (MountWindow *)p; }
 static void deleteTasks(void *p) { delete (TasksWindow *)p; }
@@ -905,8 +923,9 @@ extern "C" int main()
     g_root = root;
     MementoR2Impl::PrintScreenHook = onPrintScreen;
     MementoR2Impl::SaveScreenshotHook = onSaveScreenshot;
-    MementoR2Impl::BackgroundIdleHook = ThemWindow::ReapClosed;
+    MementoR2Impl::BackgroundIdleHook = desktopIdle;
     MementoR2Impl::LockSessionHook = onLockKey;
+    g_relaunchSupported = r2::register_desktop_relaunch();
 
     // The screen is 640x400. At 192 DPI a window measures half that in the
     // coordinates these windows are written in, so the layouts are unchanged
@@ -931,19 +950,26 @@ extern "C" int main()
     const Coord fullW = Coord(screenPxW / 2.0), fullH = Coord(screenPxH / 2.0);
 
     // --- Landing screen ---
-    HelloWindow *hw = new HelloWindow();
-    PlatformWindow *wnd = root->CreateWindow(
-        "Hello r2", fullW, fullH, HelloWindow::onEvent, hw, &fullScreen, nullptr, nullptr);
-    if (!wnd)
-        return 1;
-    hw->SetWindow(wnd);
-    wnd->SetVisible(true);
-    root->EnterMainLoop();
+    bool wantsLogin = false;
+    for (int i = 1; i < r2::arg_count(); ++i)
+        if (r2::arg(i) == r2::string_view("--relaunch"))
+            wantsLogin = true;
+    if (!wantsLogin)
+    {
+        HelloWindow *hw = new HelloWindow();
+        PlatformWindow *wnd = root->CreateWindow(
+            "Hello r2", fullW, fullH, HelloWindow::onEvent, hw, &fullScreen, nullptr, nullptr);
+        if (!wnd)
+            return 1;
+        hw->SetWindow(wnd);
+        wnd->SetVisible(true);
+        root->EnterMainLoop();
 
-    bool wantsLogin = hw->wantsNext;
-    delete wnd;
-    delete hw;
-    resetWallpaperCache(); // its colours belonged to that window's context
+        wantsLogin = hw->wantsNext;
+        delete wnd;
+        delete hw;
+        resetWallpaperCache(); // its colours belonged to that window's context
+    }
 
     // --- Login, and the desktop sessions after it ---
     //
@@ -1013,7 +1039,7 @@ extern "C" int main()
             }
         }
 
-        if (!g_logout)
+        if (g_relaunch || !g_logout)
             break;
         g_logout = false;
     }
@@ -1025,5 +1051,5 @@ extern "C" int main()
     if (!onFramebuffer())
         r2::gfx::restore_text_mode();
 #endif
-    return 0;
+    return g_relaunch ? r2::DesktopRelaunchExit : 0;
 }

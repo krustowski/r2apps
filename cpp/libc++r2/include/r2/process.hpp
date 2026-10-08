@@ -68,6 +68,14 @@ optional<uint8_t> spawn(string_view path, string_view args = string_view());
  */
 bool kill(uint8_t id);
 
+/* Cooperative graphics-desktop update (0x42). The registered Memento closes
+ * its windows and returns DesktopRelaunchExit; its kernel supervisor starts
+ * the replacement without rebooting. Unsupported versions return false. */
+constexpr int DesktopRelaunchExit = 0x4d52;
+bool request_desktop_relaunch(uint8_t id);
+bool register_desktop_relaunch();
+bool desktop_relaunch_pending();
+
 /*
  *  The command line task `id` was started with, argv[0] first ("tnt eth"),
  *  as spawn() or the shell's fg/bg gave it (syscall 0x41) --- what it takes
