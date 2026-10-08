@@ -19,6 +19,10 @@
 // holds on the heap, and Memento's own arena --- from syscall 0x3C through
 // r2::meminfo(), read again every second while the tab is showing.
 //
+// There can be 32 tasks, more than the ten rows the window has room for: the
+// list scrolls to keep the bar in view, and the Memory tab's list scrolls with
+// the arrows.  A thumb at the right edge says where the rows are.
+//
 
 class TasksWindow
 {
@@ -36,6 +40,8 @@ private:
     PlatformFont *font = nullptr;
     int sel = 0;
     int nLive = 0; // last known task count; key handlers use it
+    int top = 0;    // the first task row shown
+    int memTop = 0; // and the first row of the Memory tab's list
     r2::vector<r2::TaskInfo> tasks; // what the last read returned
     unsigned long lastRead = 0;
     bool haveTasks = false;
@@ -56,10 +62,10 @@ private:
     static const int HEAD_Y = 3;    // column headers
     static const int ROW_Y = 15;    // first task row
     static const int ROW_H = 10;    // one row
-    static const int MAX_ROWS = 10; // the kernel's own limit on 0x2F
+    static const int VISIBLE_ROWS = 10; // task rows on screen at once
     static const int BACK_W = 80, BACK_H = 11;
     static const int KILL_W = 60;
-    static const int STATUS_Y = ROW_Y + MAX_ROWS * ROW_H + 5;
+    static const int STATUS_Y = ROW_Y + VISIBLE_ROWS * ROW_H + 5;
 
     // Columns: PID, name, mode, status, and where the task was last put down.
     static const int COL_PID = 6, COLW_PID = 22;
@@ -342,11 +348,11 @@ private:
                 return;
             }
             // Task rows: a hit selects the row it landed in
-            for (int i = 0; i < nLive; i++)
+            for (int r = 0; r < VISIBLE_ROWS && top + r < nLive; r++)
             {
-                if (my >= ROW_Y + i * ROW_H && my < ROW_Y + i * ROW_H + (ROW_H - 1))
+                if (my >= ROW_Y + r * ROW_H && my < ROW_Y + r * ROW_H + (ROW_H - 1))
                 {
-                    sel = i;
+                    sel = top + r;
                     wnd->Repaint();
                     break;
                 }
@@ -371,6 +377,16 @@ private:
         {
             if (key->isEscape || key->isEnter)
                 wnd->Close();
+            else if (key->isArrowUp && memTop > 0)
+            {
+                memTop--;
+                wnd->Repaint();
+            }
+            else if (key->isArrowDown)
+            {
+                memTop++; // drawMemory stops it at the last row
+                wnd->Repaint();
+            }
             return;
         }
         if (confirmPid >= 0)
@@ -495,11 +511,18 @@ private:
             haveTasks = true;
         }
         int n = (int)tasks.size();
-        if (n > MAX_ROWS)
-            n = MAX_ROWS;
         nLive = n;
         if (sel > nLive)
             sel = nLive;
+        // The bar stays in view; on Back the list stays where it was.
+        if (sel < nLive && sel < top)
+            top = sel;
+        if (sel < nLive && sel >= top + VISIBLE_ROWS)
+            top = sel - VISIBLE_ROWS + 1;
+        if (top > n - VISIBLE_ROWS)
+            top = n - VISIBLE_ROWS;
+        if (top < 0)
+            top = 0;
 
         Coord W = target->GetWidth();
         Coord H = target->GetHeight();
@@ -558,6 +581,21 @@ private:
         target->DrawText(x, y, KILL_W, BACK_H, (const mchar *)label, &opts, false);
     }
 
+    // A thumb along the right edge for a list of `total` rows of which `shown`
+    // fit, from `first`; nothing when they all fit.  Rows leave it room.
+    static const int SCROLL_ROOM = 8;
+    void scrollbar(PlatformBitmap *target, int y, int h, int first, int shown, int total, int W)
+    {
+        if (total <= shown)
+            return;
+        int thumbH = h * shown / total;
+        if (thumbH < 4)
+            thumbH = 4;
+        int thumbY = y + (h - thumbH) * first / (total - shown);
+        target->FillRect(W - 6, y, 1, h, dark, false);
+        target->FillRect(W - 7, thumbY, 3, thumbH, dark, false);
+    }
+
     void drawTasks(PlatformBitmap *target, PlatformDrawTextOptions &opts, int W, int n)
     {
         // Column headers
@@ -568,13 +606,15 @@ private:
         target->DrawText(COL_RIP, HEAD_Y, COLW_RIP, 10, "RIP", &opts, false);
         target->FillRect(2, ROW_Y - 2, W - 4, 1, dark, false);
 
-        for (int i = 0; i < n; i++)
+        int rowW = n > VISIBLE_ROWS ? W - 4 - SCROLL_ROOM : W - 4;
+        for (int r = 0; r < VISIBLE_ROWS && top + r < n; r++)
         {
+            int i = top + r;
             const r2::TaskInfo &task = tasks[i];
-            Coord ry = ROW_Y + i * ROW_H;
+            Coord ry = ROW_Y + r * ROW_H;
             if (sel == i)
             {
-                target->FillRect(2, ry, W - 4, ROW_H - 1, dark, false);
+                target->FillRect(2, ry, rowW, ROW_H - 1, dark, false);
                 opts.foreground = light;
             }
             else
@@ -595,6 +635,7 @@ private:
             target->DrawText(COL_STATUS, ry, COLW_STATUS, ROW_H - 1, (const mchar *)statusStr(task.status), &opts, false);
             target->DrawText(COL_RIP, ry, COLW_RIP, ROW_H - 1, (const mchar *)ripbuf, &opts, false);
         }
+        scrollbar(target, ROW_Y, VISIBLE_ROWS * ROW_H - 1, top, VISIBLE_ROWS, n, W);
 
         // What a kill is waiting for or came to, else how to ask for one.
         opts.foreground = dark;
@@ -686,11 +727,14 @@ private:
         text(target, opts, MCOL_HEAP, MEM_HEAD_Y, 70, "Heap held");
         target->FillRect(2, MEM_ROW_Y - 2, W - 4, 1, dark, false);
 
-        int row = 0, kernelTasks = 0;
-        int slots = m.slots < 16 ? (int)m.slots : 16;
-        for (int sl = 0; sl < 17 && row < MEM_ROWS; sl++)
+        // The rows are picked first, as there can be more than MEM_ROWS of
+        // them with 32 slots, and the list shown from memTop.
+        int rows[r2::MaxSlots + 1];
+        int nRows = 0, kernelTasks = 0;
+        int slots = m.slots < r2::MaxSlots ? (int)m.slots : r2::MaxSlots;
+        for (int sl = 0; sl <= r2::MaxSlots; sl++)
         {
-            uint8_t id = sl < 16 ? m.slot_task[sl] : 0xFF;
+            uint8_t id = sl < r2::MaxSlots ? m.slot_task[sl] : 0xFF;
             unsigned long long held = m.heap_by_slot[sl];
             const r2::TaskInfo *t = (sl < slots && id != 0xFF) ? findTask(id) : nullptr;
             if (t && t->mode == 0)
@@ -701,6 +745,19 @@ private:
             }
             if (!t && !held)
                 continue;
+            rows[nRows++] = sl;
+        }
+        if (memTop > nRows - MEM_ROWS)
+            memTop = nRows - MEM_ROWS;
+        if (memTop < 0)
+            memTop = 0;
+
+        for (int row = 0; row < MEM_ROWS && memTop + row < nRows; row++)
+        {
+            int sl = rows[memTop + row];
+            uint8_t id = sl < r2::MaxSlots ? m.slot_task[sl] : 0xFF;
+            unsigned long long held = m.heap_by_slot[sl];
+            const r2::TaskInfo *t = (sl < slots && id != 0xFF) ? findTask(id) : nullptr;
 
             int y = MEM_ROW_Y + row * ROW_H;
             char cell[40];
@@ -720,10 +777,10 @@ private:
                 // without its blocks being swept yet --- or, for the last
                 // row, blocks allocated with no owner at all.
                 text(target, opts, MCOL_PID, y, 22, "-");
-                text(target, opts, MCOL_NAME, y, 80, sl == 16 ? "(no owner)" : "(exited)");
+                text(target, opts, MCOL_NAME, y, 80, sl == r2::MaxSlots ? "(no owner)" : "(exited)");
             }
             cell[0] = 0;
-            if (t && t->mode != 0 && sl < 16)
+            if (t && t->mode != 0)
             {
                 append(cell, sizeof cell, "slot ");
                 appendU(cell, sizeof cell, sl);
@@ -736,8 +793,8 @@ private:
             cell[0] = 0;
             appendKiB(cell, sizeof cell, held);
             text(target, opts, MCOL_HEAP, y, 70, cell);
-            row++;
         }
+        scrollbar(target, MEM_ROW_Y, MEM_ROWS * ROW_H - 1, memTop, MEM_ROWS, nRows, W);
 
         // Memento's own heap: its arena, which grows from the user heap.
         r2::heap::Stats st = r2::heap::stats();

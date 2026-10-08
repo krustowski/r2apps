@@ -39,7 +39,8 @@ bool set_sysinfo(const SysInfo &info);
  *  it (empty, too long, a space or another unprintable) or is too old.  */
 bool set_user(string_view name);
 
-/*  The scheduler's task table (syscall 0x2f), at most 10 entries.  */
+/*  The scheduler's task table (syscall 0x2f), one entry per task: at most
+ *  MaxSlots.  */
 vector<TaskInfo> tasks();
 
 enum class TaskMode : uint8_t { Kernel = 0, User = 1 };
@@ -87,7 +88,9 @@ optional<string> command_line(uint8_t id);
 /*
  *  The machine's memory (syscall 0x3c): RAM, the process frames and the user
  *  heap, with who holds what.  Empty when the kernel is busy at that instant
- *  (ask again) or older than the call.
+ *  (ask again) or older than the call.  A kernel from before 32 slots answers
+ *  with version 1, which has room for 16; it comes back in this layout, with
+ *  `version` 1.
  */
 optional<MemInfo> meminfo();
 

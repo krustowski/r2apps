@@ -48,14 +48,13 @@ bool set_user(string_view name) {
 }
 
 vector<TaskInfo> tasks() {
-    constexpr uint8_t MAX_TASKS = 10; /*  the kernel's own limit  */
-    TaskInfo buffer[MAX_TASKS];
+    TaskInfo buffer[MaxSlots];
     memset(buffer, 0, sizeof(buffer));
 
-    int64_t count = raw_syscall(Sys::ListTasks, (int64_t)buffer, MAX_TASKS);
+    int64_t count = raw_syscall(Sys::ListTasks, (int64_t)buffer, MaxSlots);
 
     vector<TaskInfo> result;
-    if (count <= 0 || count > MAX_TASKS)
+    if (count <= 0 || count > MaxSlots)
         return result;
 
     if (!result.reserve((size_t)count))
@@ -146,11 +145,43 @@ bool power_off() noexcept {
     return false;
 }
 
+namespace {
+
+/*  What a kernel from before 32 slots fills in, whatever version is asked
+ *  for: room for 16 slots, [16] untagged.  */
+struct __attribute__((packed)) MemInfoV1 {
+    uint64_t head[9]; /*  version .. heap_free_blocks, as in MemInfo  */
+    uint64_t heap_by_slot[17];
+    uint64_t frame_base;
+    uint64_t frame_size;
+    uint64_t frame_virt;
+    uint64_t slots;
+    uint8_t slot_task[16];
+};
+
+static_assert(sizeof(MemInfoV1) == 8 * 30 + 16, "MemInfo version 1 layout");
+
+} // namespace
+
 optional<MemInfo> meminfo() {
     MemInfo info;
     memset(&info, 0, sizeof(info));
-    if (raw_syscall(Sys::MemInfo, (int64_t)&info, 0) != 0 || info.version < 1)
+    if (raw_syscall(Sys::MemInfo, (int64_t)&info, 2) != 0 || info.version < 1)
         return nullopt;
+    if (info.version == 1) {
+        /*  The fields before heap_by_slot are where they belong already.  */
+        MemInfoV1 v1;
+        memcpy(&v1, &info, sizeof(v1));
+        for (int k = 0; k <= MaxSlots; k++)
+            info.heap_by_slot[k] = k < 16 ? v1.heap_by_slot[k] : 0;
+        info.heap_by_slot[MaxSlots] = v1.heap_by_slot[16];
+        info.frame_base = v1.frame_base;
+        info.frame_size = v1.frame_size;
+        info.frame_virt = v1.frame_virt;
+        info.slots = v1.slots;
+        for (int k = 0; k < MaxSlots; k++)
+            info.slot_task[k] = k < 16 ? v1.slot_task[k] : 0xFF;
+    }
     return info;
 }
 

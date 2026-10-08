@@ -280,12 +280,17 @@ struct __attribute__((packed)) TaskInfo {
     uint64_t rip;
 };
 
+/*  The most process slots a kernel has, so the most tasks tasks() reports.
+ *  A kernel from before 32 slots has 10.  */
+inline constexpr int MaxSlots = 32;
+
 /*
- *  What syscall 0x3c fills in; every figure is in bytes.  The user heap is the
- *  one kernel_allocate() (syscall 0x0a) hands out from, shared by every
- *  process; heap_by_slot is who holds what, by process slot ([16] untagged),
- *  and slot_task the task id in each slot (0xFF for a free one).  Slot n's
- *  private frame is physical frame_base + n * frame_size, seen at frame_virt.
+ *  What syscall 0x3c fills in (version 2); every figure is in bytes.  The
+ *  user heap is the one kernel_allocate() (syscall 0x0a) hands out from,
+ *  shared by every process; heap_by_slot is who holds what, by process slot
+ *  ([MaxSlots] untagged), and slot_task the task id in each slot (0xFF for a
+ *  free one); `slots` is how many slots there are.  Slot n's private frame is
+ *  physical frame_base + n * frame_size, seen at frame_virt.
  */
 struct __attribute__((packed)) MemInfo {
     uint64_t version;
@@ -297,15 +302,15 @@ struct __attribute__((packed)) MemInfo {
     uint64_t heap_largest_free;
     uint64_t heap_blocks;
     uint64_t heap_free_blocks;
-    uint64_t heap_by_slot[17];
+    uint64_t heap_by_slot[MaxSlots + 1];
     uint64_t frame_base;
     uint64_t frame_size;
     uint64_t frame_virt;
     uint64_t slots;
-    uint8_t slot_task[16];
+    uint8_t slot_task[MaxSlots];
 };
 
-static_assert(sizeof(MemInfo) == 8 * 30 + 16, "MemInfo must match the kernel's layout");
+static_assert(sizeof(MemInfo) == 8 * 46 + 32, "MemInfo must match the kernel's layout");
 
 struct ReadRange {
     uint64_t buffer;
