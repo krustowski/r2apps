@@ -49,6 +49,10 @@ struct BshSession {
     void (*write)(BshSession *s, const uint8_t *text, uint32_t len);
     /* Clears the screen; 0 when the host cannot. */
     void (*clear)(BshSession *s);
+    /* Sends what has been written so far, for a host that holds output back
+     * until a command is done (tnt): a script's lines and a `sleep` go out
+     * as they come.  0 when it never holds anything back. */
+    void (*flush)(BshSession *s);
     uint8_t color;    /* colour the output: off unless the host turns it on */
     uint8_t color_ok; /* the host can show colour: `color on` may turn it on */
     /* The host's own commands, ended by one with no name; 0 for none. */

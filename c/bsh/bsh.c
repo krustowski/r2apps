@@ -8,7 +8,8 @@
 /*
  *  bsh's core: output, paths, the mount table, sessions, the command table
  *  and the dispatch by it.  The commands themselves are in bsh_fs.c (files
- *  and directories) and bsh_sys.c (tasks, memory, the system).
+ *  and directories), bsh_sys.c (tasks, memory, the system) and bsh_script.c
+ *  (scripts).
  */
 
 /* ------------------------------------------------------------------------ *
@@ -281,6 +282,7 @@ void bsh_init(BshSession *s, void (*write)(BshSession *, const uint8_t *, uint32
               void *host) {
     s->write = write;
     s->clear = 0;
+    s->flush = 0;
     s->color = 0;
     s->color_ok = 0;
     s->commands = commands;
@@ -385,6 +387,9 @@ static const BshCommand base[] = {
     {"heap", "", "the user heap in detail, and who holds it", bsh_cmd_heap},
     {"play", "<name>", "play a MIDI file", bsh_cmd_play},
     {"stop", "", "stop playback", bsh_cmd_stop},
+    {"bsh", "<file> [args]", "run a script (.BSH): a command a line", bsh_cmd_bsh},
+    {"echo", "[text]", "print a line of text", bsh_cmd_echo},
+    {"sleep", "<ms>", "wait so many milliseconds", bsh_cmd_sleep},
     {"clear", "", "clear the screen", cmd_clear},
     {"color", "[on|off]", "colour the prompt and listings", cmd_color},
     {"exit", "", "end the session", cmd_exit},

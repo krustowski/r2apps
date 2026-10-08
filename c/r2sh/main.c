@@ -279,7 +279,20 @@ static int run_console(void) {
 int main(int argc, char **argv) {
     host = host_from_args(argc, argv);
 
-    if (!host && argc > 1 && !(argc == 2 && str_eq((const uint8_t *)argv[1], (const uint8_t *)"--color"))) {
+    /*  Options: --color, --run <file.bsh> (a script before the prompt, the
+     *  shell staying after it), --host <block> (Memento's Shell window).
+     *  Anything else is said, and let be.  */
+    const char *script = 0;
+    int unknown = 0;
+    for (int i = 1; i < argc; i++) {
+        if (str_eq((const uint8_t *)argv[i], (const uint8_t *)"--run") && i + 1 < argc)
+            script = argv[++i];
+        else if (str_eq((const uint8_t *)argv[i], (const uint8_t *)"--host") && i + 1 < argc)
+            i++;
+        else if (!str_eq((const uint8_t *)argv[i], (const uint8_t *)"--color"))
+            unknown = 1;
+    }
+    if (!host && unknown) {
         sh_print((const uint8_t *)"r2sh: started with args:");
         for (int i = 1; i < argc; i++) {
             sh_print((const uint8_t *)" ");
@@ -321,6 +334,21 @@ int main(int argc, char **argv) {
     }
 
     sh_print((const uint8_t *)"r2sh - rou2ex userland shell\nType 'help' for commands.\n");
+
+    /*  --run: the script, as `bsh <file>` typed at the prompt would run it.  */
+    if (script) {
+        uint8_t cmd[LINE_CAP];
+        uint8_t n = 0;
+        for (const char *k = "bsh "; *k; k++)
+            cmd[n++] = (uint8_t)*k;
+        for (const char *k = script; *k && n < LINE_CAP - 1; k++)
+            cmd[n++] = (uint8_t)*k;
+        cmd[n] = '\0';
+        bsh_prompt(&sess);
+        sh_write(cmd, n);
+        sh_print((const uint8_t *)"\n");
+        bsh_dispatch(&sess, cmd, n); /* `exit` in it ends the script, not the shell */
+    }
     bsh_prompt(&sess);
 
     int rc = 0;

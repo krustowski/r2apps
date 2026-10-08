@@ -54,5 +54,8 @@ int bsh_cmd_heap(BshSession *s, const uint8_t *arg);
 int bsh_cmd_bg(BshSession *s, const uint8_t *arg);
 int bsh_cmd_play(BshSession *s, const uint8_t *arg);
 int bsh_cmd_stop(BshSession *s, const uint8_t *arg);
+int bsh_cmd_bsh(BshSession *s, const uint8_t *arg);
+int bsh_cmd_echo(BshSession *s, const uint8_t *arg);
+int bsh_cmd_sleep(BshSession *s, const uint8_t *arg);
 
 #endif

@@ -31,6 +31,9 @@ EXTRA_CFLAGS := -I ../../bsh
 | `meminfo` (`mem`) | RAM, process frames, the user heap in a line |
 | `heap` | the user heap in detail, and who holds it |
 | `play <name>`, `stop` | a MIDI file |
+| `bsh <file> [args]` | run a script (see below) |
+| `echo [text]` | print a line |
+| `sleep <ms>` | wait |
 | `clear` | clear the screen, when the host can |
 | `color [on\|off]` | colour the prompt and listings, when the host can show colour |
 | `exit` (`quit`) | end the session |
@@ -39,6 +42,16 @@ Paths may be relative and use `.` and `..`.  A session starts in `/mnt/fat` when
 to read and in `/` when there is not.  The prompt is `user@host:cwd> `, the user being the system
 user (Memento's login sets it).  Changing the disk (`mkdir`, `rmdir`, `rm`) is only done on the FAT12
 mounts, the floppy and `/mnt/tmp`; the kernel would take `/` for the floppy's root.
+
+## Scripts
+
+`bsh <file> [args]` runs a script: a command a line, as if typed, in the session that runs it (so a
+`cd` in it stays done, as with `source`).  Blank lines and `#` comments are skipped, `\r\n` is taken
+as well as `\n`, `$0` is the script as it was named and `$1` to `$9` the arguments after it (`$$` for
+a `$`).  `exit` ends the script, not the session; scripts may run scripts, four deep.  A host that
+holds output back until a command is done sets `flush`, and a script's lines then go out as they
+come.  Examples are in [`r2_app/bsh`](../../bsh/README.md); `r2sh --run <file>` runs one before its
+prompt, and Memento's file browser runs a `.BSH` in a Shell window (*Run in shell*).
 
 ## Hosts
 

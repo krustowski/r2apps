@@ -85,6 +85,11 @@ static void tnt_write(BshSession *s, const uint8_t *text, uint32_t len) {
 
 static void tnt_clear(BshSession *s) { bsh_str(s, "\x1b[2J\x1b[H"); /* ANSI: erase, cursor home */ }
 
+static void tnt_flush(BshSession *s) {
+    (void)s;
+    shell_flush();
+}
+
 /* ------------------------------------------------------------------------ *
  *  tnt's own commands
  * ------------------------------------------------------------------------ */
@@ -381,6 +386,7 @@ void shell_session_start(TcpSocket_T *sock) {
     c->sockets = 0;
     bsh_init(s, tnt_write, tnt_commands, c);
     s->clear = tnt_clear;
+    s->flush = tnt_flush;
 }
 
 void shell_banner(TcpSocket_T *sock) {
