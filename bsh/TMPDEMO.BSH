@@ -1,0 +1,12 @@
+# TMPDEMO.BSH - a directory on the RAM disk (/mnt/tmp): made, looked at,
+# and tidied away again.  A script runs in the session that runs it, so the
+# `cd` at the end takes the session back where it started.
+#   bsh TMPDEMO.BSH
+cd /mnt/tmp
+mkdir DEMO
+echo Made /mnt/tmp/DEMO:
+ls
+rmdir DEMO
+echo ...and removed it:
+ls
+cd

@@ -1,0 +1,10 @@
+# SYSTEM.BSH - the machine at a glance: filesystems, tasks and memory.
+#   bsh SYSTEM.BSH
+echo == Filesystems ==
+mount
+echo
+echo == Tasks ==
+ts
+echo
+echo == Memory ==
+meminfo

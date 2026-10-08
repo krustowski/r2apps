@@ -1,0 +1,6 @@
+# HELLO.BSH - the smallest script: a greeting, and who and where this is.
+#   bsh HELLO.BSH
+echo Hello from bsh!
+echo This is $0, a script of shell commands, one a line.
+echo
+sysinfo

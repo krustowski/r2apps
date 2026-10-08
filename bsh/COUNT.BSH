@@ -1,0 +1,10 @@
+# COUNT.BSH - a countdown from 3, a line a second (sleep takes milliseconds).
+#   bsh COUNT.BSH
+echo Counting down...
+echo 3
+sleep 1000
+echo 2
+sleep 1000
+echo 1
+sleep 1000
+echo Lift-off!
