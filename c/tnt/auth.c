@@ -141,7 +141,12 @@ static int field(const uint8_t *key, uint8_t *out, uint32_t len) {
     return 0;
 }
 
-int auth_required(void) { return read_session() > 0; }
+int auth_required(void) {
+    if (!read_session())
+        return 0;
+    return !auth_check((const uint8_t *)"", 0, (const uint8_t *)"", 0) &&
+           !auth_check((const uint8_t *)"root", 4, (const uint8_t *)"", 0);
+}
 
 int auth_check(const uint8_t *login, uint32_t login_len, const uint8_t *pass, uint32_t pass_len) {
     uint8_t salt[33], want[65];

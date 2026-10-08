@@ -270,9 +270,12 @@ int main(int argc, char **argv) {
                     sessions[i].iac_state = TELNET_DATA;
                     sessions[i].login_len = 0;
                     /*  Asked only now, so that the connections already in
-                     *  the shell when Memento was logged in to stay there.  */
+                     *  the shell when Memento was logged in to stay there.
+                     *  Before anyone gives credentials it is root with no
+                     *  password, and the shell straight away.  */
                     sessions[i].auth = auth_required() ? AUTH_LOGIN : AUTH_DONE;
 
+                    shell_session_start(s);
                     shell_banner(s);
                     if (sessions[i].auth == AUTH_LOGIN) {
                         shell_flush();

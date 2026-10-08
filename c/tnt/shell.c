@@ -82,8 +82,10 @@ static void sock_mac(TcpSocket_T *sock, const uint8_t mac[6]) {
     out(sock, buf, 17);
 }
 
-/* Per-session current working directory (absolute VFS path). */
-static uint8_t cwd[64] = "/mnt/fat";
+/* Each session's current working directory (an absolute VFS path), by the
+ * socket's slot; cwd is the one of the session being served (use_session). */
+static uint8_t cwds[MAX_SOCKETS][64];
+static uint8_t *cwd = cwds[0];
 
 /* Copy src into dst, NUL-terminate, return length written (max dst_cap-1). */
 static uint8_t str_copy(uint8_t *dst, const uint8_t *src, uint8_t dst_cap) {
@@ -94,6 +96,146 @@ static uint8_t str_copy(uint8_t *dst, const uint8_t *src, uint8_t dst_cap) {
     }
     dst[i] = '\0';
     return i;
+}
+
+/*
+ *  The mount table (syscall 0x2c), for what the kernel does not list itself:
+ *  the root, and the directories on the way to the mount points ("/mnt").
+ *  The root is rootfs, which holds nothing but those; the kernel took "/" for
+ *  the floppy's root, and with no floppy could not list it at all.
+ */
+#define MAX_MOUNTS 8
+static MountInfo_T mnt[MAX_MOUNTS];
+static int mnt_count;
+
+static void load_mounts(void) {
+    int64_t n = list_mounts(mnt);
+    mnt_count = n < 0 ? 0 : n > MAX_MOUNTS ? MAX_MOUNTS : (int)n;
+}
+
+static const uint8_t *fs_name(uint8_t type) {
+    switch (type) {
+    case 1:
+        return (const uint8_t *)"rootfs";
+    case 2:
+        return (const uint8_t *)"fat12";
+    case 3:
+        return (const uint8_t *)"iso9660";
+    case 4:
+        return (const uint8_t *)"tar";
+    case 5:
+        return (const uint8_t *)"memdisk"; /* /mnt/tmp: FAT12 in RAM */
+    default:
+        return (const uint8_t *)"unknown";
+    }
+}
+
+/*  Does mount <m> hold <path>: is its path all of <path>, or the start of it
+ *  up to a '/'?  "/" holds everything.  */
+static int mount_holds(const MountInfo_T *m, const uint8_t *path) {
+    uint8_t ml = m->path_len;
+    if (ml > 32)
+        return 0;
+    if (ml == 1 && m->path[0] == '/')
+        return 1;
+    for (uint8_t k = 0; k < ml; k++)
+        if (path[k] != m->path[k])
+            return 0;
+    return path[ml] == '\0' || path[ml] == '/';
+}
+
+/*  The type of the mount <path> is on (the deepest that holds it), 0 if none.
+ *  Call load_mounts() first.  */
+static uint8_t mount_type_at(const uint8_t *path) {
+    uint8_t best_len = 0, best_type = 0;
+    for (int i = 0; i < mnt_count; i++) {
+        if (mnt[i].path_len >= best_len && mount_holds(&mnt[i], path)) {
+            best_len = mnt[i].path_len;
+            best_type = mnt[i].fs_type;
+        }
+    }
+    return best_type;
+}
+
+/*  The directory under <path> that leads to mount <m>, as the length of its
+ *  name at *name; 0 when <m> is not below <path>.  "/mnt" is that for
+ *  "/mnt/fat" under "/", and "fat" under "/mnt".  */
+static uint8_t mount_child(const MountInfo_T *m, const uint8_t *path, const uint8_t **name) {
+    uint8_t pl = (uint8_t)strlen(path);
+    uint8_t ml = m->path_len;
+    if (ml > 32)
+        return 0;
+    if (pl == 1)
+        pl = 0; /* "/": the children start right after the slash */
+    if (ml <= pl + 1)
+        return 0;
+    for (uint8_t k = 0; k < pl; k++)
+        if (m->path[k] != path[k])
+            return 0;
+    if (m->path[pl] != '/')
+        return 0;
+    const uint8_t *c = m->path + pl + 1;
+    uint8_t n = 0;
+    while (pl + 1 + n < ml && c[n] != '/')
+        n++;
+    *name = c;
+    return n;
+}
+
+/*  Whether <path> is a directory only the mount table knows: the root, or one
+ *  on the way to a mount point, on rootfs.  Call load_mounts() first.  */
+static int mount_dir(const uint8_t *path) {
+    uint8_t t = mount_type_at(path);
+    if (t != 1 && t != 0)
+        return 0; /* on a filesystem: the kernel lists it */
+    if (path[0] == '/' && path[1] == '\0')
+        return 1;
+    const uint8_t *name;
+    for (int i = 0; i < mnt_count; i++)
+        if (mount_child(&mnt[i], path, &name))
+            return 1;
+    return 0;
+}
+
+/*  Whether <path> is a directory there is: one the mount table knows, or one
+ *  the kernel can list.  */
+static int dir_exists(const uint8_t *path) {
+    load_mounts();
+    if (mount_dir(path))
+        return 1;
+    uint8_t t = mount_type_at(path);
+    if (t == 0 || t == 1)
+        return 0;
+    static VfsDirEntry_T probe[64];
+    int64_t r = list_dir_path(path, probe);
+    return r >= 0 && r <= 64;
+}
+
+/*  Where a session starts: the floppy when there is one, else the root.
+ *  The kernel keeps /mnt/fat in its mount table with no disk in the drive
+ *  (booted from USB), so being mounted is not enough: it has to list.  */
+static void default_dir(uint8_t out[64]) {
+    if (dir_exists((const uint8_t *)"/mnt/fat"))
+        str_copy(out, (const uint8_t *)"/mnt/fat", 64);
+    else
+        str_copy(out, (const uint8_t *)"/", 64);
+}
+
+/*  The session <sock> is served now: its directory is cwd, and the kernel's
+ *  own (for `play` and `bg`, which take names relative to it) follows.  */
+static void use_session(TcpSocket_T *sock) {
+    uint8_t *want = cwds[sock->id % MAX_SOCKETS];
+    if (cwd != want) {
+        cwd = want;
+        chdir(cwd);
+    }
+}
+
+void shell_session_start(TcpSocket_T *sock) {
+    uint8_t *dir = cwds[sock->id % MAX_SOCKETS];
+    default_dir(dir);
+    cwd = dir;
+    chdir(dir);
 }
 
 void shell_banner(TcpSocket_T *sock) {
@@ -107,6 +249,7 @@ void shell_banner(TcpSocket_T *sock) {
  *  gives, see auth.h, is that one); "root" before anyone has logged in.
  */
 void shell_prompt(TcpSocket_T *sock) {
+    use_session(sock);
     SysInfo_T si = {0};
     if (read_sysinfo(&si)) {
         si.system_user[31] = '\0';
@@ -126,8 +269,8 @@ void shell_prompt(TcpSocket_T *sock) {
 static void cmd_help(TcpSocket_T *sock) {
     sock_str(sock, (const uint8_t *)"Commands:\r\n"
                                     "  help          show this message\r\n"
-                                    "  ls [path]     list directory (default: cwd)\r\n"
-                                    "  cd <path>     change directory\r\n"
+                                    "  ls [path]     list directory (default: cwd; / shows the mounts)\r\n"
+                                    "  cd [path]     change directory (alone: back to the start)\r\n"
                                     "  mkdir <path>  make a directory (up to 8 chars; /mnt/fat or /mnt/tmp)\r\n"
                                     "  read <path>   print file contents (a key stops it)\r\n"
                                     "  get <path> [port]  send a file to curl/wget/nc (port 8023)\r\n"
@@ -241,36 +384,92 @@ static void sock_fat_datetime(TcpSocket_T *sock, uint16_t date, uint16_t time) {
 }
 
 /* Build an absolute path from cwd + arg.  If arg is already absolute, use it
-   directly.  Result is always NUL-terminated and stored in out[64]. */
+   directly.  "." and ".." are worked out and doubled or trailing slashes
+   dropped, so "/mnt/fat/.." is "/mnt" and ".." at the root stays there.
+   Result is always NUL-terminated and stored in out[64]. */
 static void build_abs_path(uint8_t out[64], const uint8_t *arg) {
-    if (!arg || !arg[0]) {
-        str_copy(out, cwd, 64);
-        return;
+    uint8_t raw[130];
+    uint8_t i = 0;
+    if (!arg || arg[0] != '/') {
+        i = str_copy(raw, cwd, 64);
+        raw[i++] = '/';
     }
-    if (arg[0] == '/') {
-        str_copy(out, arg, 64);
-        return;
+    while (arg && *arg && i < sizeof(raw) - 1)
+        raw[i++] = *arg++;
+    raw[i] = '\0';
+
+    uint8_t n = 0;
+    out[n++] = '/';
+    for (uint8_t at = 0; raw[at];) {
+        while (raw[at] == '/')
+            at++;
+        uint8_t len = 0;
+        while (raw[at + len] && raw[at + len] != '/')
+            len++;
+        if (!len)
+            break;
+        if (len == 1 && raw[at] == '.') {
+            /* this directory */
+        } else if (len == 2 && raw[at] == '.' && raw[at + 1] == '.') {
+            while (n > 1 && out[n - 1] != '/')
+                n--;
+            if (n > 1)
+                n--; /* and the slash before it */
+        } else {
+            if (n > 1 && n < 63)
+                out[n++] = '/';
+            for (uint8_t k = 0; k < len && n < 63; k++)
+                out[n++] = raw[at + k];
+        }
+        at += len;
     }
-    /* relative: cwd + "/" + arg (don't add '/' if cwd already ends with one) */
-    uint8_t i = str_copy(out, cwd, 64);
-    if (i > 0 && out[i - 1] != '/' && i < 63) {
-        out[i++] = '/';
-        out[i] = '\0';
-    }
-    while (*arg && i < 63) {
-        out[i++] = *arg++;
-    }
-    out[i] = '\0';
+    out[n] = '\0';
 }
 
 static void cmd_ls(TcpSocket_T *sock, const uint8_t *path_arg) {
     uint8_t abs[64];
     build_abs_path(abs, path_arg);
 
+    /*  The root and "/mnt": from the mount table, each mount point with its
+     *  filesystem.  */
+    load_mounts();
+    if (mount_dir(abs)) {
+        const uint8_t *seen[MAX_MOUNTS];
+        uint8_t seen_len[MAX_MOUNTS];
+        int shown = 0;
+        for (int i = 0; i < mnt_count; i++) {
+            const uint8_t *name;
+            uint8_t len = mount_child(&mnt[i], abs, &name);
+            if (!len)
+                continue;
+            int dup = 0;
+            for (int k = 0; k < shown && !dup; k++)
+                dup = seen_len[k] == len && memcmp(seen[k], name, len) == 0;
+            if (dup)
+                continue;
+            seen[shown] = name;
+            seen_len[shown++] = len;
+            sock_str(sock, (const uint8_t *)"  ");
+            out(sock, name, len);
+            sock_str(sock, (const uint8_t *)"/  <DIR>");
+            /*  A mount point itself: say what is mounted there.  */
+            uint8_t pl = (uint8_t)strlen(abs);
+            if (mnt[i].path_len == (pl == 1 ? 1 : pl + 1) + len) {
+                sock_str(sock, (const uint8_t *)"  ");
+                sock_str(sock, fs_name(mnt[i].fs_type));
+            }
+            sock_str(sock, (const uint8_t *)"\r\n");
+        }
+        if (!shown)
+            sock_str(sock, (const uint8_t *)"  (empty)\r\n");
+        return;
+    }
+
     /* 64 entries: syscall 0x2D takes no capacity argument and writes one per
      * directory member, up to 64.  A 32-entry buffer is overrun silently. */
-    VfsDirEntry_T entries[64] = {0};
-    int64_t count = list_dir_path(abs, entries);
+    static VfsDirEntry_T entries[64];
+    uint8_t type = mount_type_at(abs);
+    int64_t count = (type == 0 || type == 1) ? -1 : list_dir_path(abs, entries);
 
     /* Kernel returns u64::MAX (-1 as int64_t) on error; valid range is 0–64. */
     if (count < 0 || count > 64) {
@@ -298,42 +497,14 @@ static void cmd_ls(TcpSocket_T *sock, const uint8_t *path_arg) {
 }
 
 static void cmd_cd(TcpSocket_T *sock, const uint8_t *path_arg) {
-    if (!path_arg || !path_arg[0]) {
-        sock_str(sock, (const uint8_t *)"cd: usage: cd <path>\r\n");
-        return;
-    }
-
-    /* Handle "cd .." — trim last path component then sync kernel. */
-    if (path_arg[0] == '.' && path_arg[1] == '.' && path_arg[2] == '\0') {
-        uint8_t i = 0;
-        while (cwd[i])
-            i++;
-        if (i == 0)
-            return;
-        /* Find the last '/' */
-        uint8_t last_slash = 0;
-        for (uint8_t j = 0; j < i; j++)
-            if (cwd[j] == '/')
-                last_slash = j;
-        if (last_slash == 0) {
-            /* Already at root or one level below root — go to "/" */
-            cwd[0] = '/';
-            cwd[1] = '\0';
-        } else {
-            cwd[last_slash] = '\0';
-        }
-        chdir(cwd);
-        return;
-    }
-
+    /*  "cd" alone: back where the session started.  */
     uint8_t abs[64];
-    build_abs_path(abs, path_arg);
+    if (!path_arg || !path_arg[0])
+        default_dir(abs);
+    else
+        build_abs_path(abs, path_arg);
 
-    /* Verify the directory exists.  Kernel returns u64::MAX on any error;
-       valid counts are 0–64.  Reject anything outside that range. */
-    VfsDirEntry_T tmp[64];
-    int64_t r = list_dir_path(abs, tmp);
-    if (r < 0 || r > 64) {
+    if (!dir_exists(abs)) {
         sock_str(sock, (const uint8_t *)"cd: no such directory: ");
         sock_str(sock, abs);
         sock_str(sock, (const uint8_t *)"\r\n");
@@ -341,24 +512,7 @@ static void cmd_cd(TcpSocket_T *sock, const uint8_t *path_arg) {
     }
 
     str_copy(cwd, abs, 64);
-    chdir(abs);
-}
-
-/*
- *  `read`: the whole file, read into a block of the user heap first (syscall
- *  0x0a; it grows past its first 4 MiB when it has to), then sent down the
- *  session the way `get` sends a download --- following the client's ACKs and
- *  sending again what went missing --- since libcr2's TCP does not, and a
- *  file of any size is far more than one burst of segments.  A key pressed
- *  meanwhile stops it.  It used to be read with read_file() into 4 KiB on the
- *  stack's doorstep, and a bigger file wrote on past it.
- */
-#define READ_MAX (8u * 1024 * 1024) /* past this, `get` is the way */
-#define READ_PIECE (32u * 1024)     /* read_file_at() at a time */
-
-static void sock_size(TcpSocket_T *sock, uint32_t bytes) {
-    sock_u32(sock, bytes);
-    sock_str(sock, (const uint8_t *)" bytes");
+    chdir(abs); /* the kernel's own may not take "/" or "/mnt": tnt's is cwd */
 }
 
 /*
@@ -407,27 +561,6 @@ static int dir_has(const uint8_t *dir, const uint8_t *name) {
     return 0;
 }
 
-/*  The type of the mount <path> is on (MountInfo_T.fs_type), 0 if none.  */
-static uint8_t mount_type_of(const uint8_t *path) {
-    MountInfo_T mounts[8];
-    int64_t count = list_mounts(mounts);
-    uint8_t best_len = 0, best_type = 0;
-    for (int64_t i = 0; i < count && i < 8; i++) {
-        uint8_t ml = mounts[i].path_len;
-        if (ml > 32 || ml < best_len)
-            continue;
-        uint8_t k = 0;
-        while (k < ml && path[k] == mounts[i].path[k])
-            k++;
-        /*  "/mnt/fat" is on /mnt/fat, and so is "/mnt/fat/X"; "/mnt/fatx" is not.  */
-        if (k == ml && (path[k] == '\0' || path[k] == '/' || mounts[i].path[ml - 1] == '/')) {
-            best_len = ml;
-            best_type = mounts[i].fs_type;
-        }
-    }
-    return best_type;
-}
-
 static void cmd_mkdir(TcpSocket_T *sock, const uint8_t *path_arg) {
     if (!path_arg || !path_arg[0]) {
         sock_str(sock, (const uint8_t *)"mkdir: usage: mkdir <path>\r\n");
@@ -460,7 +593,8 @@ static void cmd_mkdir(TcpSocket_T *sock, const uint8_t *path_arg) {
 
     /*  Only the FAT12 mounts: the floppy and the RAM disk.  The kernel would
      *  take "/" for the floppy's root, and the CD and the tar are read-only.  */
-    uint8_t type = mount_type_of(parent);
+    load_mounts();
+    uint8_t type = mount_type_at(parent);
     if (type != 2 && type != 5) {
         sock_str(sock, (const uint8_t *)"mkdir: cannot create '");
         sock_str(sock, abs);
@@ -494,6 +628,23 @@ static void cmd_mkdir(TcpSocket_T *sock, const uint8_t *path_arg) {
         sock_str(sock, (const uint8_t *)"' was not created (is the disk full?)\r\n");
         return;
     }
+}
+
+/*
+ *  `read`: the whole file, read into a block of the user heap first (syscall
+ *  0x0a; it grows past its first 4 MiB when it has to), then sent down the
+ *  session the way `get` sends a download --- following the client's ACKs and
+ *  sending again what went missing --- since libcr2's TCP does not, and a
+ *  file of any size is far more than one burst of segments.  A key pressed
+ *  meanwhile stops it.  It used to be read with read_file() into 4 KiB on the
+ *  stack's doorstep, and a bigger file wrote on past it.
+ */
+#define READ_MAX (8u * 1024 * 1024) /* past this, `get` is the way */
+#define READ_PIECE (32u * 1024)     /* read_file_at() at a time */
+
+static void sock_size(TcpSocket_T *sock, uint32_t bytes) {
+    sock_u32(sock, bytes);
+    sock_str(sock, (const uint8_t *)" bytes");
 }
 
 static void cmd_read(TcpSocket_T *sock, TcpSocket_T sockets[MAX_SOCKETS], const uint8_t *path_arg) {
@@ -622,27 +773,7 @@ static void cmd_mount(TcpSocket_T *sock) {
     }
     for (int64_t i = 0; i < count; i++) {
         out(sock, mounts[i].path, mounts[i].path_len);
-        const uint8_t *fsname;
-        switch (mounts[i].fs_type) {
-        case 1:
-            fsname = (const uint8_t *)"rootfs";
-            break;
-        case 2:
-            fsname = (const uint8_t *)"fat12";
-            break;
-        case 3:
-            fsname = (const uint8_t *)"iso9660";
-            break;
-        case 4:
-            fsname = (const uint8_t *)"tar";
-            break;
-        case 5:
-            fsname = (const uint8_t *)"memdisk"; /* /mnt/tmp: FAT12 in RAM */
-            break;
-        default:
-            fsname = (const uint8_t *)"unknown";
-            break;
-        }
+        const uint8_t *fsname = fs_name(mounts[i].fs_type);
         sock_str(sock, (const uint8_t *)" (");
         sock_str(sock, fsname);
         sock_str(sock, (const uint8_t *)")\r\n");
@@ -1251,6 +1382,7 @@ static const uint8_t *str_after(const uint8_t *s, const uint8_t *prefix) {
 }
 
 int shell_dispatch(TcpSocket_T *sock, TcpSocket_T sockets[MAX_SOCKETS], uint8_t *line, uint8_t len) {
+    use_session(sock);
     while (len > 0 && (line[len - 1] == ' ' || line[len - 1] == '\r'))
         len--;
     line[len] = '\0';
@@ -1279,6 +1411,8 @@ int shell_dispatch(TcpSocket_T *sock, TcpSocket_T sockets[MAX_SOCKETS], uint8_t 
         cmd_ls(sock, (const uint8_t *)0);
     } else if ((arg = str_after(line, (const uint8_t *)"ls "))) {
         cmd_ls(sock, arg);
+    } else if (str_eq(line, (const uint8_t *)"cd")) {
+        cmd_cd(sock, (const uint8_t *)0);
     } else if ((arg = str_after(line, (const uint8_t *)"cd "))) {
         cmd_cd(sock, arg);
     } else if ((arg = str_after(line, (const uint8_t *)"read "))) {

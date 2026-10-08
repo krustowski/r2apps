@@ -6,6 +6,10 @@
 
 #define LINE_CAP 128
 
+/* A new connection: its working directory starts at /mnt/fat when there is a
+ * floppy, at / otherwise.  Each session keeps its own. */
+void shell_session_start(TcpSocket_T *sock);
+
 void shell_banner(TcpSocket_T *sock);
 void shell_prompt(TcpSocket_T *sock);
 

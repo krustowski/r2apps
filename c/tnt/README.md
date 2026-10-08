@@ -23,9 +23,10 @@ and the Go network applications. A full binding table now reports an error
 instead of evicting port 23; Go connections release their bindings on close.
 ## Logging in
 
-Until someone logs in to Memento, a connection gets the shell straight away, as it always did.
-Memento's first login since boot leaves a salted hash of its login and password in
-`/mnt/tmp/SESSION.CFG`, and from then on a **new** connection is asked for that pair first:
+Until someone gives Memento a login or a password, the system is `root` with no password and a
+connection gets the shell straight away, as it always did.  Memento's first login since boot that
+gives credentials leaves a salted hash of its login and password in `/mnt/tmp/SESSION.CFG`, and from
+then on a **new** connection is asked for that pair first:
 
 ```
 Memento is logged in: its login and password, please.
@@ -45,10 +46,21 @@ offers or asks for is refused (`WONT`/`DONT`), but for the server's own ECHO: a 
 believe it has SUPPRESS-GO-AHEAD goes to a character at a time once the echo is switched, and then
 shows Enter as `^M` with the prompt on the same line.  Refused, it stays in line mode.
 Three wrong tries close the connection.  A SESSION.CFG that is there but cannot be read lets
-nobody in.  `auth.c` has its own SHA-256 for this and computes the hash the way Memento does.
+nobody in; one that holds the default credentials (empty, or `root` with no password, which an
+older Memento wrote for a login left empty) is no session, and asks nothing.  `auth.c` has its own
+SHA-256 for this and computes the hash the way Memento does.
 
 The prompt is `user@host:cwd> `, from the kernel's sysinfo: the user is the one Memento's login set,
 `root` before that.
+
+## Directories: `ls`, `cd`
+
+A session starts in `/mnt/fat` when there is a floppy to read, and in `/` otherwise (booted from
+USB: the kernel keeps `/mnt/fat` in its mount table with no disk in the drive).  Each session has
+its own working directory.  `/` and `/mnt` are listed from the mount table, each mount point with
+its filesystem (`fat/  <DIR>  fat12`); everything below a mount point is the kernel's listing.
+Paths may use `.` and `..` (`cd ..` from `/mnt/fat` is `/mnt`), and `cd` alone goes back to
+where the session started.
 
 ## Making directories: `mkdir`
 
