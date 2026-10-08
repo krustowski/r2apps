@@ -24,8 +24,8 @@
  * Frame capture:
  *     get_fb_info() provides framebuffer geometry.
  *     capture_framebuffer_rgb24_scaled() returns a complete RGB24 picture.
- *     Cooperating presenters supply completed snapshots in RAM; otherwise
- *     the kernel checks that framebuffer capture did not overlap a write.
+ *     Memento supplies completed snapshots in RAM with its cursor removed;
+ *     otherwise the kernel checks that capture did not overlap a write.
  */
 
 #include "bytes.h"
@@ -70,7 +70,7 @@ static void pump_during_encode(void);
  * 3 = highest
  */
 #ifndef JPEG_QUALITY
-#define JPEG_QUALITY 2
+#define JPEG_QUALITY 3
 #endif
 
 /*
@@ -117,7 +117,10 @@ static uint8_t *previous_rgb;
 static int jpeg_valid;
 static uint8_t *jpeg_buffer;
 static uint8_t *jpeg_buffers[2];
-static struct { uint8_t *allocation; uint32_t capacity; } jpeg_storage[2];
+static struct {
+    uint8_t *allocation;
+    uint32_t capacity;
+} jpeg_storage[2];
 static int jpeg_slot = -1; /* -1 for callers supplying their own JPEG storage. */
 static uint8_t *cached_jpeg_buffer;
 static uint32_t cached_jpeg_size;
@@ -257,25 +260,32 @@ static int buffers_equal(const uint8_t *a, const uint8_t *b, uint32_t len) {
 
 static int resize_jpeg_slot(uint32_t slot, uint32_t capacity) {
     uint8_t *old = jpeg_buffers[slot];
-    uint8_t *allocation = (uint8_t *)realloc(jpeg_storage[slot].allocation,
-                                            FRAME_HEADER_RESERVE + capacity + 2U);
-    if (!allocation) return 0;
+    uint8_t *allocation = (uint8_t *)realloc(jpeg_storage[slot].allocation, FRAME_HEADER_RESERVE + capacity + 2U);
+    if (!allocation)
+        return 0;
     jpeg_storage[slot].allocation = allocation;
     jpeg_storage[slot].capacity = capacity;
     jpeg_buffers[slot] = allocation + FRAME_HEADER_RESERVE;
-    if (cached_jpeg_buffer == old) cached_jpeg_buffer = jpeg_buffers[slot];
-    if (jpeg_buffer == old) jpeg_buffer = jpeg_buffers[slot];
+    if (cached_jpeg_buffer == old)
+        cached_jpeg_buffer = jpeg_buffers[slot];
+    if (jpeg_buffer == old)
+        jpeg_buffer = jpeg_buffers[slot];
     return 1;
 }
 
 static int reserve_jpeg(uint32_t required) {
     uint32_t capacity;
-    if (required > JPEG_BUFFER_SIZE) return 0;
-    if (jpeg_slot < 0) return 1;
+    if (required > JPEG_BUFFER_SIZE)
+        return 0;
+    if (jpeg_slot < 0)
+        return 1;
     capacity = jpeg_storage[jpeg_slot].capacity;
-    if (required <= capacity) return 1;
-    if (capacity < JPEG_INITIAL_BUFFER_SIZE) capacity = JPEG_INITIAL_BUFFER_SIZE;
-    while (capacity < required) capacity *= 2;
+    if (required <= capacity)
+        return 1;
+    if (capacity < JPEG_INITIAL_BUFFER_SIZE)
+        capacity = JPEG_INITIAL_BUFFER_SIZE;
+    while (capacity < required)
+        capacity *= 2;
     return resize_jpeg_slot((uint32_t)jpeg_slot, capacity);
 }
 
@@ -293,9 +303,7 @@ static void jpeg_write_callback(void *context, void *data, int size) {
     if (size <= 0)
         return;
 
-    if (jpeg_size > JPEG_BUFFER_SIZE ||
-        (uint32_t)size > JPEG_BUFFER_SIZE - jpeg_size ||
-        !reserve_jpeg(jpeg_size + (uint32_t)size)) {
+    if (jpeg_size > JPEG_BUFFER_SIZE || (uint32_t)size > JPEG_BUFFER_SIZE - jpeg_size || !reserve_jpeg(jpeg_size + (uint32_t)size)) {
         /*
          * We cannot report an error through this callback using the
          * TinyJPEG API. The caller checks jpeg_size afterwards.
@@ -334,8 +342,7 @@ static int framebuffer_to_rgb(void) {
     int64_t result;
     capture_info = (FBCaptureInfo_T){jpeg_valid ? last_snapshot_id : 0, 0, 0, 0};
     result = capture_framebuffer_rgb24_scaled_if_new(rgb_buffer, STREAM_WIDTH, STREAM_HEIGHT, &capture_info);
-    if (result == FB_CAPTURE_UNCHANGED && jpeg_valid &&
-        (capture_info.flags & FB_CAPTURE_INFO_SNAPSHOT))
+    if (result == FB_CAPTURE_UNCHANGED && jpeg_valid && (capture_info.flags & FB_CAPTURE_INFO_SNAPSHOT))
         return 2;
     if (result == FB_CAPTURE_BUSY) {
         ++perf_capture_busy;
@@ -370,7 +377,8 @@ static int capture_frame(void) {
     captured_at = capture_info.timestamp_ms ? capture_info.timestamp_ms : t1;
     capture_reused = 0;
     if (jpeg_valid && (result == 2 || buffers_equal(rgb_buffer, previous_rgb, RGB_BUFFER_SIZE))) {
-        if (!reserve_jpeg(cached_jpeg_size)) return 0;
+        if (!reserve_jpeg(cached_jpeg_size))
+            return 0;
         if (jpeg_buffer != cached_jpeg_buffer)
             copy_bytes(jpeg_buffer, cached_jpeg_buffer, cached_jpeg_size);
         jpeg_size = cached_jpeg_size;
@@ -539,7 +547,8 @@ static TcpTxQueue *encoding_tx;
 
 static int tx_init(TcpTxQueue *tx, TcpSocket_T *sock) {
     *tx = (TcpTxQueue){0};
-    if (sock->tx_acked != sock->seq_num) return 0;
+    if (sock->tx_acked != sock->seq_num)
+        return 0;
     tx->sock = sock;
     tx->end_seq = tx->acked = sock->seq_num;
     tx->retry_ms = TCP_RETRY_MS;
@@ -549,7 +558,8 @@ static int tx_init(TcpTxQueue *tx, TcpSocket_T *sock) {
 
 static int tx_enqueue(TcpTxQueue *tx, const uint8_t *data, uint32_t len) {
     uint32_t slot = (tx->head + tx->count) % TCP_TX_SLOTS;
-    if (tx->failed || tx->count == TCP_TX_SLOTS || !data || !len) return 0;
+    if (tx->failed || tx->count == TCP_TX_SLOTS || !data || !len)
+        return 0;
     if (!tx->count) {
         tx->progress_at = tx->retry_at = get_ticks();
         tx->retry_ms = TCP_RETRY_MS;
@@ -564,9 +574,11 @@ static int tx_enqueue(TcpTxQueue *tx, const uint8_t *data, uint32_t len) {
  * or TCP sequence numbers. A partially sent frame must always finish. */
 static int tx_drop_unsent_tail(TcpTxQueue *tx) {
     uint32_t slot;
-    if (!tx->count) return 0;
+    if (!tx->count)
+        return 0;
     slot = (tx->head + tx->count - 1) % TCP_TX_SLOTS;
-    if (tx->parts[slot].pos) return 0;
+    if (tx->parts[slot].pos)
+        return 0;
     tx->end_seq = tx->parts[slot].base;
     --tx->count;
     return 1;
@@ -580,12 +592,15 @@ static int tx_poll(TcpTxQueue *tx) {
     uint32_t advanced, in_flight, allowed, mss;
     int progress = 0;
 
-    if (tx->failed) return -1;
+    if (tx->failed)
+        return -1;
     pump_tcp_batch();
-    if (!sock->used || sock->state != SOCKET_ESTABLISHED) goto failed;
+    if (!sock->used || sock->state != SOCKET_ESTABLISHED)
+        goto failed;
     now = get_ticks();
     advanced = sock->tx_acked - tx->acked;
-    if (advanced > sock->seq_num - tx->acked) goto failed;
+    if (advanced > sock->seq_num - tx->acked)
+        goto failed;
     if (advanced) {
         tx->acked = sock->tx_acked;
         tx->progress_at = tx->retry_at = now;
@@ -594,12 +609,15 @@ static int tx_poll(TcpTxQueue *tx) {
     }
     while (tx->count) {
         TcpTxPart *part = &tx->parts[tx->head];
-        if ((int32_t)(tx->acked - (part->base + part->len)) < 0) break;
-        if (tx->completed) tx->completed(tx->context, part);
+        if ((int32_t)(tx->acked - (part->base + part->len)) < 0)
+            break;
+        if (tx->completed)
+            tx->completed(tx->context, part);
         tx->head = (tx->head + 1) % TCP_TX_SLOTS;
         --tx->count;
     }
-    if (!tx->count) return 0;
+    if (!tx->count)
+        return 0;
     if (now - tx->progress_at >= TCP_STALL_MS) {
         log_text((const uint8_t *)"[tcp] stalled: unacked=");
         log_u32(sock->seq_num - tx->acked);
@@ -612,27 +630,39 @@ static int tx_poll(TcpTxQueue *tx) {
     }
 
     allowed = sock->peer_window;
-    if (allowed > TCP_TX_WINDOW_BYTES) allowed = TCP_TX_WINDOW_BYTES;
+    if (allowed > TCP_TX_WINDOW_BYTES)
+        allowed = TCP_TX_WINDOW_BYTES;
     mss = tcp_peer_mss(sock);
-    if (!mss || mss > TCP_CHUNK) mss = TCP_CHUNK;
+    if (!mss || mss > TCP_CHUNK)
+        mss = TCP_CHUNK;
     for (uint32_t sent = 0; sent < TCP_TX_BATCH; ++sent) {
         TcpTxPart *part = 0;
         uint32_t chunk, before;
         in_flight = sock->seq_num - tx->acked;
-        if (in_flight >= allowed) break;
+        if (in_flight >= allowed)
+            break;
         for (uint32_t i = 0; i < tx->count; ++i) {
             TcpTxPart *candidate = &tx->parts[(tx->head + i) % TCP_TX_SLOTS];
-            if (candidate->pos < candidate->len) { part = candidate; break; }
+            if (candidate->pos < candidate->len) {
+                part = candidate;
+                break;
+            }
         }
-        if (!part) break;
+        if (!part)
+            break;
         chunk = part->len - part->pos;
-        if (chunk > mss) chunk = mss;
-        if (chunk > allowed - in_flight) chunk = allowed - in_flight;
+        if (chunk > mss)
+            chunk = mss;
+        if (chunk > allowed - in_flight)
+            chunk = allowed - in_flight;
         before = sock->seq_num;
-        if (before != part->base + part->pos) goto failed;
+        if (before != part->base + part->pos)
+            goto failed;
         send_tcp_packet(sock, part->data + part->pos, chunk, TCP_FLAG_ACK | TCP_FLAG_PSH);
-        if (sock->seq_num - before != chunk) goto failed;
-        if (!in_flight) tx->retry_at = now;
+        if (sock->seq_num - before != chunk)
+            goto failed;
+        if (!in_flight)
+            tx->retry_at = now;
         part->pos += chunk;
         progress = 1;
     }
@@ -643,9 +673,12 @@ static int tx_poll(TcpTxQueue *tx) {
         uint32_t offset = tx->acked - part->base;
         if (in_flight) {
             uint32_t chunk = part->pos - offset;
-            if (chunk > mss) chunk = mss;
-            if (!sock->peer_window) chunk = 1;
-            else if (chunk > sock->peer_window) chunk = sock->peer_window;
+            if (chunk > mss)
+                chunk = mss;
+            if (!sock->peer_window)
+                chunk = 1;
+            else if (chunk > sock->peer_window)
+                chunk = sock->peer_window;
             resend_bytes(sock, tx->acked, part->data + offset, chunk);
         } else if (!sock->peer_window) {
             resend_bytes(sock, tx->acked - 1, offset ? part->data + offset - 1 : 0, offset ? 1 : 0);
@@ -653,7 +686,8 @@ static int tx_poll(TcpTxQueue *tx) {
         tx->retry_at = now;
         if (tx->retry_ms < TCP_RETRY_MAX_MS) {
             tx->retry_ms *= 2;
-            if (tx->retry_ms > TCP_RETRY_MAX_MS) tx->retry_ms = TCP_RETRY_MAX_MS;
+            if (tx->retry_ms > TCP_RETRY_MAX_MS)
+                tx->retry_ms = TCP_RETRY_MAX_MS;
         }
     }
     return progress ? 2 : 1;
@@ -663,19 +697,25 @@ failed:
 }
 
 static void pump_during_encode(void) {
-    if (encoding_tx) tx_poll(encoding_tx);
+    if (encoding_tx)
+        tx_poll(encoding_tx);
 }
 
 /* HTTP responses still use a blocking wrapper over the same recovery logic. */
 static int send_bytes(TcpSocket_T *sock, const uint8_t *data, uint32_t len) {
     TcpTxQueue tx;
-    if (!tx_init(&tx, sock)) return 0;
-    if (!len) return 1;
-    if (!tx_enqueue(&tx, data, len)) return 0;
+    if (!tx_init(&tx, sock))
+        return 0;
+    if (!len)
+        return 1;
+    if (!tx_enqueue(&tx, data, len))
+        return 0;
     while (tx.count) {
         int result = tx_poll(&tx);
-        if (result < 0) return 0;
-        if (result == 1) sleep_ms(1);
+        if (result < 0)
+            return 0;
+        if (result == 1)
+            sleep_ms(1);
     }
     return 1;
 }
@@ -817,13 +857,18 @@ typedef struct {
 } StreamSession;
 
 static void append_text(uint8_t *line, uint32_t *p, const uint8_t *text) {
-    while (*text) line[(*p)++] = *text++;
+    while (*text)
+        line[(*p)++] = *text++;
 }
 static void append_number(uint8_t *line, uint32_t *p, uint32_t value) {
     uint8_t digits[10];
     uint32_t n = 0;
-    do { digits[n++] = (uint8_t)('0' + value % 10); value /= 10; } while (value);
-    while (n) line[(*p)++] = digits[--n];
+    do {
+        digits[n++] = (uint8_t)('0' + value % 10);
+        value /= 10;
+    } while (value);
+    while (n)
+        line[(*p)++] = digits[--n];
 }
 static void append_fps(uint8_t *line, uint32_t *p, uint32_t frames, uint64_t elapsed) {
     uint32_t fps10 = (uint32_t)((uint64_t)frames * 10000 / elapsed);
@@ -854,7 +899,8 @@ static void frame_completed(void *context, const TcpTxPart *part) {
 
     /* Shrink only after ACK retirement; no outstanding bytes may move. */
     uint32_t capacity = JPEG_INITIAL_BUFFER_SIZE;
-    while (capacity < frame->size) capacity *= 2;
+    while (capacity < frame->size)
+        capacity *= 2;
     if (capacity < jpeg_storage[part->slot].capacity)
         resize_jpeg_slot(part->slot, capacity);
 
@@ -862,22 +908,29 @@ static void frame_completed(void *context, const TcpTxPart *part) {
     ++window->frames;
     window->encoded_frames += !frame->reused;
     if (frame->source_id) {
-        if (frame->source_id != session->last_source_id) ++window->source_frames;
+        if (frame->source_id != session->last_source_id)
+            ++window->source_frames;
         session->last_source_id = frame->source_id;
-    } else window->source_known = 0;
+    } else
+        window->source_known = 0;
     window->capture_ms += frame->capture_ms;
     window->jpeg_ms += frame->jpeg_ms;
     window->send_ms += (uint32_t)(now - part->started);
     window->bytes += frame->size;
-    if (work > window->work_max_ms) window->work_max_ms = work;
-    if (age > window->age_max_ms) window->age_max_ms = age;
-    if (elapsed < 5000) return;
+    if (work > window->work_max_ms)
+        window->work_max_ms = work;
+    if (age > window->age_max_ms)
+        window->age_max_ms = age;
+    if (elapsed < 5000)
+        return;
 
     append_text(line, &p, (const uint8_t *)"[perf] fps=");
     append_fps(line, &p, window->frames, elapsed);
     append_text(line, &p, (const uint8_t *)" source_fps=");
-    if (window->source_known) append_fps(line, &p, window->source_frames, elapsed);
-    else append_text(line, &p, (const uint8_t *)"unknown");
+    if (window->source_known)
+        append_fps(line, &p, window->source_frames, elapsed);
+    else
+        append_text(line, &p, (const uint8_t *)"unknown");
     append_text(line, &p, (const uint8_t *)" encoded_fps=");
     append_fps(line, &p, window->encoded_frames, elapsed);
     append_text(line, &p, (const uint8_t *)" capture_ms=");
@@ -913,9 +966,11 @@ static int stream_client(TcpSocket_T *sock) {
     TcpTxQueue tx;
     StreamSession session = {0};
 
-    if (!serve_http(sock) || !tx_init(&tx, sock)) return 0;
+    if (!serve_http(sock) || !tx_init(&tx, sock))
+        return 0;
     session.performance = perf_window(get_ticks());
-    for (uint32_t i = 0; i < TCP_TX_SLOTS; ++i) session.frames[i].jpeg = jpeg_buffers[i];
+    for (uint32_t i = 0; i < TCP_TX_SLOTS; ++i)
+        session.frames[i].jpeg = jpeg_buffers[i];
     tx.completed = frame_completed;
     tx.context = &session;
     encoding_tx = &tx;
@@ -926,10 +981,12 @@ static int stream_client(TcpSocket_T *sock) {
         uint32_t slot, interval, header_size;
         StreamFrame *frame;
         int result = tx_poll(&tx);
-        if (result < 0) break;
+        if (result < 0)
+            break;
         now = get_ticks();
         if (now < next_frame) {
-            if (result != 2) sleep_ms(1);
+            if (result != 2)
+                sleep_ms(1);
             continue;
         }
         interval = frame_interval_ms(&fraction);
@@ -950,7 +1007,8 @@ static int stream_client(TcpSocket_T *sock) {
         jpeg_slot = (int)slot;
         jpeg_buffer = jpeg_buffers[slot];
         result = capture_frame();
-        if (tx.failed) break;
+        if (tx.failed)
+            break;
         if (result < 0) {
             next_frame = get_ticks() + 1;
             sleep_ms(1);
@@ -970,7 +1028,8 @@ static int stream_client(TcpSocket_T *sock) {
         header_size = prepare_mjpeg_frame(frame->jpeg, frame->size);
         /* Encoding can retire earlier entries, but cannot change the next
          * free ring slot: (head + count) remains invariant on retirement. */
-        if (!tx_enqueue(&tx, frame->jpeg - header_size, header_size + frame->size + 2U)) break;
+        if (!tx_enqueue(&tx, frame->jpeg - header_size, header_size + frame->size + 2U))
+            break;
     }
     encoding_tx = 0;
     jpeg_slot = -1;

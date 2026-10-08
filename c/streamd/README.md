@@ -1,8 +1,9 @@
 # streamd
 
 Streams r2's displayed VESA framebuffer as 640x480 MJPEG at a target of 30 FPS,
-including Memento windows. Open `http://10.3.4.2:8080/stream` in a browser
-or an OBS Browser Source. The server handles one stream client at a time.
+including Memento windows, without Memento's mouse cursor. Open
+`http://10.3.4.2:8080/stream` in a browser or an OBS Browser Source. The server
+handles one stream client at a time.
 
 Build with `make build`; this also rebuilds libcr2 when its sources change.
 libcr2 uses `-O2`, and streamd uses `-O3` with LTO. Library objects are isolated
@@ -101,13 +102,21 @@ benchmark on the host; it does not include kernel capture, multitasking or TCP.
 
 ## Complete pictures during movement
 
-Memento now brackets all dirty row bands as one presentation. At its end,
-the kernel samples the full composed indexed surface into a 640x480 RGB24
+Memento now brackets all dirty row bands as one presentation. It restores
+the pixels beneath the mouse cursor in the composed surface before ending
+the presentation. The cursor stays visible on the local display, while the
+kernel samples the full cursor-free indexed surface into a 640x480 RGB24
 snapshot in shared RAM. Two snapshot banks let streamd read the previous
 complete picture while the next one is drawn. A bank leased by a capturer
 cannot be overwritten; leases and presentation ownership are released if a
 process exits or crashes. The buffers are allocated lazily and retain about
 1.8 MiB for the kernel's lifetime.
+
+Cursor exclusion requires rebuilding Memento with the updated r2 backend in
+the sibling `Memento` checkout and installing the resulting `MEMENTO.ELF`.
+The existing snapshot-capable graphics kernel and streamd capture API suffice;
+replacing streamd alone does not remove a cursor already baked into a snapshot.
+Framebuffer fallback captures still include any cursor drawn into video memory.
 
 This prevents capture of horizontal splits between old/new row bands and
 avoids reading slow video memory for the normal 640x480 stream. Capture at
