@@ -1,0 +1,5 @@
+cd /mnt/fat
+fg tcc -o r2ct.elf r2ct.c -lcr2
+fg r2ct
+fg tcc -o libct.elf libct.c
+fg libct
