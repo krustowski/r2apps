@@ -34,6 +34,25 @@ int64_t write_sysinfo(const SysInfo_T *sysinfo) {
     return 1;
 }
 
+int64_t set_user(const char *name) {
+    SysInfo_T si;
+    uint8_t *p = (uint8_t *)&si;
+    for (uint32_t i = 0; i < sizeof(si); i++)
+        p[i] = 0;
+    uint32_t n = 0;
+    while (name[n]) {
+        if (n >= sizeof(si.system_user) - 1)
+            return 0;
+        si.system_user[n] = (uint8_t)name[n];
+        n++;
+    }
+    if (syscall(ScSysInfo, 0x03, (int64_t)&si, 0)) {
+        return 0;
+    }
+
+    return 1;
+}
+
 int64_t read_rtc(RTC_T *rtc_data) {
     if (syscall(ScRTC, 0x01, (int64_t)rtc_data, 0)) {
         return 0;

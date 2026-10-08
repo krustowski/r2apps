@@ -260,6 +260,15 @@ int64_t read_sysinfo(SysInfo_T *sysinfo);
 int64_t write_sysinfo(const SysInfo_T *sysinfo);
 
 /*
+ *  int64_t set_user() prototype
+ *
+ *  Implementation of syscall 0x01 (arg1 0x03): sets the system user to `name`,
+ *  one word of printable ASCII of at most 31 characters.  Returns 1 on
+ *  success, 0 when the kernel refused it.
+ */
+int64_t set_user(const char *name);
+
+/*
  *  int64_t read_rtc() prototype
  *
  *  Implementation of syscall 0x02 (arg1 0x01).
