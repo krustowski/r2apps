@@ -191,6 +191,37 @@ int main()
     for (uint16_t p = 10010; p < 10016; ++p)
         check(r2::raw_syscall(r2::Sys::NetRegister, p, 1) == 0, "release filler binding");
 
+    // This machine, through the kernel's loopback device: localhost is
+    // 127.0.0.1, a connection there goes to our own address, the kernel
+    // answers ARP for it with the MAC 00:00:00:00:00:00, and replies come
+    // back from that MAC.
+    select(4, 49000);
+    web::Stack local;
+    uint8_t lo[4];
+    check(local.resolve("localhost", lo) == 1 && !std::memcmp(lo, "\x7f\0\0\x01", 4), "localhost is 127.0.0.1");
+    lastSent.clear();
+    h = local.connect(lo, 80);
+    check(h >= 0 && lastSent.empty(), "own address asked for by ARP first");
+    std::vector<uint8_t> arp(42);
+    std::memcpy(arp.data(), "\x52\x54\0\x12\x34\x56", 6);
+    web::put16(arp.data() + 12, 0x0806);
+    std::memcpy(arp.data() + 14, "\0\x01\x08\0\x06\x04\0\x02", 8);
+    std::memcpy(arp.data() + 28, "\x0a\x03\x04\x02", 4);
+    std::memcpy(arp.data() + 32, "\x52\x54\0\x12\x34\x56", 6);
+    std::memcpy(arp.data() + 38, "\x0a\x03\x04\x02", 4);
+    incoming[process].push_back(arp);
+    local.poll();
+    clockMs += 50; local.poll();
+    check(lastSent.size() >= 54 && !std::memcmp(lastSent.data(), "\0\0\0\0\0\0", 6), "SYN to the loopback MAC");
+    check(!std::memcmp(lastSent.data() + 26, "\x0a\x03\x04\x02\x0a\x03\x04\x02", 8), "127.0.0.1 goes to our own address");
+    check(web::get16(lastSent.data() + 36) == 80, "SYN to port 80");
+    reply(web::F_SYN | web::F_ACK, 100, web::get32(lastSent.data() + 38) + 1);
+    std::memset(incoming[process].back().data() + 6, 0, 6);
+    local.poll();
+    check(local.status(h) == web::NetIf::OPEN, "looped SYN/ACK established connection");
+    local.close(h); clockMs += 3001; local.poll();
+    check(bindings.size() == 10 && liveAllocations == 0, "loopback connection released");
+
     driver = true;
     web::Stack driverStack;
     h = driverStack.connect(remote, 443); check(h >= 0, "global driver connection"); driverStack.close(h);

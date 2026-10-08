@@ -26,6 +26,10 @@
 //  - Frames longer than 2048 bytes are dropped by the kernel, so the MSS we
 //    ask for is 1024 and every frame buffer is 2048 bytes.
 //
+//  - Frames for this machine (our own address, 127.x) never reach the NIC:
+//    the kernel's loopback device hands them to the process they are for,
+//    from the MAC 00:00:00:00:00:00, and answers ARP for those addresses.
+//
 
 #include "net_r2.h"
 
@@ -899,6 +903,13 @@ int Stack::resolve(const char *host, uint8_t ip[4])
         return -1;
     if (parseIPv4(host, ip))
         return 1;
+    if (!strcmp(host, "localhost"))
+    {
+        ip[0] = 127;
+        ip[1] = ip[2] = 0;
+        ip[3] = 1;
+        return 1;
+    }
     for (const DnsEntry &e : cache_)
         if (e.host[0] && !strcmp(e.host, host))
         {
@@ -1374,7 +1385,12 @@ int Stack::connect(const uint8_t ip[4], uint16_t port)
         setError("out of memory");
         return -1;
     }
-    memcpy(c.rip, ip, 4);
+    //  127.0.0.0/8 is this machine, and so is our own address: the kernel
+    //  loops both back to the process serving the port.  But a server here
+    //  (GARN, on c/libcr2) answers from the machine's address whatever it was
+    //  asked on, and a reply from there would not be this connection's.  So a
+    //  connection to 127.x is made to our own address instead.
+    memcpy(c.rip, ip[0] == 127 ? ip_ : ip, 4);
     c.rport = port;
     c.state = Tcp::SYN_SENT;
     //  A sequence number that only grows, a thousand a millisecond (RFC 793's

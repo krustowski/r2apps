@@ -21,18 +21,20 @@
 // Enter on an .EXE or .COM runs it in theM, the DOS emulator, in a window of
 // its own (windows/them_window.cpp); on anything else it opens the viewer.
 //
-// Only the floppy can be written; the CD is read-only, so from it Copy is the
-// one operation there is.  Folders are not copied or moved (one file at a
-// time), and a folder is deleted only when it is empty --- the kernel refuses
-// the rest rather than take a folder's files with it.  A copy goes a few KiB
-// at a time from the idle loop, with its progress on the info line, so the
-// other windows keep going while the floppy works.
+// Only the floppy and the RAM disk can be written; the CD, the archive and the
+// root are read-only, so from them Copy is the one operation there is.
+// Folders are not copied or moved (one file at a time), and a folder is
+// deleted only when it is empty --- the kernel refuses the rest rather than
+// take a folder's files with it.  A copy goes a few KiB at a time from the
+// idle loop, with its progress on the info line, so the other windows keep
+// going while the floppy works.
 //
-// The top of the tree is the mount list rather than a directory. On this
-// system "/" is the FAT12 floppy, not a root filesystem with the other mounts
-// hanging off it, so there is no single directory that contains them all:
-// going up from the top of a mount lands on a list of mounts, which is what
-// Commander's drive bar does anyway.
+// The top of the tree is the mount list rather than a directory: going up
+// from the top of a mount lands on a list of mounts, which is what
+// Commander's drive bar does anyway.  The root filesystem is on the list too,
+// and holds nothing yet but the way to the others --- "mnt" in "/", then
+// "fat", "tmp" and the rest in "/mnt", which the kernel lists from its mount
+// table --- so it is read-only.
 //
 
 class MountWindow
@@ -112,7 +114,6 @@ private:
     {
         char path[128];
         char mountRoot[40];
-        unsigned char fsType; // of the mount it is in: 1 rootfs, 2 fat12, 3 iso9660, 4 tar, 5 memdisk
         bool atMounts;
         VfsDirEntry_T entries[MAX_ENTRIES];
         unsigned char order[MAX_ENTRIES];
@@ -219,7 +220,6 @@ public:
             p.path[0] = 0;
             p.mountRoot[0] = 0;
             p.atMounts = true;
-            p.fsType = 0;
             p.nEntries = 0;
             p.sel = 0;
             p.scrollTop = 0;
@@ -345,6 +345,34 @@ private:
             out[0] = '/';
             out[1] = 0;
         }
+    }
+
+    // The mount `path` is on: the longest mount path it starts with, matched
+    // without regard to case as the kernel matches it.  A path below no other
+    // mount is the root's.  -1 when nothing is mounted at all.
+    int mountOf(const char *path)
+    {
+        int best = -1, bestLen = -1;
+        for (int i = 0; i < nMounts; i++)
+        {
+            char mp[40];
+            mountPath(i, mp);
+            int ml = streq(mp, "/") ? 0 : slen(mp);
+            if (ml <= bestLen || !samePrefix(path, mp, ml) || (path[ml] != 0 && path[ml] != '/'))
+                continue;
+            best = i;
+            bestLen = ml;
+        }
+        return best;
+    }
+
+    // The type of the mount a pane's directory is on, numbered as fsType()
+    // names it.
+    unsigned char paneType(const Pane &p)
+    {
+        refreshMounts();
+        int mi = mountOf(p.path);
+        return mi >= 0 ? mounts[mi].fs_type : 0;
     }
 
     // ── Reading ─────────────────────────────────────────────────────────────
@@ -505,7 +533,6 @@ private:
             p.path[0] = p.mountRoot[0] = '/';
             p.path[1] = p.mountRoot[1] = 0;
         }
-        p.fsType = mounts[mi].fs_type;
         p.atMounts = false;
         p.sel = 0;
         p.scrollTop = 0;
@@ -914,9 +941,36 @@ private:
         return !*a && !*b;
     }
 
+    // The first `n` characters of `a` and `b` alike, in any case.
+    static bool samePrefix(const char *a, const char *b, int n)
+    {
+        for (int i = 0; i < n; i++)
+            if (upper(a[i]) != upper(b[i]))
+                return false;
+        return true;
+    }
+
     // The floppy can be written; the CD cannot.
-    //  The floppy and the RAM disk are FAT12 alike; the CD and the tar are not.
-    static bool writable(const Pane &p) { return !p.atMounts && (p.fsType == 1 || p.fsType == 2 || p.fsType == 5); }
+    //  The floppy and the RAM disk are FAT12 alike; the CD and the tar are not,
+    //  and the root is no more than the way to the mounts yet.
+    bool writable(const Pane &p)
+    {
+        if (p.atMounts)
+            return false;
+        unsigned char t = paneType(p);
+        return t == 2 || t == 5;
+    }
+
+    // "The CD is read-only", and why that stops what was asked.
+    void sayReadOnly(const Pane &p, const char *why)
+    {
+        unsigned char t = paneType(p);
+        char s[64];
+        copyStr(s, sizeof(s), t == 1 ? "The root" : t == 4 ? "The archive" : "The CD");
+        catStr(s, sizeof(s), " is read-only: ");
+        catStr(s, sizeof(s), why);
+        say(s);
+    }
 
     void say(const char *s)
     {
@@ -1030,7 +1084,7 @@ private:
             // Both panes on the same directory: F6 renames, as it does in a
             // Commander.
             if (!writable(src))
-                return say("The CD is read-only: nothing on it can be renamed.");
+                return sayReadOnly(src, "nothing on it can be renamed.");
             copyStr(srcDir, sizeof(srcDir), src.path);
             copyStr(srcName, sizeof(srcName), name);
             char q[96] = "Rename ";
@@ -1044,9 +1098,9 @@ private:
         if (dst.atMounts)
             return say("Open a directory in the other pane first: that is where it goes.");
         if (!writable(dst))
-            return say("The CD is read-only: copy onto the floppy instead.");
+            return sayReadOnly(dst, "copy onto the floppy instead.");
         if (move && !writable(src))
-            return say("The CD is read-only: its files can be copied, not moved.");
+            return sayReadOnly(src, "its files can be copied, not moved.");
         if (streq(src.path, dst.path))
             return say("That is the same directory: open another one in the other pane.");
 
@@ -1159,7 +1213,7 @@ private:
         if (p.atMounts)
             return say("Open a directory first: the new one goes in it.");
         if (!writable(p))
-            return say("The CD is read-only: make it on the floppy.");
+            return sayReadOnly(p, "make it on the floppy.");
         copyStr(dstDir, sizeof(dstDir), p.path);
         prompt(ACT_MKDIR, "New folder name: ", "");
     }
@@ -1172,7 +1226,7 @@ private:
             return say("Delete: put the bar on a file or a folder first.");
         Pane &p = panes[active];
         if (!writable(p))
-            return say("The CD is read-only: nothing on it can be deleted.");
+            return sayReadOnly(p, "nothing on it can be deleted.");
         char name[36];
         entryName(p.entries[ei], name, sizeof(name));
         copyStr(srcDir, sizeof(srcDir), p.path);
