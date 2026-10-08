@@ -15,7 +15,7 @@
  *          return *text;
  *      }
  *
- *      if (auto config = load("/GARN.CFG"))
+ *      if (auto config = load("/mnt/fat/GARN.CFG"))
  *          use(*config);
  *      else
  *          r2::println("load failed: ", (int)config.error());

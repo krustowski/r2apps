@@ -33,6 +33,7 @@
  */
 
 #include "types.hpp"
+#include "syscall.hpp"
 
 namespace r2::heap {
 
@@ -101,6 +102,17 @@ Integrity validate(const void **where = nullptr) noexcept;
 void *kernel_allocate(size_t size) noexcept;
 void *kernel_reallocate(void *ptr, size_t size) noexcept;
 void kernel_deallocate(void *ptr) noexcept;
+
+/* Checks a whole nonempty range in the shared heap, including its extension,
+ * without dereferencing it. Does not check allocation ownership/lifetime.
+ * Older kernels can verify only the original fixed region. */
+inline bool kernel_contains(const void *ptr, size_t size) noexcept {
+    const uintptr_t addr = (uintptr_t)ptr;
+    const int64_t result = raw_syscall(Sys::HeapContains, (int64_t)addr, (int64_t)size);
+    if (result == 0xff)
+        return size && addr >= 0xc00000 && addr < 0x1000000 && size <= 0x1000000 - addr;
+    return result == 1;
+}
 
 } // namespace r2::heap
 

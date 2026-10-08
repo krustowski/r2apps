@@ -136,7 +136,7 @@ optional<FsckReport> check();
 /*
  *  Reads a file in fixed-size pieces:
  *
- *      FileReader r("/BIG.DAT");
+ *      FileReader r("/mnt/fat/BIG.DAT");
  *      uint8_t chunk[512];
  *      while (int64_t n = r.next(chunk, sizeof chunk)) { ... }
  */

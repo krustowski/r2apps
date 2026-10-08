@@ -100,6 +100,7 @@ enum class Sys : int64_t {
     FsStat = 0x40,
     Cmdline = 0x41,
     DesktopRelaunch = 0x42,
+    HeapContains = 0x43,
 };
 
 /*  Return codes the ABI uses in place of the 0 it returns on success.  */
