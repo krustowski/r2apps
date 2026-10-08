@@ -235,6 +235,20 @@ func ListMounts() []MountInfo {
 	return out
 }
 
+// FsUsage returns the size of the filesystem path is on (syscall 0x40).  An
+// error when no mount holds the path, its medium cannot be read, or the
+// kernel is too old to say.
+func FsUsage(path string) (*FsStat, error) {
+	b := cstring(path)
+	st := &FsStat{}
+
+	if e := err(Syscall(ScFsStat, ptr(unsafe.Pointer(&b[0])), ptr(unsafe.Pointer(st)))); e != nil {
+		return nil, e
+	}
+
+	return st, nil
+}
+
 // Fsck runs a filesystem check and returns its report (syscall 0x2b).
 func Fsck() (*FsckReport, error) {
 	report := &FsckReport{}

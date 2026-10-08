@@ -72,14 +72,34 @@ type FsckReport struct {
 	InvalidEntries uint64
 }
 
-// Filesystem kinds reported by MountInfo.FsType.
+// Filesystem kinds reported by MountInfo.FsType and FsStat.FsType: what is
+// mounted there.
 const (
 	FsNone    = 0
 	FsRootfs  = 1
-	FsFat12   = 2
-	FsIso9660 = 3
-	FsTar     = 4
+	FsFat12   = 2 // the floppy at /mnt/fat
+	FsIso9660 = 3 // the CD at /mnt/iso
+	FsTar     = 4 // the boot medium's archive at /mnt/tar
+	FsMemDisk = 5 // the RAM disk at /mnt/tmp, whatever its format
 )
+
+// Formats on the medium, reported by FsStat.Format.
+const (
+	FormatNone    = 0 // the root: no filesystem, the way to the mounts
+	FormatFat12   = 1
+	FormatFat16   = 2 // the RAM disk, unless it is only 2 MiB
+	FormatIso9660 = 3
+	FormatTar     = 4
+)
+
+// FsStat is the size of the filesystem a path is on (syscall 0x40).
+type FsStat struct {
+	TotalBytes uint64 // the whole volume; 0 for the root
+	FreeBytes  uint64 // what files can still take; 0 when read-only
+	FsType     uint8  // as MountInfo.FsType
+	Format     uint8
+	_          [6]byte
+}
 
 // MountInfo describes one VFS mount point (syscall 0x2c).
 type MountInfo struct {
