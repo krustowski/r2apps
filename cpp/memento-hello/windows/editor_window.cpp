@@ -13,6 +13,15 @@
 // tables map the same way; see host.hpp in the tcpp sources, which this layout
 // has to match.
 //
+// The grid is as large as the window: this window says how many cells it has
+// room for, and the editor draws that many --- 80x25 at the window's own
+// size, about 105x30 maximized on the VGA.  The window is not maximizable
+// from the keyboard (Alt+F is Turbo's File menu): the editor asks for it
+// instead, with F5 or its Window menu, and this window does it with
+// R2_WindowImpl::SetMaximized.  A click goes to the editor as the cell it
+// landed on, so the caret, the panes, the sidebar and the menus take the
+// mouse too.
+//
 // Closing: the close box asks the editor to leave the way Alt+X does, so a
 // file that has not been saved gets its question; the window goes when the
 // editor has gone.  If Memento stops beating (it died, or it is taking the
@@ -28,31 +37,47 @@ struct EdHostKey
     char ch;
     uint8_t mods;
     uint8_t pad;
+    uint16_t x; // the cell, for the mouse
+    uint16_t y;
 };
 
 struct EdHostBlock
 {
     static const uint32_t Magic = 0x42484354; // "TCHB"
-    static const uint32_t Version = 1;
-    static const int Cols = 80;
-    static const int Rows = 25;
+    static const uint32_t Version = 2;
+    static const int MinCols = 80;
+    static const int MinRows = 25;
+    static const int MaxCols = 200;
+    static const int MaxRows = 75;
     static const int KeySlots = 64;
 
     uint32_t magic;
     uint32_t version;
+
+    //  The editor's.
     volatile uint32_t frame;
     volatile uint32_t editorBeat;
     volatile uint32_t keyTail;
     volatile uint8_t exited;
-    uint8_t pad0[3];
-    uint8_t cells[Cols * Rows];
-    uint8_t attrs[Cols * Rows];
+    volatile uint8_t zoom; // the window it asks for: 1 maximized, 0 its own size
+    uint8_t pad0[2];
+    volatile uint16_t cols; // the grid in the cells
+    volatile uint16_t rows;
+    uint8_t cells[MaxCols * MaxRows];
+    uint8_t attrs[MaxCols * MaxRows];
+
+    //  This window's.
     volatile uint32_t hostBeat;
     volatile uint32_t keyHead;
+    volatile uint16_t fitCols; // the grid the window has room for
+    volatile uint16_t fitRows;
     volatile uint8_t quit;
-    uint8_t pad1[3];
+    volatile uint8_t zoomed; // the window is maximized
+    uint8_t pad1[2];
     EdHostKey keys[KeySlots];
 };
+
+static_assert(sizeof(EdHostKey) == 8 && sizeof(EdHostBlock) == 30556, "the layout of tcpp's host.hpp");
 
 //  tc::Key, by number.
 enum EdKey : uint8_t
@@ -74,6 +99,9 @@ enum EdKey : uint8_t
     ED_INSERT,
     ED_DELETE,
     ED_F1, // F2..F12 follow
+    ED_MOUSE = ED_F1 + 12, // the left button, pressed over a cell
+    ED_WHEEL_UP,
+    ED_WHEEL_DOWN,
 };
 
 static const uint8_t ED_CTRL = 1, ED_ALT = 2, ED_SHIFT = 4;
@@ -139,6 +167,8 @@ public:
         blk->magic = EdHostBlock::Magic;
         blk->version = EdHostBlock::Version;
         blk->hostBeat = 1;
+        blk->fitCols = EdHostBlock::MinCols; // until the first paint measures the window
+        blk->fitRows = EdHostBlock::MinRows;
         g_edBlocks[slot] = blk;
 
         //  "tcpp.elf --host 0xC1A2B0 /mnt/fat/FILE.CPP"
@@ -203,7 +233,8 @@ public:
         //  new frames and keeps the editor's host beating.
         wnd->SetImmediateMode(true);
         //  Not maximizable, so Alt+F goes on to Turbo C++, whose File menu
-        //  it opens, rather than to the window manager.
+        //  it opens, rather than to the window manager.  The editor asks for
+        //  the window maximized itself (blk->zoom), with F5.
         wnd->SetCapabilities(true, false, false, true, true);
     }
 
@@ -222,7 +253,17 @@ private:
     uint64_t lastCheck = 0;
     uint32_t shownFrame = 0;
     bool leaving = false; // the editor has gone; the next close is allowed
+    uint8_t appliedZoom = 0; // the last blk->zoom this window acted on
     char error[64];
+
+    //  Where the grid was last drawn, for the mouse: its corner and how many
+    //  cells of it fitted.
+    double gridX = 0, gridY = 0;
+    int gridCols = 0, gridRows = 0;
+    //  The pointer, for the wheel, which says nothing of where it is.
+    double mouseX = 0, mouseY = 0;
+    //  The modifiers, as the last key had them, for a click.
+    uint8_t heldMods = 0;
 
     PlatformColor *pal[16] = {};
     PlatformColor *shade[3][16] = {}; // a colour over another, 25/50/75 %
@@ -257,7 +298,7 @@ private:
         return false;
     }
 
-    void send(uint8_t key, char c, uint8_t mods)
+    void send(uint8_t key, char c, uint8_t mods, int x = 0, int y = 0)
     {
         if (!blk || blk->exited)
             return;
@@ -268,12 +309,40 @@ private:
         k.key = key;
         k.ch = c;
         k.mods = mods;
+        k.x = (uint16_t)x;
+        k.y = (uint16_t)y;
         asm volatile("" ::: "memory");
         blk->keyHead = head + 1;
     }
 
+    //  The cell under a point of the window, or false outside the grid.
+    bool cellAt(double px, double py, int &x, int &y) const
+    {
+        if (px < gridX || py < gridY)
+            return false;
+        x = (int)((px - gridX) / cw);
+        y = (int)((py - gridY) / ch);
+        return x < gridCols && y < gridRows;
+    }
+
+    void onMouse(uint8_t what, double px, double py)
+    {
+        int x, y;
+        if (cellAt(px, py, x, y))
+            send(what, 0, heldMods, x, y);
+    }
+
     void onKey(PlatformKey *key)
     {
+        //  The modifiers come with every key, and on their own as their own
+        //  key, up and down: a click has none, so they are kept from here.
+        uint8_t make = key->scancode & 0x7F;
+        if (make == 0x1D)
+            heldMods = key->isKeyDown ? heldMods | ED_CTRL : heldMods & ~ED_CTRL;
+        else if (make == 0x2A || make == 0x36)
+            heldMods = key->isKeyDown ? heldMods | ED_SHIFT : heldMods & ~ED_SHIFT;
+        else if (make == 0x38)
+            heldMods = key->isKeyDown ? heldMods | ED_ALT : heldMods & ~ED_ALT;
         if (!key->isKeyDown)
             return;
         uint8_t mods = 0;
@@ -329,6 +398,16 @@ private:
         if (!blk)
             return;
         blk->hostBeat = blk->hostBeat + 1;
+        //  The zoom the editor asks for, once each time it changes: a window
+        //  with no memory for the bigger bitmap stays as it is, says so in
+        //  `zoomed`, and is not tried again until the editor asks again.
+        auto *native = static_cast<MementoR2Impl::R2_WindowImpl *>(wnd);
+        if (blk->zoom != appliedZoom)
+        {
+            appliedZoom = blk->zoom;
+            native->SetMaximized(appliedZoom != 0);
+        }
+        blk->zoomed = native->maximized ? 1 : 0;
         if (blk->frame != shownFrame)
         {
             shownFrame = blk->frame;
@@ -360,6 +439,21 @@ private:
             return;
         case PlatformWindowInputEventType::OnKeyEvent:
             onKey(data->Data.OnKeyEvent.key);
+            return;
+        case PlatformWindowInputEventType::OnMouseMove:
+            mouseX = COORD_VAL(data->Data.OnMouseMove.mouseX);
+            mouseY = COORD_VAL(data->Data.OnMouseMove.mouseY);
+            return;
+        case PlatformWindowInputEventType::OnMouseClick:
+            //  The left button going down; the editor has no use for the rest.
+            mouseX = COORD_VAL(data->Data.OnMouseClick.mouseX);
+            mouseY = COORD_VAL(data->Data.OnMouseClick.mouseY);
+            if (data->Data.OnMouseClick.button == PlatformWindowMouseButton::Left &&
+                data->Data.OnMouseClick.state == PlatformWindowButtonState::Pressed)
+                onMouse(ED_MOUSE, mouseX, mouseY);
+            return;
+        case PlatformWindowInputEventType::OnMouseWheel:
+            onMouse(data->Data.OnMouseWheel.up ? ED_WHEEL_UP : ED_WHEEL_DOWN, mouseX, mouseY);
             return;
         case PlatformWindowInputEventType::OnClose:
         {
@@ -508,21 +602,43 @@ private:
             return;
         }
 
-        const double ox = (W - 80 * cw) / 2, oy = (H - 25 * ch) / 2;
-        char run[81];
-        for (int r = 0; r < EdHostBlock::Rows; r++)
+        //  How many cells the window has room for, with a pixel round the
+        //  edge: 80x25 at the window's own size (W, H), about 105x30
+        //  maximized.  The editor draws a grid of that size on its next frame.
+        int fitCols = (int)((W - 2) / cw), fitRows = (int)((H - 2) / ch);
+        blk->fitCols = (uint16_t)(fitCols < 1 ? 1 : (fitCols > EdHostBlock::MaxCols ? EdHostBlock::MaxCols : fitCols));
+        blk->fitRows = (uint16_t)(fitRows < 1 ? 1 : (fitRows > EdHostBlock::MaxRows ? EdHostBlock::MaxRows : fitRows));
+
+        //  The grid the cells hold, centred.  Just after the window has
+        //  changed size it can be the old one, larger than the window: then
+        //  what fits is drawn, from the corner.
+        int cols = blk->cols, rows = blk->rows;
+        if (cols <= 0 || cols > EdHostBlock::MaxCols || rows <= 0 || rows > EdHostBlock::MaxRows)
+            return; // nothing drawn yet
+        const int stride = cols;
+        if (cols > fitCols)
+            cols = fitCols;
+        if (rows > fitRows)
+            rows = fitRows;
+        const double ox = (W - cols * cw) / 2, oy = (H - rows * ch) / 2;
+        gridX = ox;
+        gridY = oy;
+        gridCols = cols;
+        gridRows = rows;
+        char run[EdHostBlock::MaxCols + 1];
+        for (int r = 0; r < rows; r++)
         {
-            const uint8_t *cells = blk->cells + r * EdHostBlock::Cols;
-            const uint8_t *attrs = blk->attrs + r * EdHostBlock::Cols;
+            const uint8_t *cells = blk->cells + r * stride;
+            const uint8_t *attrs = blk->attrs + r * stride;
             double y = oy + r * ch;
             int c = 0;
-            while (c < EdHostBlock::Cols)
+            while (c < cols)
             {
                 //  A run of cells with one colour, drawn as one background
                 //  and one line of text; frames and shades on top, one by one.
                 uint8_t a = attrs[c];
                 int e = c;
-                while (e < EdHostBlock::Cols && attrs[e] == a)
+                while (e < cols && attrs[e] == a)
                     e++;
                 PlatformColor *fg = pal[a & 15], *bg = pal[(a >> 4) & 15];
                 double x = ox + c * cw;
@@ -535,7 +651,8 @@ private:
                     uint8_t g = cells[k];
                     bool special = drawn(g);
                     run[n++] = special || g < 0x20 && g != 0x18 && g != 0x19 && g != 0x1A && g != 0x1B ? ' ' : (char)g;
-                    any = any || (!special && g > ' ');
+                    //  The arrows are below the blank and are glyphs all the same.
+                    any = any || (!special && (g > ' ' || (g >= 0x18 && g <= 0x1B)));
                 }
                 run[n] = 0;
                 if (any)
