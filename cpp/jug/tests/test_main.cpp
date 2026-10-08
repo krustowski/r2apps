@@ -18,6 +18,8 @@ bool failWrite = false, corruptNew = false, failPublish = false, missingCmd = fa
 bool failSpawn = false, failKill = false, stuck = false;
 uint64_t freeBytes = 32 * 1024 * 1024;
 int kills = 0, starts = 0, reads = 0, changes = 0;
+int relaunches = 0;
+bool relaunchSupported = true;
 uint8_t nextPid = 20;
 
 File *find(r2::string_view path) {
@@ -44,6 +46,7 @@ void reset() {
     for (int i = 0; i < 256; ++i) { commands[i].clear(); spawned[i].clear(); }
     failWrite = corruptNew = failPublish = missingCmd = failSpawn = failKill = stuck = false;
     freeBytes = 32 * 1024 * 1024; kills = starts = reads = changes = 0; nextPid = 20;
+    relaunches = 0; relaunchSupported = true;
 }
 } // namespace fake
 
@@ -109,6 +112,10 @@ bool change_dir(string_view) { ++fake::changes; return true; }
 
 namespace r2 {
 vector<TaskInfo> tasks() { return fake::table; }
+bool request_desktop_relaunch(uint8_t) {
+    if (!fake::relaunchSupported) return false;
+    ++fake::relaunches; return true;
+}
 optional<string> command_line(uint8_t id) { return fake::missingCmd ? nullopt : optional<string>(fake::commands[id]); }
 bool kill(uint8_t id) {
     if (fake::failKill) return false;
@@ -245,7 +252,23 @@ void restartTests() {
     CHECK(fake::kills == 2 && fake::starts == 2); CHECK(fake::spawned[20].view() == r2::string_view("tnt eth"));
     CHECK(fake::spawned[21].view() == r2::string_view("tnt other")); CHECK(fake::changes == 0);
     CHECK(jug::restart("jug", false, msg, sizeof(msg)) < 0);
+    CHECK(jug::restart("memento", true, msg, sizeof(msg)) == 0); // none running
+    fake::reset(); fake::task(4, "MEMENTO", "memento");
     CHECK(jug::restart("memento", true, msg, sizeof(msg)) < 0);
+    CHECK(fake::kills == 0 && fake::relaunches == 0);
+    uint8_t wm[160]; elf(wm, 7);
+    auto p = package(wm, sizeof(wm)); jug::scopy(p.name, "memento", sizeof(p.name));
+    jug::Registry reg; CHECK(!jug::install(p, wm, sizeof(wm), reg));
+    CHECK(jug::restart("memento", true, msg, sizeof(msg)) == 1);
+    CHECK(fake::relaunches == 1 && fake::kills == 0 && fake::starts == 0);
+    CHECK(jug::restart("memento", false, msg, sizeof(msg)) == 1);
+    CHECK(fake::relaunches == 2 && fake::kills == 0);
+    fake::relaunchSupported = false;
+    CHECK(jug::restart("memento", true, msg, sizeof(msg)) < 0); CHECK(fake::kills == 0);
+    fake::relaunchSupported = true; wm[159] ^= 1;
+    fake::put("/mnt/tmp/jug/MEMENTO.ELF", wm, sizeof(wm));
+    CHECK(jug::restart("memento", true, msg, sizeof(msg)) < 0);
+    CHECK(fake::relaunches == 2 && fake::kills == 0);
     fake::reset(); fake::task(4, "TNT", "tnt eth"); fake::missingCmd = true;
     CHECK(jug::restart("tnt", false, msg, sizeof(msg)) < 0); CHECK(fake::kills == 0);
     fake::missingCmd = false; fake::failKill = true;

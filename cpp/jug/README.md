@@ -35,10 +35,11 @@ fg jug sum /mnt/tar/bin/tnt.elf
 
 `update` fetches the list and checks local files. `upgrade` downloads updates to
 installed programs; `install` also downloads programs that are new to this
-machine. Downloads never stop running instances automatically. `restart` uses
+machine. Downloads offer a confirmation to relaunch Memento after its update. Other
+programs keep running until explicitly restarted. `restart` uses
 the task table and saved command lines (syscall `0x41`) to stop and start all
 instances. If their arguments cannot be read, they remain running. Jug protects
-itself and, when hosted, Memento from restart.
+itself from restart. Memento uses the cooperative protocol described below.
 
 In the window, **Update/U** refreshes the list, **Get/G** downloads the
 selected program, **Get all/A** downloads available updates, **Restart/R** then
@@ -53,6 +54,24 @@ PIDs. Escape cancels a transfer; Escape when idle closes the window.
 keys (**Up/Down**, **Page Up/Down**, **Home/End**) return focus to the list;
 **Enter** there downloads the selected program. Clicking a row or button also
 sets keyboard focus. Restart still requires **Y** to confirm.
+
+## Relaunching Memento
+
+After a Memento download, Jug offers **Y / N** to relaunch it. **Restart/R**
+asks again later; `fg jug restart memento` requests the same handoff from CLI.
+Save work first: all Memento windows close and their hosted child processes
+stop. The graphics kernel's session launcher then starts the verified download
+with the original arguments and `--relaunch`, returning to login. The RAM disk,
+downloads, registry and `/mnt/tmp/SESSION.CFG` survive; the replacement reloads
+the existing credentials. Window state and unsaved buffers are not restored.
+Other background services continue, and `INIT.RC` is not run again.
+
+This requires the updated graphics kernel and a running Memento with relaunch
+support, so boot the new image once for the first deployment. Older versions
+reject the request without killing the desktop. Jug verifies the installed
+update's size and full SHA-256 again before requesting it. Syscall `0x42`
+registers/polls/requests the handoff; Memento commits it only by exiting with
+`r2::DesktopRelaunchExit` after its windows and hosted children are cleaned up.
 
 ## Configuration
 
@@ -123,7 +142,8 @@ Downloads are limited to the HTTP engine's 4 MiB body limit.
 `make check` covers standard SHA-256 vectors, catalogs, damaged ELF files,
 registry round trips, config precedence, same-size file changes, source-specific
 caches, failed writes and readback, replacement rollback, and multi-instance
-restarts. The manifest generator is tested against real filesystem fixtures.
+restarts, cooperative Memento requests, unsupported desktops, and damaged
+Memento downloads. The manifest generator is tested against real filesystem fixtures.
 
 `make -C tests target` builds `tests/jugtest.elf` and `tests/shipped.elf` for a
 kernel smoke-test ISO. Put them in its archive as `bin/jugtest.elf` and

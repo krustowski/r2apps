@@ -54,6 +54,7 @@ private:
     int sel = 0, top = 0;
     char selName[jug::NAME_CAP] = {};              // the bar, across a new list
     char confirm[jug::NAME_CAP] = {};              // R pressed: Y restarts this
+    bool mementoUpdated = false;                  // prompt after the download queue
     char status[160] = {};
     char shownProgress[96] = {};
     uint64_t progressAt = 0, runningAt = 0;
@@ -205,6 +206,8 @@ private:
             jug::scatSize(size, resp.body.len, sizeof(size));
             model.rescan();
             r = model.row(current);
+            if (!strcmp(current, "memento") && r && r->npids)
+                mementoUpdated = true;
             if (r && r->npids)
                 say(current, ": ", size, " in /mnt/tmp/jug. Running: R restarts it.");
             else
@@ -212,6 +215,12 @@ private:
         }
         resp.body.release(); // the next download needs the room
         nextInQueue();
+        if (job == NO_JOB && mementoUpdated)
+        {
+            mementoUpdated = false;
+            select("memento");
+            askRestart();
+        }
     }
 
     void onIdle()
@@ -289,6 +298,11 @@ private:
             return;
         }
         jug::scopy(confirm, r->name, sizeof(confirm));
+        if (!strcmp(r->name, "memento"))
+        {
+            say("Relaunch Memento? Close all windows (save work first). Y / N");
+            return;
+        }
         char pids[24] = {};
         for (int i = 0; i < r->npids; i++)
         {

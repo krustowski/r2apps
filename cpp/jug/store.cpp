@@ -462,7 +462,7 @@ int running(r2::string_view name, uint8_t *ids, int cap)
     return n;
 }
 
-int restart(r2::string_view name, bool hosted, char *msg, size_t cap)
+int restart(r2::string_view name, bool /*hosted*/, char *msg, size_t cap)
 {
     char n[NAME_CAP];
     scopy(n, name, sizeof(n));
@@ -472,7 +472,7 @@ int restart(r2::string_view name, bool hosted, char *msg, size_t cap)
         scat(msg, ": not a program name", cap);
         return -1;
     }
-    if (ieq(name, "jug") || (hosted && ieq(name, "memento")))
+    if (ieq(name, "jug"))
     {
         scat(msg, ": not restarted from here, it would take jug with it", cap);
         return -1;
@@ -483,6 +483,33 @@ int restart(r2::string_view name, bool hosted, char *msg, size_t cap)
     {
         scat(msg, " is not running", cap);
         return 0;
+    }
+
+    if (ieq(name, "memento"))
+    {
+        // Never kill the desktop, including from CLI/TNT: that wakes the boot
+        // supervisor's ordinary reboot path. Verify the installed update,
+        // then let Memento release its own windows and hosted children.
+        Registry reg;
+        char path[PATH_CAP];
+        jug_path("memento", path, sizeof(path));
+        bool loaded = reg.load();
+        Record *record = loaded ? reg.find("memento") : nullptr;
+        auto size = r2::fs::size_of(sv(path));
+        Digest sum;
+        if (!record || !ieq(record->path, path) || !size || *size != record->size ||
+            !hash_file(path, *size, sum) || sum != record->sum)
+        {
+            scat(msg, ": download and verify its update first", cap);
+            return -1;
+        }
+        int requested = 0;
+        for (int i = 0; i < count; ++i)
+            if (r2::request_desktop_relaunch(ids[i]))
+                ++requested;
+        scat(msg, requested ? ": desktop relaunch requested; windows will close"
+                            : ": relaunch unsupported; update the kernel and Memento first", cap);
+        return requested == count ? requested : -1;
     }
 
     int started = 0, failed = 0;
