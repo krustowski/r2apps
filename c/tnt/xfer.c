@@ -91,6 +91,8 @@ int64_t xfer_file_size(const uint8_t *path) {
  *  go back to the disk.
  */
 static const uint8_t *src_path;
+static const uint8_t *src_mem; /* or the stream is this, in memory */
+static uint32_t src_mem_len;
 static uint8_t head[256];
 static uint32_t head_len;
 static uint8_t cache[CACHE_CAP];
@@ -103,6 +105,13 @@ static uint32_t stream_copy(uint8_t *dst, uint32_t off, uint32_t len) {
 
     while (n < len && off < head_len)
         dst[n++] = head[off++];
+
+    if (src_mem) {
+        uint32_t f = off - head_len;
+        while (n < len && f < src_mem_len)
+            dst[n++] = src_mem[f++];
+        return n;
+    }
 
     while (n < len) {
         uint32_t f = off - head_len;
@@ -289,8 +298,10 @@ static void abort_conn(TcpSocket_T *conn) {
     free_socket(conn);
 }
 
-/* The transfer proper, from the first byte to the acknowledged FIN. */
-static XferStatus_T send_stream(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *session, TcpSocket_T *conn, int64_t size, XferResult_T *res) {
+/* The transfer proper, from the first byte to the acknowledged FIN --- or,
+ * with <keep_open> (conn is the session itself), to the last byte
+ * acknowledged, with the connection left as it was. */
+static XferStatus_T send_stream(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *session, TcpSocket_T *conn, int64_t size, XferResult_T *res, uint8_t keep_open) {
     static uint8_t buf[SEG];
 
     uint8_t total_known = size >= 0;
@@ -303,6 +314,7 @@ static XferStatus_T send_stream(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *s
     uint64_t now = get_ticks();
     uint64_t mark = now;          /* when the retransmission timer started */
     uint64_t last_progress = now;
+    XferStatus_T status = XFER_OK;
 
     peer.base = conn->seq_num;
     peer.acked = 0;
@@ -317,9 +329,18 @@ static XferStatus_T send_stream(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *s
 
         if (peer_gone(conn))
             return XFER_RESET;
-        if (cancelled(session)) {
-            abort_conn(conn);
-            return XFER_CANCELLED;
+        if (status != XFER_CANCELLED && cancelled(session)) {
+            if (!keep_open) {
+                abort_conn(conn);
+                return XFER_CANCELLED;
+            }
+            /* The session must go on: the stream ends with what is out ---
+             * all of it, even what a go-back is about to send again, since
+             * the peer may hold it already --- and that is still seen through
+             * to the peer before the session writes on after it. */
+            status = XFER_CANCELLED;
+            total = peer.hi > next ? peer.hi : next;
+            total_known = 1;
         }
 
         if (peer.progress) {
@@ -418,6 +439,11 @@ static XferStatus_T send_stream(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *s
 
     res->bytes = total - head_len;
 
+    if (keep_open) {
+        conn->seq_num = peer.base + total; /* where the session's next write goes */
+        return status;
+    }
+
     /* Close, and send the FIN again until it is acknowledged: nc only exits
      * once it has it. */
     close(conn);
@@ -457,6 +483,7 @@ XferStatus_T xfer_send(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *session, c
     res->http = 0;
 
     src_path = path;
+    src_mem = 0;
     head_len = 0;
     cache_valid = 0;
     read_error = 0;
@@ -472,8 +499,10 @@ XferStatus_T xfer_send(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *session, c
     listen(listener);
 
     /* Under ETH the kernel hands this process only the ports it has bound. */
-    if (is_eth)
-        net_bind_port(port);
+    if (is_eth && net_bind_port(port) != 0) {
+        free_socket(listener);
+        return XFER_NO_SOCKET;
+    }
     net_set_nonblocking(1);
 
     XferStatus_T status = XFER_OK;
@@ -541,7 +570,7 @@ XferStatus_T xfer_send(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *session, c
     }
     conn->rx_len = 0; /* the request itself is of no further interest */
 
-    status = send_stream(sockets, session, conn, size, res);
+    status = send_stream(sockets, session, conn, size, res, 0);
     res->ms = get_ticks() - t0;
 
 out:
@@ -554,7 +583,47 @@ out:
             abort_conn(s);
     }
     free_socket(listener);
+    if (is_eth)
+        net_unbind_port(port);
 
     net_set_nonblocking(0);
+    return status;
+}
+
+XferStatus_T xfer_send_buffer(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *conn, const uint8_t *data, uint32_t len, XferResult_T *res) {
+    res->bytes = 0;
+    res->crc32 = 0;
+    res->resent = 0;
+    res->ms = 0;
+    res->http = 0;
+    if (!len)
+        return XFER_OK;
+
+    src_path = 0;
+    src_mem = data;
+    src_mem_len = len;
+    head_len = 0;
+    read_error = 0;
+
+    peer.on = 1;
+    peer.conn = conn;
+    memcpy(peer.ip, conn->remote_ip, 4);
+    peer.rport = conn->remote_port;
+    peer.lport = conn->local_port;
+    peer.window = SEG;
+    peer.sending = 0;
+    peer.reset = 0;
+    peer.fin = 0;
+    memcpy(res->peer_ip, conn->remote_ip, 4);
+
+    net_set_nonblocking(1);
+    uint64_t t0 = get_ticks();
+    XferStatus_T status = send_stream(sockets, conn, conn, len, res, 1);
+    res->ms = get_ticks() - t0;
+    net_set_nonblocking(0);
+
+    peer.on = 0;
+    peer.sending = 0;
+    src_mem = 0;
     return status;
 }

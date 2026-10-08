@@ -43,6 +43,9 @@ static void out(TcpSocket_T *sock, const uint8_t *s, uint32_t n) {
 
 static void sock_str(TcpSocket_T *sock, const uint8_t *s) { out(sock, s, strlen(s)); }
 
+static int peer_telnet = 0;
+void shell_set_telnet(int on) { peer_telnet = on; }
+
 
 
 static void sock_u32(TcpSocket_T *sock, uint32_t v) {
@@ -98,10 +101,26 @@ void shell_banner(TcpSocket_T *sock) {
                                     "Type 'help' for commands.\r\n\r\n");
 }
 
+/*
+ *  "user@host:/mnt/fat> ", as the kernel's own prompt has it.  The user is the
+ *  system user, which Memento's login sets (and the login a new connection
+ *  gives, see auth.h, is that one); "root" before anyone has logged in.
+ */
 void shell_prompt(TcpSocket_T *sock) {
-    sock_str(sock, (const uint8_t *)"[");
+    SysInfo_T si = {0};
+    if (read_sysinfo(&si)) {
+        si.system_user[31] = '\0';
+        si.system_name[31] = '\0';
+        /*  The kernel pads the host name with spaces.  */
+        for (int i = 30; i >= 0 && (si.system_name[i] == ' ' || !si.system_name[i]); i--)
+            si.system_name[i] = '\0';
+        sock_str(sock, si.system_user);
+        sock_str(sock, (const uint8_t *)"@");
+        sock_str(sock, si.system_name);
+        sock_str(sock, (const uint8_t *)":");
+    }
     sock_str(sock, cwd);
-    sock_str(sock, (const uint8_t *)"]> ");
+    sock_str(sock, (const uint8_t *)"> ");
 }
 
 static void cmd_help(TcpSocket_T *sock) {
@@ -109,7 +128,7 @@ static void cmd_help(TcpSocket_T *sock) {
                                     "  help          show this message\r\n"
                                     "  ls [path]     list directory (default: cwd)\r\n"
                                     "  cd <path>     change directory\r\n"
-                                    "  read <path>   print file contents\r\n"
+                                    "  read <path>   print file contents (a key stops it)\r\n"
                                     "  get <path> [port]  send a file to curl/wget/nc (port 8023)\r\n"
                                     "  bg <name> [args...]  run ELF in background\r\n"
                                     "  ts            list running tasks\r\n"
@@ -324,7 +343,24 @@ static void cmd_cd(TcpSocket_T *sock, const uint8_t *path_arg) {
     chdir(abs);
 }
 
-static void cmd_read(TcpSocket_T *sock, const uint8_t *path_arg) {
+/*
+ *  `read`: the whole file, read into a block of the user heap first (syscall
+ *  0x0a; it grows past its first 4 MiB when it has to), then sent down the
+ *  session the way `get` sends a download --- following the client's ACKs and
+ *  sending again what went missing --- since libcr2's TCP does not, and a
+ *  file of any size is far more than one burst of segments.  A key pressed
+ *  meanwhile stops it.  It used to be read with read_file() into 4 KiB on the
+ *  stack's doorstep, and a bigger file wrote on past it.
+ */
+#define READ_MAX (8u * 1024 * 1024) /* past this, `get` is the way */
+#define READ_PIECE (32u * 1024)     /* read_file_at() at a time */
+
+static void sock_size(TcpSocket_T *sock, uint32_t bytes) {
+    sock_u32(sock, bytes);
+    sock_str(sock, (const uint8_t *)" bytes");
+}
+
+static void cmd_read(TcpSocket_T *sock, TcpSocket_T sockets[MAX_SOCKETS], const uint8_t *path_arg) {
     if (!path_arg || !path_arg[0]) {
         sock_str(sock, (const uint8_t *)"read: usage: read <file>\r\n");
         return;
@@ -333,66 +369,112 @@ static void cmd_read(TcpSocket_T *sock, const uint8_t *path_arg) {
     uint8_t abs[64];
     build_abs_path(abs, path_arg);
 
-    static uint8_t file_buf[4096];
-    uint16_t i;
-    for (i = 0; i < (uint16_t)sizeof(file_buf); i++)
-        file_buf[i] = 0;
-
-    /* Try the full absolute path first — ISO9660 resolves subdirectories
-     * natively, and FAT12 root files work this way too. */
-    int64_t r = read_file(abs, file_buf);
-
-    if (!r) {
-        /* Full-path lookup failed: likely a FAT12 subdirectory file.
-         * ScReadFile only matches a single filename component, so chdir to the
-         * parent directory (which uses resolve_path_from to walk subdirs) and
-         * call read_file with just the bare filename, then restore cwd. */
-        uint8_t parent[64];
-        const uint8_t *fname = abs;
-        uint8_t last = 0;
-        for (uint8_t k = 0; abs[k]; k++)
-            if (abs[k] == '/')
-                last = k;
-        if (last > 0) {
-            str_copy(parent, abs, last + 1);
-            parent[last] = '\0';
-            fname = abs + last + 1;
-        } else {
-            str_copy(parent, cwd, 64);
-        }
-        chdir(parent);
-        for (i = 0; i < (uint16_t)sizeof(file_buf); i++)
-            file_buf[i] = 0;
-        r = read_file(fname, file_buf);
-        chdir(cwd);
-    }
-
-    if (!r) {
+    int64_t size = xfer_file_size(abs);
+    if (size == -1) {
         sock_str(sock, (const uint8_t *)"read: failed to open '");
         sock_str(sock, abs);
         sock_str(sock, (const uint8_t *)"'\r\n");
         return;
     }
+    if (size > (int64_t)READ_MAX) {
+        sock_str(sock, (const uint8_t *)"read: ");
+        sock_size(sock, (uint32_t)size);
+        sock_str(sock, (const uint8_t *)" is too much to show here; use 'get'\r\n");
+        return;
+    }
 
-    /* Find content length (NUL-terminated or buffer end). */
-    uint16_t len = 0;
-    while (len < sizeof(file_buf) && file_buf[len])
-        len++;
-
+    /*  Into the heap.  Its size from the directory when it says, else grown
+     *  as the file turns out to go on (XFER_SIZE_UNKNOWN).  */
+    uint32_t cap = size >= 0 ? (uint32_t)size : 64u * 1024;
+    uint8_t *buf = malloc(cap ? cap : 1);
+    uint32_t len = 0;
+    int err = 0;
+    while (buf) {
+        if (len == cap) {
+            if (size >= 0 || cap >= READ_MAX)
+                break;
+            uint32_t more = cap * 2 > READ_MAX ? READ_MAX : cap * 2;
+            uint8_t *grown = realloc(buf, more);
+            if (!grown) {
+                free(buf);
+                buf = 0;
+                break;
+            }
+            buf = grown;
+            cap = more;
+        }
+        uint32_t want = cap - len < READ_PIECE ? cap - len : READ_PIECE;
+        int64_t got = read_file_at(abs, buf + len, len, want);
+        if (got < 0) {
+            err = 1;
+            break;
+        }
+        len += (uint32_t)got;
+        if ((uint32_t)got < want)
+            break; /* the end of it */
+    }
+    if (!buf) {
+        sock_str(sock, (const uint8_t *)"read: no memory for ");
+        sock_size(sock, size >= 0 ? (uint32_t)size : cap);
+        sock_str(sock, (const uint8_t *)"\r\n");
+        return;
+    }
+    if (err) {
+        free(buf);
+        sock_str(sock, (const uint8_t *)"read: failed reading '");
+        sock_str(sock, abs);
+        sock_str(sock, (const uint8_t *)"'\r\n");
+        return;
+    }
     if (len == 0) {
+        free(buf);
         sock_str(sock, (const uint8_t *)"(empty file)\r\n");
         return;
     }
 
-    /* Send in chunks, replacing bare \n with \r\n for telnet. */
-    for (uint16_t j = 0; j < len; j++) {
-        if (file_buf[j] == '\n') {
-            out(sock, (const uint8_t *)"\r\n", 2);
-        } else {
-            out(sock, &file_buf[j], 1);
+    /*  For the terminal: a bare \n becomes \r\n, and for a telnet client a
+     *  0xff byte is doubled, or it takes it for a TELNET command.  Done in
+     *  place from the end, in the block grown by what that adds.  */
+    uint8_t iac = peer_telnet ? 0xFF : '\n'; /* '\n': nothing more to double */
+    uint32_t extra = 0;
+    for (uint32_t j = 0; j < len; j++)
+        if (buf[j] == '\n' || buf[j] == iac)
+            extra++;
+    if (extra) {
+        uint8_t *grown = realloc(buf, len + extra);
+        if (!grown) {
+            free(buf);
+            sock_str(sock, (const uint8_t *)"read: no memory for ");
+            sock_size(sock, len + extra);
+            sock_str(sock, (const uint8_t *)"\r\n");
+            return;
         }
+        buf = grown;
+        uint32_t w = len + extra;
+        for (uint32_t j = len; j-- > 0;) {
+            uint8_t b = buf[j];
+            buf[--w] = b;
+            if (b == '\n')
+                buf[--w] = '\r';
+            else if (b == iac)
+                buf[--w] = 0xFF;
+        }
+        len += extra;
     }
-    sock_str(sock, (const uint8_t *)"\r\n");
+
+    shell_flush(); /* what came before goes first */
+    XferResult_T res;
+    XferStatus_T st = xfer_send_buffer(sockets, sock, buf, len, &res);
+    free(buf);
+
+    if (st == XFER_CANCELLED) {
+        sock_str(sock, (const uint8_t *)"\r\n[stopped after ");
+        sock_size(sock, (uint32_t)res.bytes);
+        sock_str(sock, (const uint8_t *)"]\r\n");
+    } else if (st == XFER_OK) {
+        sock_str(sock, (const uint8_t *)"\r\n");
+    }
+    /* Stalled or reset: the session is gone, and there is nobody to tell. */
 }
 
 static void cmd_mount(TcpSocket_T *sock) {
@@ -1057,7 +1139,7 @@ int shell_dispatch(TcpSocket_T *sock, TcpSocket_T sockets[MAX_SOCKETS], uint8_t 
     } else if ((arg = str_after(line, (const uint8_t *)"cd "))) {
         cmd_cd(sock, arg);
     } else if ((arg = str_after(line, (const uint8_t *)"read "))) {
-        cmd_read(sock, arg);
+        cmd_read(sock, sockets, arg);
     } else if ((arg = str_after(line, (const uint8_t *)"get "))) {
         cmd_get(sock, sockets, arg);
     } else if ((arg = str_after(line, (const uint8_t *)"bg "))) {

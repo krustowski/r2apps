@@ -56,4 +56,16 @@ int64_t xfer_file_size(const uint8_t *path);
  */
 XferStatus_T xfer_send(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *session, const uint8_t *path, const uint8_t *name, int64_t size, uint16_t port, XferResult_T *res);
 
+/*
+ *  Sends <len> bytes from memory down <conn>, an established connection that
+ *  stays open afterwards --- the telnet session itself, for `read` --- with
+ *  the same care as a download: the peer's ACKs are followed and whatever
+ *  went missing is sent again.  A key typed into <conn> meanwhile stops it,
+ *  once what is already out has arrived, so the session goes on cleanly.
+ *  XFER_OK when all of it arrived, XFER_CANCELLED when it was stopped
+ *  (res->bytes says how far it got); XFER_STALLED and XFER_RESET leave the
+ *  connection gone.
+ */
+XferStatus_T xfer_send_buffer(TcpSocket_T sockets[MAX_SOCKETS], TcpSocket_T *conn, const uint8_t *data, uint32_t len, XferResult_T *res);
+
 #endif

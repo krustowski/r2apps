@@ -4,6 +4,7 @@
 #include "string.h"
 #include "syscall.h"
 
+#include "auth.h"
 #include "shell.h"
 #include "xfer.h"
 
@@ -16,10 +17,35 @@
  *  greets each client with a banner, and dispatches r2sh-compatible commands
  *  with output written back to the socket instead of the kernel console.
  *
+ *  Once Memento has been logged in to (auth.h), a new connection has to give
+ *  that login and password before it gets the shell.  Connections made before
+ *  are left as they are.
+ *
  *  krusty@vxn.dev / Apr 24, 2026
  */
 
 #define BIND_PORT 23
+
+/*  Tries at the login before the connection is closed.  */
+#define AUTH_TRIES 3
+
+/*  Where a session is with the login.  */
+enum {
+    AUTH_DONE = 0, /* the shell: logged in, or nothing to log in to */
+    AUTH_LOGIN,    /* "login: " is waiting for its answer */
+    AUTH_PASSWORD  /* and then "password: " */
+};
+
+/*  TELNET: the server will echo, so the client stops echoing what is typed
+ *  (and the server echoes nothing: the password does not show); and back.
+ *  Only to a client that has spoken TELNET itself (Session_T.telnet): nc
+ *  prints these bytes as they come.  */
+static const uint8_t ECHO_OFF[] = {0xFF, 0xFB, 0x01}; /* IAC WILL ECHO */
+static const uint8_t ECHO_ON[] = {0xFF, 0xFC, 0x01};  /* IAC WONT ECHO */
+
+static void say(TcpSocket_T *sock, const char *text) {
+    write(sock, (const uint8_t *)text, strlen((const uint8_t *)text));
+}
 
 typedef struct {
     uint8_t active;
@@ -28,7 +54,53 @@ typedef struct {
     uint8_t last_line[LINE_CAP]; /* last executed command for up-arrow recall */
     uint8_t last_llen;
     uint8_t esc_state;           /* 0=normal  1=saw ESC  2=saw ESC+[ */
+    uint8_t telnet;              /* the client sent a TELNET command: it is one */
+    uint8_t cr;                  /* the last byte ended a line with CR */
+    uint8_t auth;                /* AUTH_* */
+    uint8_t tries;               /* failed logins so far */
+    uint8_t login[LINE_CAP];     /* the login, while the password is asked */
+    uint8_t login_len;
 } Session_T;
+
+/*
+ *  A line typed while the session is logging in.  Returns 1 when the
+ *  connection is to be closed (too many tries).
+ */
+static int auth_line(TcpSocket_T *sock, Session_T *sess) {
+    if (sess->auth == AUTH_LOGIN) {
+        memcpy(sess->login, sess->line, sess->llen);
+        sess->login_len = sess->llen;
+        sess->auth = AUTH_PASSWORD;
+        if (sess->telnet)
+            write(sock, ECHO_OFF, sizeof(ECHO_OFF));
+        say(sock, "password: ");
+        return 0;
+    }
+
+    int ok = auth_check(sess->login, sess->login_len, sess->line, sess->llen);
+    for (uint32_t k = 0; k < LINE_CAP; k++)
+        sess->line[k] = 0, sess->login[k] = 0;
+    sess->login_len = 0;
+    if (sess->telnet) {
+        write(sock, ECHO_ON, sizeof(ECHO_ON));
+        say(sock, "\r\n"); /* the Enter the client did not echo */
+    }
+
+    if (ok) {
+        sess->auth = AUTH_DONE;
+        sess->tries = 0;
+        shell_prompt(sock);
+        shell_flush();
+        return 0;
+    }
+    if (++sess->tries >= AUTH_TRIES) {
+        say(sock, "Login incorrect. Goodbye.\r\n");
+        return 1;
+    }
+    sess->auth = AUTH_LOGIN;
+    say(sock, "Login incorrect.\r\n\r\nlogin: ");
+    return 0;
+}
 
 uint8_t debug = 0;
 
@@ -104,10 +176,24 @@ int main(int argc, char **argv) {
                 if (!sessions[i].active) {
                     sessions[i].active = 1;
                     sessions[i].llen = 0;
+                    sessions[i].last_llen = 0; /* not the last connection's command */
+                    sessions[i].esc_state = 0;
+                    sessions[i].tries = 0;
+                    sessions[i].telnet = 0;
+                    sessions[i].cr = 0;
+                    sessions[i].login_len = 0;
+                    /*  Asked only now, so that the connections already in
+                     *  the shell when Memento was logged in to stay there.  */
+                    sessions[i].auth = auth_required() ? AUTH_LOGIN : AUTH_DONE;
 
                     shell_banner(s);
-                    shell_prompt(s);
-                    shell_flush();
+                    if (sessions[i].auth == AUTH_LOGIN) {
+                        shell_flush();
+                        say(s, "Memento is logged in: its login and password, please.\r\n\r\nlogin: ");
+                    } else {
+                        shell_prompt(s);
+                        shell_flush();
+                    }
                 }
             } else if (!s->used && sessions[i].active) {
                 sessions[i].active = 0;
@@ -135,6 +221,10 @@ int main(int argc, char **argv) {
              *  option byte — skip all three bytes in that case.
              */
             if (b == 0xFF) {
+                /*  A telnet client negotiates options as it connects (to
+                 *  port 23; to another port only when told to, `telnet host
+                 *  -port`): that is how it is told apart from nc.  */
+                sess->telnet = 1;
                 if (j + 1 < rn)
                     j += (rx_buf[j + 1] >= 0xFB) ? 2 : 1;
                 continue;
@@ -151,7 +241,7 @@ int main(int argc, char **argv) {
             }
             if (sess->esc_state == 2) {
                 sess->esc_state = 0;
-                if (b == 'A' && sess->last_llen > 0) {
+                if (b == 'A' && sess->last_llen > 0 && sess->auth == AUTH_DONE) {
                     /* Erase what is currently typed, then echo the last command. */
                     for (uint8_t k = 0; k < sess->llen; k++)
                         write(client, (const uint8_t *)"\b \b", 3);
@@ -166,18 +256,40 @@ int main(int argc, char **argv) {
                 continue;
             }
 
-            if (b == '\r') {
-                /* TELNET sends CRLF; \n below fires on the LF */
-                continue;
+            /*
+             *  The end of a line: CR LF from a telnet client in line mode,
+             *  CR NUL from one sending a character at a time (which it does
+             *  once the server echoes, as for the password, having asked for
+             *  SUPPRESS-GO-AHEAD itself), a bare LF from nc.  The line ends
+             *  on the CR, and the LF or NUL after it is let go by.
+             */
+            if (b == '\r' || b == '\n' || b == 0) {
+                uint8_t after_cr = sess->cr;
+                sess->cr = (b == '\r');
+                if (b == 0 || (b == '\n' && after_cr))
+                    continue;
+            } else {
+                sess->cr = 0;
             }
 
-            if (b == '\n') {
+            if (b == '\r' || b == '\n') {
                 sess->esc_state = 0;
+                if (sess->auth != AUTH_DONE) {
+                    int quit = auth_line(client, sess);
+                    sess->llen = 0;
+                    if (quit) {
+                        close(client);
+                        sessions[client->id].active = 0;
+                        break;
+                    }
+                    continue;
+                }
                 /* Save non-empty command to history before dispatching. */
                 if (sess->llen > 0) {
                     memcpy(sess->last_line, sess->line, sess->llen);
                     sess->last_llen = sess->llen;
                 }
+                shell_set_telnet(sess->telnet);
                 int quit = shell_dispatch(client, sockets, sess->line, sess->llen);
                 sess->llen = 0;
                 if (quit) {
