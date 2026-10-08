@@ -114,8 +114,8 @@ static void pad(BshSession *s, uint8_t from, uint8_t to) {
 
 int bsh_cmd_ts(BshSession *s, const uint8_t *arg) {
     (void)arg;
-    TaskInfo_T tasks[10];
-    int64_t count = list_tasks(tasks, 10);
+    TaskInfo_T tasks[R2_MAX_SLOTS];
+    int64_t count = list_tasks(tasks, R2_MAX_SLOTS);
     if (count <= 0) {
         dim(s, "No tasks.\n");
         return 0;
@@ -124,8 +124,8 @@ int bsh_cmd_ts(BshSession *s, const uint8_t *arg) {
     bsh_label(s, BSH_C_HEAD, "PID  M  STATUS    NAME              RIP\n");
     for (int64_t i = 0; i < count; i++) {
         TaskInfo_T *t = &tasks[i];
-        bsh_u64(s, t->id, 0);
-        bsh_str(s, "    ");
+        bsh_u64(s, t->id, 3);
+        bsh_str(s, "  ");
         if (t->mode == 0)
             dim(s, "K  "); /* the kernel's own */
         else
@@ -227,8 +227,8 @@ int bsh_cmd_meminfo(BshSession *s, const uint8_t *arg) {
     if (!read_mem(s, &mi))
         return 0;
 
-    TaskInfo_T tasks[10];
-    int64_t count = list_tasks(tasks, 10);
+    TaskInfo_T tasks[R2_MAX_SLOTS];
+    int64_t count = list_tasks(tasks, R2_MAX_SLOTS);
     if (count < 0)
         count = 0;
 
@@ -240,7 +240,7 @@ int bsh_cmd_meminfo(BshSession *s, const uint8_t *arg) {
 
     /* Kernel tasks take a slot too, but run on the kernel's own mappings:
      * only a user program's frame holds anything. */
-    uint64_t slots = mi.slots < 16 ? mi.slots : 16;
+    uint64_t slots = mi.slots < R2_MAX_SLOTS ? mi.slots : R2_MAX_SLOTS;
     uint64_t in_use = 0;
     for (uint64_t k = 0; k < slots; k++) {
         const TaskInfo_T *t = mi.slot_task[k] == 0xFF ? 0 : find_task(tasks, count, mi.slot_task[k]);
@@ -258,16 +258,18 @@ int bsh_cmd_meminfo(BshSession *s, const uint8_t *arg) {
     bsh_u64(s, in_use, 0);
     bsh_str(s, " held by programs\n");
 
+    /* The free ones are counted rather than listed: most of 32 are. */
     bsh_label(s, BSH_C_HEAD, "  SLOT  PHYSICAL    PID  NAME\n");
+    uint64_t free_slots = 0;
     for (uint64_t k = 0; k < slots; k++) {
+        if (mi.slot_task[k] == 0xFF) {
+            free_slots++;
+            continue;
+        }
         bsh_u64(s, k, 6);
         bsh_str(s, "  ");
         bsh_hex(s, mi.frame_base + k * mi.frame_size, 0);
         bsh_str(s, "  ");
-        if (mi.slot_task[k] == 0xFF) {
-            dim(s, "   -  free\n");
-            continue;
-        }
         bsh_u64(s, mi.slot_task[k], 4);
         bsh_str(s, "  ");
         uint8_t nlen = task_name(s, tasks, count, mi.slot_task[k]);
@@ -277,6 +279,13 @@ int bsh_cmd_meminfo(BshSession *s, const uint8_t *arg) {
             dim(s, "(kernel task: frame unused)");
         }
         bsh_str(s, "\n");
+    }
+    if (free_slots) {
+        bsh_color(s, BSH_C_DIM);
+        bsh_str(s, "  ");
+        bsh_u64(s, free_slots, 0);
+        bsh_str(s, free_slots == 1 ? " slot free\n" : " slots free\n");
+        bsh_color(s, BSH_RESET);
     }
 
     label(s, "User heap      ");
@@ -305,8 +314,8 @@ int bsh_cmd_heap(BshSession *s, const uint8_t *arg) {
     if (!read_mem(s, &mi))
         return 0;
 
-    TaskInfo_T tasks[10];
-    int64_t count = list_tasks(tasks, 10);
+    TaskInfo_T tasks[R2_MAX_SLOTS];
+    int64_t count = list_tasks(tasks, R2_MAX_SLOTS);
     if (count < 0)
         count = 0;
 
@@ -352,12 +361,12 @@ int bsh_cmd_heap(BshSession *s, const uint8_t *arg) {
     bsh_str(s, "\n");
     bsh_label(s, BSH_C_HEAD, "Held by\n  SLOT   PID  NAME                 USED\n");
     int any = 0;
-    for (int k = 0; k < 17; k++) {
+    for (int k = 0; k <= R2_MAX_SLOTS; k++) {
         uint64_t bytes = mi.heap_by_slot[k];
         if (!bytes)
             continue;
         any = 1;
-        if (k == 16) {
+        if (k == R2_MAX_SLOTS) {
             dim(s, "     -     -  (no owner)      ");
         } else {
             bsh_u64(s, (uint64_t)k, 6);

@@ -640,14 +640,21 @@ int64_t write_file_at(const uint8_t *name, const uint8_t *buffer, uint64_t offse
 int64_t kill_task(uint64_t pid);
 
 /*
+ *  The most process slots a kernel has, so the most tasks list_tasks() can
+ *  report.  A kernel from before 32 slots has 10.
+ */
+#define R2_MAX_SLOTS 32
+
+/*
  *  type MemInfo_T structure
  *
- *  What syscall 0x3c fills in; every figure is in bytes.  The user heap is the
- *  one malloc() (syscall 0x0a) hands out from, shared by every process;
- *  heap_by_slot says who holds what, by process slot ([16] is untagged), and
- *  slot_task gives the task id in each slot (0xFF for a free one), so the
- *  figures can be put next to list_tasks().  Slot n's private 2 MiB frame is
- *  physical frame_base + n * frame_size, seen at frame_virt.
+ *  What syscall 0x3c fills in (version 2); every figure is in bytes.  The
+ *  user heap is the one malloc() (syscall 0x0a) hands out from, shared by
+ *  every process; heap_by_slot says who holds what, by process slot
+ *  ([R2_MAX_SLOTS] is untagged), and slot_task gives the task id in each slot
+ *  (0xFF for a free one), so the figures can be put next to list_tasks().
+ *  <slots> says how many slots the kernel has.  Slot n's private 2 MiB frame
+ *  is physical frame_base + n * frame_size, seen at frame_virt.
  */
 typedef struct {
     uint64_t version;
@@ -659,20 +666,22 @@ typedef struct {
     uint64_t heap_largest_free;
     uint64_t heap_blocks;
     uint64_t heap_free_blocks;
-    uint64_t heap_by_slot[17];
+    uint64_t heap_by_slot[R2_MAX_SLOTS + 1];
     uint64_t frame_base;
     uint64_t frame_size;
     uint64_t frame_virt;
     uint64_t slots;
-    uint8_t slot_task[16];
+    uint8_t slot_task[R2_MAX_SLOTS];
 } __attribute__((packed)) MemInfo_T;
 
 /*
  *  int64_t read_meminfo() prototype
  *
- *  Implementation of syscall 0x3c.  Returns 1 with <info> filled in, 0 when
- *  the kernel is busy (the heap or the scheduler locked; try again) or does
- *  not have the call.
+ *  Implementation of syscall 0x3c, asking for version 2.  Returns 1 with
+ *  <info> filled in, 0 when the kernel is busy (the heap or the scheduler
+ *  locked; try again) or does not have the call.  A kernel from before 32
+ *  slots answers with version 1, which has room for 16; that is put into
+ *  this layout, and <version> stays 1.
  */
 int64_t read_meminfo(MemInfo_T *info);
 
@@ -746,8 +755,8 @@ typedef struct {
  *  int64_t list_tasks() prototype
  *
  *  Implementation of syscall 0x2F.
- *  Fills buf with up to <max> TaskInfo_T entries (max 10).
- *  Returns the number of entries written.
+ *  Fills buf with up to <max> TaskInfo_T entries: one per task, so never
+ *  more than R2_MAX_SLOTS.  Returns the number of entries written.
  */
 int64_t list_tasks(TaskInfo_T *buf, uint8_t max);
 

@@ -336,12 +336,40 @@ int64_t list_dir_path(const uint8_t *path, VfsDirEntry_T buf[64]) { return sysca
 
 int64_t kill_task(uint64_t pid) { return syscall(ScKillTask, (int64_t)pid, 0, 0) == 0 ? 1 : 0; }
 
+/* What a kernel from before 32 slots fills in, whatever version is asked
+ * for: room for 16 slots, [16] untagged. */
+typedef struct {
+    uint64_t head[9]; /* version .. heap_free_blocks, as in MemInfo_T */
+    uint64_t heap_by_slot[17];
+    uint64_t frame_base;
+    uint64_t frame_size;
+    uint64_t frame_virt;
+    uint64_t slots;
+    uint8_t slot_task[16];
+} __attribute__((packed)) MemInfoV1_T;
+
+_Static_assert(sizeof(MemInfoV1_T) == 8 * 30 + 16, "MemInfo version 1 layout");
+_Static_assert(sizeof(MemInfo_T) == 8 * 46 + 32, "MemInfo version 2 layout");
+
 int64_t read_meminfo(MemInfo_T *info) {
     if (!info)
         return 0;
     info->version = 0;
-    if (syscall(ScMemInfo, (int64_t)info, 0, 0) != 0)
+    if (syscall(ScMemInfo, (int64_t)info, 2, 0) != 0)
         return 0;
+    if (info->version == 1) {
+        /* The fields before heap_by_slot are where they belong already. */
+        MemInfoV1_T v1 = *(MemInfoV1_T *)info;
+        for (int k = 0; k <= R2_MAX_SLOTS; k++)
+            info->heap_by_slot[k] = k < 16 ? v1.heap_by_slot[k] : 0;
+        info->heap_by_slot[R2_MAX_SLOTS] = v1.heap_by_slot[16];
+        info->frame_base = v1.frame_base;
+        info->frame_size = v1.frame_size;
+        info->frame_virt = v1.frame_virt;
+        info->slots = v1.slots;
+        for (int k = 0; k < R2_MAX_SLOTS; k++)
+            info->slot_task[k] = k < 16 ? v1.slot_task[k] : 0xFF;
+    }
     return info->version >= 1 ? 1 : 0;
 }
 
