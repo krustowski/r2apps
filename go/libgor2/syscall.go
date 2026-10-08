@@ -7,21 +7,19 @@
 // # Calling convention
 //
 // A syscall is an `int 0x7f` with the number in RAX, the first argument in RDI
-// and the second in RSI; the result comes back in RAX.  The kernel's dispatcher
-// takes exactly two arguments -- syscall_inner(arg1, arg2, syscall_no) -- so
-// there is no third argument, whatever c/libcr2's four-argument syscall()
-// prototype suggests.
+// and the second in RSI; an optional third argument goes in RCX. The result
+// comes back in RAX. Syscall passes zero in RCX; Syscall3 supplies its value.
 //
 // # Pointers
 //
 // Every syscall that takes a pointer checks that the whole buffer it is about
 // to use lies inside one user region --- the process's own frame
-// (0x600000..0xA00000) or the kernel's shared user heap (0xC00000..0x1000000)
-// --- and returns InvalidInput otherwise.  All Go memory satisfies this: the
-// linker script puts globals, heap and stack inside the private frame at
-// 0x600000..0x7C0000, and goroutine stacks come from that heap.  A block from
-// KMalloc satisfies it too, so it can be handed to any syscall directly; see
-// KBytes.
+// and user stacks (0x400000..0xA00000) or the kernel's shared user heap
+// (0xC00000..0x1000000 and any heap extension)
+// --- and returns InvalidInput otherwise. The default Go arena, globals and
+// system stack live in the private frame at 0x600000..0x7C0000. The optional
+// r2largeheap arena and KMalloc blocks live in the admitted kernel heap, so
+// their buffers can also be handed to syscalls directly; see KBytes.
 //
 // The check is against the region, not against the Go slice: the kernel still
 // is not told how long a buffer is, so a slice shorter than what a syscall
@@ -29,12 +27,6 @@
 package libgor2
 
 import "unsafe"
-
-// Syscall issues `int 0x7f`.  Implemented in targets/r2.S, which is linked in
-// by the r2 target rather than by this package.
-//
-//go:export r2_syscall
-func Syscall(number, arg1, arg2 uintptr) uintptr
 
 // ptr is the address of x, in the form the ABI wants it.
 //
@@ -44,7 +36,7 @@ func ptr(x unsafe.Pointer) uintptr {
 	return uintptr(x)
 }
 
-// Syscall numbers.  These mirror SyscallNo_T in c/libcr2/syscall.h.
+// Syscall numbers from c/libcr2/syscall.h and the current kernel dispatcher.
 const (
 	ScExit = 0x00
 
@@ -90,22 +82,25 @@ const (
 	ScListTasks   = 0x2f
 
 	// Port I/O and networking
-	ScWritePort   = 0x30
-	ScReadPort    = 0x31
-	ScSerialPort  = 0x32
-	ScNewPacket   = 0x33
-	ScSendPacket  = 0x34
-	ScReceivePort = 0x35
-	ScSendPort    = 0x36
-	ScNetRegister = 0x37
-	ScNetStatus   = 0x38
-	ScReadFileAt  = 0x39
-	ScWriteFileAt = 0x3a
-	ScKillTask    = 0x3b
-	ScMemInfo     = 0x3c
-	ScNetConfig   = 0x3d
-	ScAudio       = 0x3f
-	ScFsStat      = 0x40
+	ScWritePort       = 0x30
+	ScReadPort        = 0x31
+	ScSerialPort      = 0x32
+	ScNewPacket       = 0x33
+	ScSendPacket      = 0x34
+	ScReceivePort     = 0x35
+	ScSendPort        = 0x36
+	ScNetRegister     = 0x37
+	ScNetStatus       = 0x38
+	ScReadFileAt      = 0x39
+	ScWriteFileAt     = 0x3a
+	ScKillTask        = 0x3b
+	ScMemInfo         = 0x3c
+	ScNetConfig       = 0x3d
+	ScPower           = 0x3e
+	ScAudio           = 0x3f
+	ScFsStat          = 0x40
+	ScCmdline         = 0x41
+	ScDesktopRelaunch = 0x42
 )
 
 // Errno is a kernel return code.  Zero means success; every other value is one
@@ -114,6 +109,7 @@ type Errno uintptr
 
 const (
 	OK               = Errno(0x00)
+	EUnchanged       = Errno(0xf9)
 	EBusy            = Errno(0xfa)
 	ENotImplemented  = Errno(0xfb)
 	EInvalidInput    = Errno(0xfc)
@@ -127,6 +123,8 @@ func (e Errno) Error() string {
 	switch e {
 	case OK:
 		return "ok"
+	case EUnchanged:
+		return "frame unchanged"
 	case EBusy:
 		return "kernel busy"
 	case ENotImplemented:

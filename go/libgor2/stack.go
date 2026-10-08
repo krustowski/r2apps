@@ -16,15 +16,6 @@ type StackStats struct {
 	CacheMax  int     // how many the cache keeps
 }
 
-//go:linkname taskStackStats internal/task.r2StackStats
-func taskStackStats(out *[7]uintptr)
-
-//go:linkname taskStackCurrent internal/task.r2StackCurrent
-func taskStackCurrent(used, size *uintptr)
-
-//go:linkname taskSetStackCache internal/task.r2SetStackCache
-func taskSetStackCache(n int) int
-
 // ReadStackStats returns the goroutine stack counters.  Peak only counts
 // goroutines that have finished; a long-lived one can measure itself with
 // StackUsed.

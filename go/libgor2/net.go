@@ -2,9 +2,12 @@ package libgor2
 
 import "unsafe"
 
-// Packet kinds understood by NewPacket, SendPacket and Receive.
+// Packet kinds. ICMP and TCP select header construction in NewPacket;
+// SendPacket transmits IPv4 packets or raw Ethernet frames.
 const (
 	PacketIPv4 = 0x01 // length taken from the IPv4 header
+	PacketICMP = 0x02 // header construction through NewPacket
+	PacketTCP  = 0x03 // header construction through NewPacket
 	PacketEth  = 0x04 // raw Ethernet frame; length derived from the ethertype
 )
 
@@ -104,9 +107,9 @@ func NewPacket(kind uint8, buf []byte) error {
 //
 // The length is taken from the packet itself --- the IPv4 total_length field
 // for PacketIPv4, and the ethertype for PacketEth --- so buf must carry a
-// header the kernel can believe.  An IPv4 frame whose source and destination
-// addresses match is looped back to the local process queue rather than put on
-// the wire.
+// header the kernel can believe. Raw Ethernet frames addressed to 127.x or
+// this machine's IP use the kernel's loopback device. TCP is routed by
+// destination port; local ICMP echo replies go back to the sending process.
 func SendPacket(kind uint8, buf []byte) error {
 	if len(buf) == 0 {
 		return EInvalidInput
@@ -170,8 +173,9 @@ func Send(pid uint64, buf []byte) error {
 }
 
 // NetRegister makes this process the global Ethernet driver: the kernel brings
-// up the RTL8139 and delivers every frame no port binding has claimed --- ARP
-// and ICMP included --- here (syscall 0x37).
+// up a supported NIC (RTL8139 or E1000) and delivers every frame no port binding
+// has claimed, including ARP and ICMP, here (syscall 0x37). Registration and
+// port bindings are released when the process exits, is killed or crashes.
 func NetRegister() error {
 	return err(Syscall(ScNetRegister, 0, 0))
 }
@@ -199,6 +203,13 @@ func NetUnbindPort(port uint16) error {
 // error on a kernel without the syscall.
 func ReadNetConfig(cfg *NetConfig) error {
 	return err(Syscall(ScNetConfig, 0x01, ptr(unsafe.Pointer(cfg))))
+}
+
+// WriteNetConfig publishes the network configuration (syscall 0x3d, op 0x02).
+// Only the registered global Ethernet driver may set it. MAC is ignored;
+// EBusy means retry because the system configuration is locked.
+func WriteNetConfig(cfg *NetConfig) error {
+	return err(Syscall(ScNetConfig, 0x02, ptr(unsafe.Pointer(cfg))))
 }
 
 // ReadNetStatus fills ns with the MAC, the IP, whether the driver is up and

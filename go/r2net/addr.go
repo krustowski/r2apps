@@ -72,6 +72,9 @@ func (ip IP) IsBroadcast() bool {
 	return ip[0] == 255 && ip[1] == 255 && ip[2] == 255 && ip[3] == 255
 }
 
+// IsLoopback reports whether the address belongs to 127.0.0.0/8.
+func (ip IP) IsLoopback() bool { return ip[0] == 127 }
+
 // sameSubnet reports whether a and b share the network given by mask.
 func sameSubnet(a, b, mask IP) bool {
 	for i := 0; i < 4; i++ {

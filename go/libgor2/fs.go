@@ -49,7 +49,7 @@ func ReadFile(name string) ([]byte, error) {
 
 // ReadFileAt reads at most len(buf) bytes of name starting offset bytes in, and
 // returns how many it got: short at the end of the file, zero when offset is
-// past it (syscall 0x39).  Works on the floppy and on the CD alike.
+// past it (syscall 0x39). Works on FAT, ISO9660 and TAR mounts alike.
 func ReadFileAt(name string, buf []byte, offset uint64) (int, error) {
 	if len(buf) == 0 {
 		return 0, nil
@@ -96,7 +96,7 @@ func ReadFileInto(name string, buf []byte) error {
 // if it is missing and growing it if it is too short (syscall 0x3a).  What lies
 // before offset is left alone, so a file can be added to rather than replaced.
 //
-// FAT12 only: the ISO is read-only.
+// Writable FAT volumes only (the floppy and RAM disk); ISO/TAR are read-only.
 func WriteFileAt(name string, data []byte, offset uint64) (int, error) {
 	if len(data) == 0 {
 		return 0, nil
@@ -200,8 +200,8 @@ func ListDir(cluster uint64) ([]Entry, error) {
 	return out, nil
 }
 
-// ListDirPath lists the directory at an absolute VFS path, on either filesystem
-// (syscall 0x2d).
+// ListDirPath lists up to 64 entries at a VFS path, including / and /mnt,
+// writable FAT volumes and read-only ISO/TAR mounts (syscall 0x2d).
 func ListDirPath(path string) ([]VfsDirEntry, error) {
 	var buf [maxVfsDirEntries]VfsDirEntry
 

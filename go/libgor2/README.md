@@ -15,8 +15,9 @@ if err := libgor2.ReadSysInfo(&info); err != nil {
 | File | Covers |
 | ---- | ------ |
 | `syscall.go` | The `int 0x7f` entry point, syscall numbers, error codes. |
+| `abi.go` | TinyGo assembly and runtime hooks, including `Syscall3`. |
 | `types.go` | The structures the kernel reads and writes, and the assertions that keep them honest. |
-| `system.go` | Exit, sysinfo, RTC, ticks, sleep, tasks, `Args`. |
+| `system.go` | Exit, sysinfo/user, RTC, ticks, sleep, tasks, command lines, desktop relaunch, power, `Args`. |
 | `console.go` | Print, clear, flush. |
 | `fs.go` | Files, directories, mounts, `chdir`, fsck. |
 | `video.go` | Framebuffer, VGA modes, RGB/indexed blitting, presentation transactions, captures, the kernel font. |
@@ -39,16 +40,17 @@ the kernel syscall bindings in this directory still require TinyGo.
 ## Calling convention
 
 The syscall number goes in **RAX**, the first argument in RDI, the second in
-RSI; the result comes back in RAX.  The kernel's dispatcher --- `syscall_inner(arg1,
-arg2, syscall_no)` --- takes exactly two arguments, so there is no third one,
-whatever `c/libcr2`'s four-argument `syscall()` prototype suggests.
+RSI, and an optional third in RCX; the result comes back in RAX. `Syscall`
+clears RCX, while `Syscall3(number, arg1, arg2, arg3)` supplies it. The
+trampoline also places the number in RDX for older kernels, matching libcr2.
+Rebuild the `tinygo-r2` image after updating these bindings.
 
 Every syscall that takes a pointer checks that the whole buffer it uses lies
-inside one user region: the process's own frame (`0x600000..0xA00000`) or the
-kernel's shared user heap (`0xC00000..0x1000000`).  All Go memory satisfies
-this --- globals, heap and stack all live inside the private frame, and
-goroutine stacks come from that heap --- and so does a block from `KMalloc`,
-which `KBytes` turns into a slice any call here will take:
+inside one user region: the image and user stacks (`0x400000..0xA00000`) or the
+kernel's shared user heap (`0xC00000..0x1000000` and any extension). Globals,
+the system stack and the default Go arena live in the private frame. The
+optional `r2largeheap` arena and blocks from `KMalloc` also satisfy the checks.
+`KBytes` turns a `KMalloc` block into a slice any call here will take:
 
 ```go
 addr := libgor2.KMalloc(1 << 20) // 1 MiB the collector never sees
@@ -78,6 +80,27 @@ and requires a 32bpp framebuffer. `CaptureFramebufferRGB24Scaled` fills a
 `[]byte` with tightly packed RGB triples at dimensions from 1 to 65535.
 Both validate destination capacity. If either returns `EBusy`, discard the
 captured contents and retry later.
+
+`CaptureFramebufferRGB24ScaledIfNew` also accepts `*FBCaptureInfo`. Set
+`FrameID` to zero to force a copy, or retain the last accepted ID to skip an
+unchanged 640x480 indexed snapshot. `EUnchanged` leaves the pixels untouched;
+metadata identifies the leased frame and its timestamp in milliseconds.
+`Flags & FBCaptureInfoSnapshot` identifies a stable RAM snapshot. Old kernels
+perform an ordinary capture and leave the output flags/timestamp zero.
+
+## Process and system controls
+
+`CommandLine(pid)` reads up to 128 bytes of the original launch command,
+without assuming a terminating NUL. `RequestDesktopRelaunch(pid)` asks a
+registered Memento running under the graphics-session supervisor to close
+cooperatively and relaunch. Only that Memento can register or poll with
+`RegisterDesktopRelaunch` and `DesktopRelaunchPending`; other apps receive
+`ENotImplemented`. `Reboot` and `PowerOff` do not return on success.
+
+`SetUser` changes the system user to a single printable ASCII word.
+`WriteNetConfig` publishes network configuration from the global driver.
+Filesystem helpers support the floppy, writable FAT RAM disk, read-only
+ISO/TAR volumes and mount directories such as `/` and `/mnt`.
 
 ## Structure layouts
 
@@ -117,3 +140,28 @@ if err := libgor2.Chdir("/mnt/fat"); err != nil {
 
 Calls that answer with a count or a handle rather than a status --- `Ticks`,
 `ListTasks`, `Run`, `Receive` --- return that value directly.
+
+## Verification
+
+Run `make test` here for stock-Go ABI and networking regression tests. The
+`r2abimock` tag replaces assembly/runtime hooks only on the host; an `r2`
+build always selects the real hooks. Unexpected mock syscalls panic.
+Native application builds use the rebuilt TinyGo image.
+
+For an isolated VM, build `./libgor2/tests/native` as `ABI.ELF` with the r2
+target and place it on a FAT floppy alongside this `INIT.RC`:
+
+```text
+cd /mnt/fat
+fg ABI --smoke
+```
+
+Boot the current kernel with an E1000 or RTL8139 device and QEMU debug output
+enabled (`-debugcon file:abi.log -global isa-debugcon.iobase=0xe9`). The test
+reports `GO ABI CHECK PASS` after checking argv, sysinfo/user changes, process
+command lines, desktop/power error returns, VFS mount directories, RAM-disk
+I/O, local pings through a separate driver process, registration cleanup and
+port binding. A 32bpp graphics boot also verifies capture metadata and unchanged
+snapshot detection through the real three-argument trampoline.
+With `-device isa-debug-exit,iobase=0xf4,iosize=0x04`, a passing test stops
+QEMU with exit code 33. Other display formats report the capture check as skipped.

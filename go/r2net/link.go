@@ -343,7 +343,8 @@ func (l *ethLink) lookup(ip IP) (MAC, bool) {
 }
 
 func (l *ethLink) remember(ip IP, mac MAC) {
-	if ip.IsZero() || mac.IsZero() || mac == broadcastMAC {
+	// The kernel's loopback device uses an all-zero hardware address.
+	if ip.IsZero() || mac == broadcastMAC || (mac.IsZero() && !ip.IsLoopback() && ip != l.localIP) {
 		return
 	}
 

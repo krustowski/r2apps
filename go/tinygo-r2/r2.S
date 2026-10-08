@@ -57,17 +57,24 @@ _start:
  *  Go hands us num/a1/a2 in rdi/rsi/rdx and wants the result in rax; the
  *  kernel wants the number in rax and the arguments in rdi/rsi.
  *
- *  The handler preserves every general-purpose register except rcx (which it
- *  overwrites with rdx) and r9 (which it uses to carry the return value back
- *  across its own register restore).  Both are caller-saved under SysV, so
- *  there is nothing to do about them here.
+ *  RCX carries the optional third argument. Clear it for two-argument calls
+ *  so kernel extensions never mistake a live register for another argument.
+ *  Current handlers preserve every register except RAX (result) and R9
+ *  (scratch); older handlers also clobbered RCX. Both are SysV caller-saved.
  */
 .section .text.r2_syscall
 .global r2_syscall
 r2_syscall:
+    xorl    %ecx, %ecx
+
+/* SysV already passes the fourth parameter (arg3) in RCX. */
+.global r2_syscall3
+r2_syscall3:
     movq    %rdi, %rax
     movq    %rsi, %rdi
     movq    %rdx, %rsi
+    /* Match libcr2: older kernels take the syscall number from RDX. */
+    movq    %rax, %rdx
     int     $0x7f
     ret
 

@@ -41,9 +41,9 @@
 // those arrive as something other than a TCP segment and go to the driver.
 // CanICMP reports which of the two happened.
 //
-// The registration is never released, not even when the process exits, so a
-// program that registers and then exits leaves the machine without an ARP
-// responder until the next boot.
+// The kernel releases registration and TCP bindings on exit, kill or crash.
+// Local Ethernet traffic uses the kernel's loopback device; local Ping works
+// even when another process owns the driver.
 package r2net
 
 import (
@@ -312,16 +312,15 @@ func (s *Stack) LocalIP() IP { return s.localIP }
 // Link is the name of the link layer in use, "eth" or "slip".
 func (s *Stack) Link() string { return s.link.name() }
 
-// CanICMP reports whether ICMP echo and UDP --- and so Ping and Resolve ---
-// can work.  They cannot when another process holds the Ethernet driver
-// registration, because the kernel delivers everything that is not a bound TCP
-// port to that process instead of to this one.
+// CanICMP reports whether remote ICMP echo and UDP can work. They require
+// global driver ownership. Local Ethernet Ping can work without it through
+// the kernel's loopback device.
 func (s *Stack) CanICMP() bool { return s.driver }
 
 // nextHop is the address whose hardware address a packet for dst should be
 // aimed at: the destination itself on the local link, the gateway otherwise.
 func (s *Stack) nextHop(dst IP) IP {
-	if sameSubnet(dst, s.localIP, s.netmask) {
+	if dst.IsLoopback() || dst == s.localIP || sameSubnet(dst, s.localIP, s.netmask) {
 		return dst
 	}
 
@@ -406,7 +405,7 @@ func (s *Stack) deliver(raw []byte) {
 	// On Ethernet the card may hand us frames for other hosts; on SLIP the
 	// far end may be talking to an address we do not have.  Either way, a
 	// packet that is not ours is not ours.
-	if !s.localIP.IsZero() && pkt.dst != s.localIP && !pkt.dst.IsBroadcast() {
+	if !s.localIP.IsZero() && pkt.dst != s.localIP && !pkt.dst.IsBroadcast() && !(s.eth != nil && pkt.dst.IsLoopback()) {
 		return
 	}
 

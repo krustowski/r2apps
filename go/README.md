@@ -77,11 +77,11 @@ program, its stack and its heap:
 0x800000  end of the frame
 ```
 
-The 256 KiB below the top of the frame is deliberately unused.  The kernel
-picks a process's initial stack from a fixed per-slot table, and the last two
-slots are at `0x7F0000` and `0x7D0000` --- inside this frame.  A program
-unlucky enough to land in slot 8 or 9 would otherwise have its argv frame
-written straight through its own heap.
+The 256 KiB below the top of the frame stays unused for compatibility with
+older kernels, which placed slot 8/9 startup stacks inside the image frame.
+Current kernels have 32 slots and place their startup stacks outside it, in
+`0x800000..0xA00000` and `0x400000..0x600000`. `_start` saves argv and switches
+to the private Go stack shown above so the collector can scan it.
 
 There is no guard page: the frame is a single 2 MiB huge page, so the finest
 protection the hardware offers is the whole page.  A stack overflow runs
@@ -262,9 +262,9 @@ a plain `[]byte` for anything too big for the ~1.5 MiB Go heap.
 
 Worth knowing whichever language you write in:
 
-- The syscall number goes in **RAX**, arguments in RDI and RSI.  The kernel's
-  dispatcher takes two arguments, so the third argument in `c/libcr2`'s
-  `syscall()` prototype never reaches it.
+- The syscall number goes in **RAX**, arguments in RDI, RSI and optionally
+  RCX. `libgor2.Syscall` supplies two arguments and clears RCX;
+  `libgor2.Syscall3` supplies the third argument used by capture metadata.
 - `c/libcr2`'s `serial_write()` passes the byte *by value* where the kernel
   expects a *pointer* to it, so it writes whatever lives at that address --- on
   the occasions the range check lets it through at all.

@@ -13,11 +13,10 @@
  *      0x7C0000  reserved --- see below
  *      0x800000  end of our frame
  *
- *  The 256 KiB below the top of the frame is left alone on purpose.  The
- *  kernel picks a process's initial stack from a fixed per-slot table
- *  (input/elf.rs), and the last two slots are at 0x7F0000 and 0x7D0000 ---
- *  inside this frame.  A program unlucky enough to land in slot 8 or 9 would
- *  otherwise have the argv frame written straight through its own heap.
+ *  The 256 KiB below the top of the frame stays reserved for old kernels,
+ *  whose slot 8/9 startup stacks overlap the image. Current 32-slot kernels
+ *  put startup stacks outside the private frame. _start still switches to
+ *  the stack described here so the conservative collector can scan it.
  */
 
 ENTRY(_start)

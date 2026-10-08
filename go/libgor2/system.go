@@ -21,10 +21,25 @@ func ReadSysInfo(info *SysInfo) error {
 	return err(Syscall(ScSysInfo, 0x01, ptr(unsafe.Pointer(info))))
 }
 
-// WriteSysInfo writes info back to the kernel.  The Ethernet driver uses this
-// to publish the IP address it was given.
+// WriteSysInfo sets the IP address from info.IP. Other fields are ignored.
 func WriteSysInfo(info *SysInfo) error {
 	return err(Syscall(ScSysInfo, 0x02, ptr(unsafe.Pointer(info))))
+}
+
+// SetUser changes the system user name (syscall 0x01, op 0x03). Like libcr2,
+// it accepts 1..31 printable ASCII bytes without spaces.
+func SetUser(name string) error {
+	if len(name) == 0 || len(name) >= len(SysInfo{}.User) {
+		return EInvalidInput
+	}
+	for i := 0; i < len(name); i++ {
+		if name[i] < 0x21 || name[i] > 0x7e {
+			return EInvalidInput
+		}
+	}
+	var info SysInfo
+	copy(info.User[:], name)
+	return err(Syscall(ScSysInfo, 0x03, ptr(unsafe.Pointer(&info))))
 }
 
 // ReadRTC fills t from the real-time clock (syscall 0x02).
@@ -91,14 +106,50 @@ func Run(name, args string) uint8 {
 	return uint8(Syscall(ScRunELF, ptr(unsafe.Pointer(&nameBuf[0])), argsPtr))
 }
 
-// Implemented in targets/r2.S, which stashes the argv frame the kernel builds
-// on the initial stack before _start switches away from it.
-//
-//go:export r2_get_argc
-func rawArgc() uintptr
+// CommandLineMax is the kernel's saved command-line capacity, in bytes.
+const CommandLineMax = 128
 
-//go:export r2_get_argv
-func rawArgv() uintptr
+// CommandLine returns the original command line for a PID from ListTasks
+// (syscall 0x41). Kernel tasks return an empty string. EBusy means retry;
+// EFileNotFound means the PID no longer exists.
+func CommandLine(pid uint64) (string, error) {
+	var buf [CommandLineMax]byte
+	n := Syscall(ScCmdline, uintptr(pid), ptr(unsafe.Pointer(&buf[0])))
+	if n > uintptr(len(buf)) {
+		return "", Errno(n)
+	}
+	return string(buf[:n]), nil
+}
+
+// RequestDesktopRelaunch asks a supervised Memento process to exit
+// cooperatively and restart with its original command line (syscall 0x42).
+// ENotImplemented means that process has not registered support or was
+// launched outside the graphics-session supervisor.
+func RequestDesktopRelaunch(pid uint64) error {
+	return err(Syscall(ScDesktopRelaunch, 0, uintptr(pid)))
+}
+
+// RegisterDesktopRelaunch opts the calling Memento process into cooperative
+// desktop relaunch. Other processes receive ENotImplemented.
+func RegisterDesktopRelaunch() error {
+	return err(Syscall(ScDesktopRelaunch, 2, 0))
+}
+
+// DesktopRelaunchPending polls the calling process for a relaunch request.
+// A pending request is committed only when it exits cooperatively.
+func DesktopRelaunchPending() (bool, error) {
+	n := Syscall(ScDesktopRelaunch, 1, 0)
+	if n > 1 {
+		return false, Errno(n)
+	}
+	return n == 1, nil
+}
+
+// Reboot restarts the machine (syscall 0x3e). It does not return on success.
+func Reboot() error { return err(Syscall(ScPower, 1, 0)) }
+
+// PowerOff switches off the machine (syscall 0x3e). It does not return on success.
+func PowerOff() error { return err(Syscall(ScPower, 2, 0)) }
 
 // Args returns the command line, with Args()[0] the program name --- the same
 // thing os.Args would be if this target had an os package worth the name.

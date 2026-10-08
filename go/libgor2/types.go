@@ -157,6 +157,20 @@ type FBInfo struct {
 	BPP    uint32
 }
 
+// FBCaptureInfo is the optional metadata for syscall 0x1d. Set FrameID to the
+// last accepted snapshot ID, or zero to force a copy. TimestampMS and Flags
+// describe the captured frame; callers should accept them only on success
+// or EUnchanged. Older kernels leave the output fields zero.
+type FBCaptureInfo struct {
+	FrameID     uint64
+	TimestampMS uint64
+	Flags       uint32
+	Reserved    uint32
+}
+
+// FBCaptureInfoSnapshot marks a stable completed indexed frame in RAM.
+const FBCaptureInfoSnapshot = 1
+
 // IndexedFrame is the argument block for syscall 0x19. Pixels points to
 // Width * Height palette indices; Palette points to 256 RGB byte triples.
 // FirstRow and Rows select the band to draw. BlitIndexed builds this block
@@ -341,6 +355,9 @@ const (
 
 	_ = uint(unsafe.Sizeof(FBInfo{}) - 16)
 	_ = uint(16 - unsafe.Sizeof(FBInfo{}))
+
+	_ = uint(unsafe.Sizeof(FBCaptureInfo{}) - 24)
+	_ = uint(24 - unsafe.Sizeof(FBCaptureInfo{}))
 
 	_ = uint(unsafe.Sizeof(IndexedFrame{}) - 32)
 	_ = uint(32 - unsafe.Sizeof(IndexedFrame{}))

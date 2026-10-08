@@ -11,15 +11,6 @@ import (
 // Print and friends go through that same buffer as the print builtin and the
 // fmt package, so output from all three arrives in the order it was written.
 // Only WriteDirect bypasses it.
-//
-//go:linkname flush runtime.flushStdout
-func flush()
-
-// SetConsoleSink mirrors buffered runtime output, including panic messages.
-// The sink must not allocate, print, or yield. Nil restores console-only output.
-//
-//go:linkname SetConsoleSink runtime.setR2StdoutSink
-func SetConsoleSink(sink func([]byte))
 
 // Flush writes out anything the runtime has buffered.  Output is flushed
 // automatically at each newline and when the program exits, so this is only

@@ -40,7 +40,7 @@ per syscall --- and this is the layer that uses it.
 ## Two links
 
 ```go
-Options{Link: "eth"}   // the RTL8139, through the kernel's driver registration
+Options{Link: "eth"}   // RTL8139 or E1000, through kernel driver registration
 Options{Link: "slip"}  // IPv4 packets over COM1
 ```
 
@@ -62,7 +62,7 @@ already registered and takes one of two roads:
 | No driver | Registers as the global driver | Everything: TCP, ICMP, UDP, DNS, and answering ARP for the machine |
 | A driver (`eth.elf`, `garn`) | Binds the TCP ports it needs | TCP and HTTP only |
 
-`CanICMP` reports which one happened.  In the second case ICMP echo replies and
+`CanICMP` reports which one happened. In the second case remote ICMP echo replies and
 UDP datagrams go to the other process, because the kernel routes by TCP port
 and those frames have none; `Ping` and `Resolve` say so with `ErrNoICMP` and
 `ErrNoDatagram` rather than timing out, since "another process holds the NIC"
@@ -70,13 +70,18 @@ and "the host is down" are different facts.
 
 Two consequences worth knowing before designing around this:
 
-- **The registration is never released**, not even when the process exits.  A
-  program that registers and leaves takes the machine's ARP responder with it
-  until the next boot, and a second run of the same program finds the
-  registration still held --- by nobody.
+- **The kernel releases registration and TCP port bindings** when the process
+  exits, is killed or crashes. `Stack.Close` releases connection bindings;
+  global driver ownership lasts until process exit.
 - **While registered, this stack is the machine's network stack.**  It answers
   ARP who-has for the local address and ICMP echo requests, because nothing
   else is going to.
+
+Local Ethernet traffic to `127.0.0.0/8` or this machine's address uses the
+kernel's loopback device. `Ping` to these addresses works even when another
+process owns the driver. Local TCP still uses bound destination ports. The
+stack routes loopback addresses directly and accepts the device's zero MAC;
+remote UDP/DNS retains the driver ownership requirement.
 
 ## One goroutine
 

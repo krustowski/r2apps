@@ -173,10 +173,25 @@ func CaptureFramebuffer(pixels []uint32) error {
 // must be in 1..65535. EBusy means discard the contents and retry. At 640x480,
 // kernels with the presentation protocol can use a completed indexed snapshot.
 func CaptureFramebufferRGB24Scaled(rgb []byte, width, height uint32) error {
+	return CaptureFramebufferRGB24ScaledIfNew(rgb, width, height, nil)
+}
+
+// CaptureFramebufferRGB24ScaledIfNew adds snapshot metadata to the scaled
+// capture. At 640x480, an unchanged nonzero info.FrameID returns EUnchanged
+// without touching rgb. Zero forces a copy. Nil disables metadata. Older
+// kernels perform an ordinary capture and leave TimestampMS and Flags zero.
+func CaptureFramebufferRGB24ScaledIfNew(rgb []byte, width, height uint32, info *FBCaptureInfo) error {
 	if width == 0 || height == 0 || width > 0xffff || height > 0xffff || uint64(len(rgb)) < uint64(width)*uint64(height)*3 {
 		return EInvalidInput
 	}
-	return err(Syscall(ScCaptureFBRGB24Scaled, ptr(unsafe.Pointer(&rgb[0])), uintptr(width)<<16|uintptr(height)))
+	dimensions := uintptr(width)<<16 | uintptr(height)
+	var metadata uintptr
+	if info != nil {
+		info.TimestampMS, info.Flags, info.Reserved = 0, 0, 0
+		dimensions |= uintptr(1) << 63
+		metadata = ptr(unsafe.Pointer(info))
+	}
+	return err(Syscall3(ScCaptureFBRGB24Scaled, ptr(unsafe.Pointer(&rgb[0])), dimensions, metadata))
 }
 
 // KernelFont copies the kernel's embedded PSF1 glyphs into buf and returns the

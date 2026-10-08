@@ -44,9 +44,10 @@ var echoSeq uint16
 // It needs the global Ethernet driver registration, because the kernel routes
 // only TCP frames by port and hands everything else --- ICMP included --- to
 // the registered driver.  When another process holds it, Ping reports ErrNoICMP
-// rather than quietly timing out, which is a different fact about the network.
+// for remote hosts. On Ethernet, the kernel answers local echo requests
+// (127.x or LocalIP) directly, even when another process owns the driver.
 func (s *Stack) Ping(dst IP, timeout time.Duration) (time.Duration, error) {
-	if !s.driver {
+	if !s.driver && !(s.eth != nil && (dst.IsLoopback() || dst == s.localIP)) {
 		return 0, ErrNoICMP
 	}
 
