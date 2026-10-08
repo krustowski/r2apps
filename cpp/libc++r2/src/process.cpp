@@ -38,6 +38,15 @@ bool set_sysinfo(const SysInfo &info) {
     return raw_syscall(Sys::SysInfo, 0x02, (int64_t)&info) == 0;
 }
 
+bool set_user(string_view name) {
+    SysInfo info;
+    memset(&info, 0, sizeof(info));
+    if (name.empty() || name.size() >= sizeof(info.system_user))
+        return false;
+    memcpy(info.system_user, name.data(), name.size());
+    return raw_syscall(Sys::SysInfo, 0x03, (int64_t)&info) == 0;
+}
+
 vector<TaskInfo> tasks() {
     constexpr uint8_t MAX_TASKS = 10; /*  the kernel's own limit  */
     TaskInfo buffer[MAX_TASKS];

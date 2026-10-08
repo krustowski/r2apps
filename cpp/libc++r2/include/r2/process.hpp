@@ -34,6 +34,10 @@ bool at_exit(void (*fn)());
 /*  Sysinfo (syscall 0x01): host name, user, version, path, uptime, IP.  */
 optional<SysInfo> sysinfo();
 bool set_sysinfo(const SysInfo &info);
+/*  Sets the system user that sysinfo() reports (syscall 0x01, 0x03): one word
+ *  of printable ASCII, at most 31 characters.  False when the kernel refuses
+ *  it (empty, too long, a space or another unprintable) or is too old.  */
+bool set_user(string_view name);
 
 /*  The scheduler's task table (syscall 0x2f), at most 10 entries.  */
 vector<TaskInfo> tasks();

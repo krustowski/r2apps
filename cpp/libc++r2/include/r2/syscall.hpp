@@ -189,7 +189,7 @@ struct __attribute__((packed)) FsckReport {
 struct __attribute__((packed)) MountInfo {
     uint8_t path[32];
     uint8_t path_len;
-    uint8_t fs_type; /*  0 none, 1 rootfs, 2 fat12, 3 iso9660, 4 tar  */
+    uint8_t fs_type; /*  0 none, 1 rootfs, 2 fat12, 3 iso9660, 4 tar, 5 memdisk  */
 };
 
 struct __attribute__((packed)) VfsDirEntry {

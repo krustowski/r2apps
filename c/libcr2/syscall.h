@@ -117,7 +117,7 @@ typedef struct {
  *  type MountInfo_T structure
  *
  *  Describes one VFS mount point as returned by syscall 0x2C (ScListMounts).
- *  fs_type: 0=none, 1=rootfs, 2=fat12, 3=iso9660, 4=tar
+ *  fs_type: 0=none, 1=rootfs, 2=fat12, 3=iso9660, 4=tar, 5=memdisk (FAT12 in RAM)
  */
 typedef struct {
     uint8_t path[32];

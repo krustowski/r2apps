@@ -34,6 +34,8 @@ enum class FsType : uint8_t {
     RootFs = 1,
     Fat12 = 2,
     Iso9660 = 3,
+    Tar = 4,
+    MemDisk = 5, /*  /mnt/tmp: FAT12 in RAM  */
 };
 
 struct Entry {
