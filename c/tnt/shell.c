@@ -128,6 +128,7 @@ static void cmd_help(TcpSocket_T *sock) {
                                     "  help          show this message\r\n"
                                     "  ls [path]     list directory (default: cwd)\r\n"
                                     "  cd <path>     change directory\r\n"
+                                    "  mkdir <path>  make a directory (up to 8 chars; /mnt/fat or /mnt/tmp)\r\n"
                                     "  read <path>   print file contents (a key stops it)\r\n"
                                     "  get <path> [port]  send a file to curl/wget/nc (port 8023)\r\n"
                                     "  bg <name> [args...]  run ELF in background\r\n"
@@ -358,6 +359,141 @@ static void cmd_cd(TcpSocket_T *sock, const uint8_t *path_arg) {
 static void sock_size(TcpSocket_T *sock, uint32_t bytes) {
     sock_u32(sock, bytes);
     sock_str(sock, (const uint8_t *)" bytes");
+}
+
+/*
+ *  `mkdir <path>`: a directory on the floppy or the RAM disk, in the current
+ *  directory or wherever the path says.  The kernel (syscall 0x27) makes a
+ *  FAT name of whatever it is given, cutting a longer one short, and does not
+ *  say whether the directory came to be --- not when the name is taken, not
+ *  when the disk is full --- so the name is checked first and the directory
+ *  looked for afterwards.
+ */
+static uint8_t upper(uint8_t c) { return (c >= 'a' && c <= 'z') ? (uint8_t)(c - 32) : c; }
+
+/*  One to eight characters of what FAT allows in a name.  No extension: the
+ *  kernel makes "A.B" a directory listed as plain "A", and it could not be
+ *  found by the name it was given.  */
+static int dir_name_ok(const uint8_t *n) {
+    uint32_t len = 0;
+    for (; *n; n++, len++) {
+        uint8_t c = *n;
+        int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        for (const uint8_t *k = (const uint8_t *)"!#$%&'()-@^_`{}~"; *k && !ok; k++)
+            ok = c == *k;
+        if (!ok)
+            return 0;
+    }
+    return len >= 1 && len <= 8;
+}
+
+/*  Is <name> in <dir>: 1 as a directory, 2 as a file, 0 not there, -1 when
+ *  the directory cannot be listed.  */
+static int dir_has(const uint8_t *dir, const uint8_t *name) {
+    static VfsDirEntry_T entries[64];
+    int64_t count = list_dir_path(dir, entries);
+    if (count < 0 || count > 64)
+        return -1;
+    uint32_t nl = strlen(name);
+    for (int64_t e = 0; e < count; e++) {
+        if (entries[e].name_len != nl)
+            continue;
+        uint32_t k = 0;
+        while (k < nl && upper(entries[e].name[k]) == upper(name[k]))
+            k++;
+        if (k == nl)
+            return entries[e].is_dir ? 1 : 2;
+    }
+    return 0;
+}
+
+/*  The type of the mount <path> is on (MountInfo_T.fs_type), 0 if none.  */
+static uint8_t mount_type_of(const uint8_t *path) {
+    MountInfo_T mounts[8];
+    int64_t count = list_mounts(mounts);
+    uint8_t best_len = 0, best_type = 0;
+    for (int64_t i = 0; i < count && i < 8; i++) {
+        uint8_t ml = mounts[i].path_len;
+        if (ml > 32 || ml < best_len)
+            continue;
+        uint8_t k = 0;
+        while (k < ml && path[k] == mounts[i].path[k])
+            k++;
+        /*  "/mnt/fat" is on /mnt/fat, and so is "/mnt/fat/X"; "/mnt/fatx" is not.  */
+        if (k == ml && (path[k] == '\0' || path[k] == '/' || mounts[i].path[ml - 1] == '/')) {
+            best_len = ml;
+            best_type = mounts[i].fs_type;
+        }
+    }
+    return best_type;
+}
+
+static void cmd_mkdir(TcpSocket_T *sock, const uint8_t *path_arg) {
+    if (!path_arg || !path_arg[0]) {
+        sock_str(sock, (const uint8_t *)"mkdir: usage: mkdir <path>\r\n");
+        return;
+    }
+
+    uint8_t abs[64];
+    build_abs_path(abs, path_arg);
+    uint8_t n = (uint8_t)strlen(abs);
+    while (n > 1 && abs[n - 1] == '/')
+        abs[--n] = '\0'; /* "NEW/" is NEW */
+
+    /*  Parent and name: the last component, and what is before it.  */
+    uint8_t last = 0;
+    for (uint8_t k = 0; abs[k]; k++)
+        if (abs[k] == '/')
+            last = k;
+    uint8_t parent[64];
+    str_copy(parent, abs, (uint8_t)(last + 1));
+    if (!last)
+        str_copy(parent, (const uint8_t *)"/", 2);
+    const uint8_t *name = abs + last + 1;
+
+    if (!dir_name_ok(name)) {
+        sock_str(sock, (const uint8_t *)"mkdir: '");
+        sock_str(sock, name);
+        sock_str(sock, (const uint8_t *)"' cannot be a directory name: up to 8 letters, digits or -_, no dot\r\n");
+        return;
+    }
+
+    /*  Only the FAT12 mounts: the floppy and the RAM disk.  The kernel would
+     *  take "/" for the floppy's root, and the CD and the tar are read-only.  */
+    uint8_t type = mount_type_of(parent);
+    if (type != 2 && type != 5) {
+        sock_str(sock, (const uint8_t *)"mkdir: cannot create '");
+        sock_str(sock, abs);
+        sock_str(sock, (const uint8_t *)"': only under /mnt/fat or /mnt/tmp\r\n");
+        return;
+    }
+
+    int had = dir_has(parent, name);
+    if (had < 0) {
+        sock_str(sock, (const uint8_t *)"mkdir: no such directory: ");
+        sock_str(sock, parent);
+        sock_str(sock, (const uint8_t *)"\r\n");
+        return;
+    }
+    if (had) {
+        sock_str(sock, (const uint8_t *)"mkdir: '");
+        sock_str(sock, abs);
+        sock_str(sock, (const uint8_t *)(had == 1 ? "' already exists\r\n" : "' is a file already\r\n"));
+        return;
+    }
+
+    if (!write_subdir(parent, name)) {
+        sock_str(sock, (const uint8_t *)"mkdir: cannot create '");
+        sock_str(sock, abs);
+        sock_str(sock, (const uint8_t *)"'\r\n");
+        return;
+    }
+    if (dir_has(parent, name) != 1) {
+        sock_str(sock, (const uint8_t *)"mkdir: '");
+        sock_str(sock, abs);
+        sock_str(sock, (const uint8_t *)"' was not created (is the disk full?)\r\n");
+        return;
+    }
 }
 
 static void cmd_read(TcpSocket_T *sock, TcpSocket_T sockets[MAX_SOCKETS], const uint8_t *path_arg) {
@@ -1135,6 +1271,10 @@ int shell_dispatch(TcpSocket_T *sock, TcpSocket_T sockets[MAX_SOCKETS], uint8_t 
     } else if (str_eq(line, (const uint8_t *)"exit") || str_eq(line, (const uint8_t *)"quit")) {
         sock_str(sock, (const uint8_t *)"Goodbye.\r\n");
         return 1;
+    } else if (str_eq(line, (const uint8_t *)"mkdir")) {
+        cmd_mkdir(sock, (const uint8_t *)0);
+    } else if ((arg = str_after(line, (const uint8_t *)"mkdir "))) {
+        cmd_mkdir(sock, arg);
     } else if (str_eq(line, (const uint8_t *)"ls")) {
         cmd_ls(sock, (const uint8_t *)0);
     } else if ((arg = str_after(line, (const uint8_t *)"ls "))) {

@@ -50,6 +50,19 @@ nobody in.  `auth.c` has its own SHA-256 for this and computes the hash the way 
 The prompt is `user@host:cwd> `, from the kernel's sysinfo: the user is the one Memento's login set,
 `root` before that.
 
+## Making directories: `mkdir`
+
+```
+mkdir <path>
+```
+
+Makes a directory in the current one, or wherever the path says (`mkdir /mnt/tmp/WORK`,
+`mkdir NEWDIR/INNER`), on the floppy (`/mnt/fat`) or the RAM disk (`/mnt/tmp`): which mount a path
+is on comes from the kernel's mount table, so `/`, `/mnt`, the CD and the tar archive are refused.
+The name is up to eight letters, digits or `!#$%&'()-@^_`{}~`, without a dot (the kernel lists a
+directory `A.B` as `A`).  Syscall 0x27 does not say whether the directory came to be, so `mkdir`
+looks first (an existing name is refused) and afterwards (and says so if it is not there).
+
 ## Showing files: `read`
 
 ```
