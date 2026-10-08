@@ -264,7 +264,8 @@ typedef enum SyscallNumber : int64_t {
     ScMemInfo = 0x3c,
     ScNetConfig = 0x3d,
     // Filesystem size
-    ScFsStat = 0x40
+    ScFsStat = 0x40,
+    ScHeapContains = 0x43
 } SyscallNo_T;
 
 /*
@@ -278,11 +279,18 @@ typedef enum SyscallNumber : int64_t {
 int64_t syscall(SyscallNo_T number, int64_t arg1, int64_t arg2, int64_t arg3);
 
 /*
- *  void exit() prototype
+ *  void r2_exit() prototype
  *
- *  Implementation of syscall 0x00.
+ *  Implementation of syscall 0x00.  Ends the calling process with <code>.
+ *
+ *  Also called exit(), unless a C library has that name (R2_LIBC, types.h):
+ *  its exit(code) flushes stdio first.
  */
+void r2_exit(int64_t pid, int64_t code);
+
+#ifndef R2_LIBC
 void exit(int64_t pid, int64_t code);
+#endif
 
 /*
  *  int64_t read_sysinfo() prototype
@@ -542,7 +550,7 @@ int64_t stop_speaker();
  *  void *malloc() prototype
  *
  *  Implementation of syscall 0x0A.
- *  Allocates <size> bytes from the userland heap (0xC00_000–0xFFF_FFF).
+ *  Allocates <size> bytes from the shared userland heap, including its extension.
  *  Returns a pointer to zeroed memory, or NULL on failure.
  */
 void *malloc(uint64_t size);
@@ -563,6 +571,11 @@ void *realloc(void *ptr, uint64_t size);
  *  Frees a block previously returned by malloc or realloc.
  */
 void free(void *ptr);
+
+/* True when the whole nonempty range lies in one mapped shared heap region.
+ * Does not check allocation ownership or lifetime. On older kernels, only
+ * the original 0xC00000–0x1000000 region can be verified. */
+int64_t shared_heap_contains(const void *ptr, uint64_t size);
 
 /*
  *  int64_t read_file() prototype
@@ -715,13 +728,19 @@ int64_t delete_file(const uint8_t *name);
 int64_t write_subdir(const uint8_t *parent_path, const uint8_t *name);
 
 /*
- *  int64_t chdir() prototype
+ *  int64_t r2_chdir() prototype
  *
  *  Implementation of syscall 0x2E.
  *  Changes the kernel SYSTEM_CONFIG working directory to <path> (absolute VFS path).
  *  Returns 0 on success, non-zero on error.
+ *
+ *  Also called chdir(), unless a C library has that name (R2_LIBC, types.h).
  */
+int64_t r2_chdir(const uint8_t *path);
+
+#ifndef R2_LIBC
 int64_t chdir(const uint8_t *path);
+#endif
 
 /*
  *  int64_t list_dir() prototype

@@ -15,6 +15,11 @@ extern "C" {
 
 #include "types.h"
 
+#ifdef R2_LIBC
+/* the C library's memcmp and memcpy */
+#include <string.h>
+#else
+
 /*
  *  uint32_t memcmp() prototype
  *
@@ -28,6 +33,8 @@ uint32_t memcmp(const uint8_t *s1, const uint8_t *s2, uint32_t len);
  *  Custom memory copying procedure.
  */
 void *memcpy(void *dest, const void *src, uint16_t n);
+
+#endif
 
 #ifdef __cplusplus
 }

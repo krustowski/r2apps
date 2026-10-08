@@ -773,7 +773,7 @@ TcpSocket_T *accept(TcpSocket_T *listener, TcpSocket_T sockets[MAX_SOCKETS]) {
     return 0;
 }
 
-uint32_t read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen) {
+uint32_t tcp_read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen) {
     uint32_t n = (sock->rx_len < maxlen) ? sock->rx_len : maxlen;
 
     for (uint32_t i = 0; i < n; i++) {
@@ -785,7 +785,7 @@ uint32_t read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen) {
     return n;
 }
 
-uint32_t write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len) {
+uint32_t tcp_write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len) {
     if (!sock)
         return 0;
     uint32_t before = sock->seq_num;
@@ -803,7 +803,7 @@ uint32_t write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len) {
     return sent;
 }
 
-void close(TcpSocket_T *sock) {
+void tcp_close(TcpSocket_T *sock) {
     if (sock->state == SOCKET_ESTABLISHED || sock->state == SOCKET_CLOSE_WAIT) {
         /* Send the FIN but keep the slot allocated.  Releasing it here would
          * leave the peer's ACK-of-FIN — and its own FIN — arriving at a socket
@@ -826,6 +826,14 @@ void close(TcpSocket_T *sock) {
 
     free_socket(sock);
 }
+
+#ifndef R2_LIBC
+uint32_t read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen) { return tcp_read(sock, buf, maxlen); }
+
+uint32_t write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len) { return tcp_write(sock, buf, len); }
+
+void close(TcpSocket_T *sock) { tcp_close(sock); }
+#endif
 
 /* Find the socket owning a 4-tuple, skipping <skip> (the listener) and any
  * socket still in LISTENING state. */

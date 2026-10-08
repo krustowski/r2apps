@@ -414,26 +414,36 @@ void listen(TcpSocket_T *sock);
 TcpSocket_T *accept(TcpSocket_T *listener, TcpSocket_T sockets[MAX_SOCKETS]);
 
 /*
- *  uint32_t read() prototype
+ *  uint32_t tcp_read() prototype
  *
  *  This function reads the contents of socket's RX buffer into provided <buf> array. The number of bytes read
  *  is then returned.
  */
-uint32_t read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen);
+uint32_t tcp_read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen);
 
 /*
- *  uint32_t write() prototype
+ *  uint32_t tcp_write() prototype
  *
  *  This function writes the given <buf> array directly over the line.
  */
-uint32_t write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len);
+uint32_t tcp_write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len);
 
 /*
- *  void close() prototype
+ *  void tcp_close() prototype
  *
  *  This function closes the connection tracked by such socket provided.
  */
+void tcp_close(TcpSocket_T *sock);
+
+/*
+ *  The same three as read(), write() and close(), unless a C library has those
+ *  names for its file descriptors (R2_LIBC, types.h).
+ */
+#ifndef R2_LIBC
+uint32_t read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen);
+uint32_t write(TcpSocket_T *sock, const uint8_t *buf, uint32_t len);
 void close(TcpSocket_T *sock);
+#endif
 
 /*
  *  void on_tcp_packet() prototype

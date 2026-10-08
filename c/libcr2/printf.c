@@ -1,18 +1,21 @@
 #include "printf.h"
 
+void print_char(uint8_t c) {
+    uint8_t buf[2];
+    buf[0] = c;
+    buf[1] = '\0';
+    print((const uint8_t *)buf);
+}
+
+/* With a C library (R2_LIBC, types.h), printf is its own. */
+#ifndef R2_LIBC
+
 uint8_t _printf_buf[512];
 uint16_t _printf_pos;
 
 static void _putc(uint8_t c) {
     if (_printf_pos < sizeof(_printf_buf) - 1)
         _printf_buf[_printf_pos++] = c;
-}
-
-void print_char(uint8_t c) {
-    uint8_t buf[2];
-    buf[0] = c;
-    buf[1] = '\0';
-    print((const uint8_t *)buf);
 }
 
 static void print_string(const uint8_t *s) {
@@ -100,3 +103,5 @@ void printf(const uint8_t *fmt, ...) {
     print(_printf_buf);
     va_end(args);
 }
+
+#endif

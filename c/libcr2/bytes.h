@@ -15,9 +15,20 @@ extern "C" {
 
 #include "types.h"
 
+#ifdef __TINYC__
+/* tcc has no __builtin_bswap* */
+static inline uint16_t swap16(uint16_t x) { return (uint16_t)((x << 8) | (x >> 8)); }
+static inline uint32_t swap32(uint32_t x) {
+    return (x >> 24) | ((x >> 8) & 0xff00) | ((x << 8) & 0xff0000) | (x << 24);
+}
+static inline uint64_t swap64(uint64_t x) {
+    return ((uint64_t)swap32((uint32_t)x) << 32) | swap32((uint32_t)(x >> 32));
+}
+#else
 static inline uint16_t swap16(uint16_t x) { return __builtin_bswap16(x); }
 static inline uint32_t swap32(uint32_t x) { return __builtin_bswap32(x); }
 static inline uint64_t swap64(uint64_t x) { return __builtin_bswap64(x); }
+#endif
 
 static inline uint16_t htons(uint16_t x) { return (uint16_t)((x << 8) | (x >> 8)); }
 static inline uint32_t htonl(uint32_t x) { return ((uint32_t)htons(x & 0xFFFF) << 16) | (uint32_t)htons(x >> 16); }

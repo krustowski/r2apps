@@ -11,12 +11,16 @@ int64_t syscall(SyscallNo_T number, int64_t arg1, int64_t arg2, int64_t arg3) {
     return ret;
 }
 
-void exit(int64_t pid, int64_t code) {
+void r2_exit(int64_t pid, int64_t code) {
     syscall(ScExit, pid, code, 0);
 
     for (;;) {
     }
 }
+
+#ifndef R2_LIBC
+void exit(int64_t pid, int64_t code) { r2_exit(pid, code); }
+#endif
 
 int64_t read_sysinfo(SysInfo_T *sysinfo) {
     if (syscall(ScSysInfo, 0x01, (int64_t)sysinfo, 0)) {
@@ -212,6 +216,14 @@ void *realloc(void *ptr, uint64_t size) { return (void *)syscall(ScRealloc, (int
 
 void free(void *ptr) { syscall(ScFree, (int64_t)ptr, 0, 0); }
 
+int64_t shared_heap_contains(const void *ptr, uint64_t size) {
+    uint64_t addr = (uint64_t)ptr;
+    int64_t result = syscall(ScHeapContains, (int64_t)addr, (int64_t)size, 0);
+    if (result == 0xff)
+        return size && addr >= 0xc00000 && addr < 0x1000000 && size <= 0x1000000 - addr;
+    return result == 1;
+}
+
 int64_t read_file(const uint8_t *name, uint8_t *buffer) {
     int64_t len = 0;
     while (name[len])
@@ -294,7 +306,11 @@ int64_t write_subdir(const uint8_t *parent_path, const uint8_t *name) {
     return 0;
 }
 
-int64_t chdir(const uint8_t *path) { return syscall(ScChdir, (int64_t)path, 0, 0); }
+int64_t r2_chdir(const uint8_t *path) { return syscall(ScChdir, (int64_t)path, 0, 0); }
+
+#ifndef R2_LIBC
+int64_t chdir(const uint8_t *path) { return r2_chdir(path); }
+#endif
 
 int64_t list_dir(int64_t cluster, Entry_T entries[32]) {
     if (syscall(ScListDir, cluster, (int64_t)entries, 0)) {

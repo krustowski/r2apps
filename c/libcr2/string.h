@@ -15,12 +15,27 @@ extern "C" {
 
 #include "types.h"
 
+#ifdef R2_LIBC
+/*
+ *  The C library's string.h, which this one hides from anything built with
+ *  libcr2 on its -I path.  Installed as <r2/string.h> among the C library's
+ *  headers (tcc's sysroot), that one is ../string.h.
+ */
+#if __has_include("../string.h")
+#include "../string.h"
+#else
+#include_next <string.h>
+#endif
+#else
+
 /*
  *  uint32_t strlen() prototype
  *
  *  A macro-like function to count the given uint8_t array size. The string should be null-ended.
  */
 uint32_t strlen(const uint8_t *str);
+
+#endif
 
 /*
  *  void u32_to_str() prototype

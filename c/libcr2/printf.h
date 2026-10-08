@@ -14,6 +14,11 @@ extern "C" {
 #include "args.h"
 #include "syscall.h"
 
+#ifdef R2_LIBC
+/* the C library's printf */
+#include <stdio.h>
+#else
+
 /*
  *  static void print_string() prototype
  *
@@ -52,6 +57,8 @@ static void print_hex(unsigned int val);
  *  accordingly.
  */
 void printf(const uint8_t *fmt, ...);
+
+#endif
 
 #ifdef __cplusplus
 }

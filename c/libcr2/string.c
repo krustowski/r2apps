@@ -1,5 +1,7 @@
 #include "string.h"
 
+/* With a C library (R2_LIBC, types.h), strlen is its own. */
+#ifndef R2_LIBC
 uint32_t strlen(const uint8_t *str)
 {
 	uint32_t len = 0;
@@ -7,6 +9,7 @@ uint32_t strlen(const uint8_t *str)
 
 	return len;
 }
+#endif
 
 void u32_to_str(uint32_t value, uint8_t *buffer)
 {

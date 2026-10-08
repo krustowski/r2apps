@@ -1,5 +1,8 @@
 #include "mem.h"
 
+/* With a C library (R2_LIBC, types.h), these are its own. */
+#ifndef R2_LIBC
+
 uint32_t memcmp(const uint8_t *s1, const uint8_t *s2, uint32_t len)
 {
 	for (uint32_t i = 0; i < len; i++)
@@ -26,4 +29,4 @@ void *memcpy(void *dest, const void *src, uint16_t n)
 	return dest;
 }
 
-
+#endif
