@@ -325,6 +325,8 @@ int64_t run_fs_check(FsckReport_T *report) {
 
 int64_t list_mounts(MountInfo_T *buf) { return syscall(ScListMounts, 0, (int64_t)buf, 0); }
 
+int64_t fs_stat(const uint8_t *path, FsStat_T *out) { return syscall(ScFsStat, (int64_t)path, (int64_t)out, 0); }
+
 /* buf MUST have room for 64 entries (64 * 38 = 2432 bytes).  Syscall 0x2D
  * takes no capacity argument and writes as many entries as the directory
  * holds, up to 64, so a smaller buffer is overrun with no diagnostic.

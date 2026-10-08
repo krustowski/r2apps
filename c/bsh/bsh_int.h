@@ -18,6 +18,8 @@ extern int bsh_mnt_count;
 
 void bsh_load_mounts(void);
 const char *bsh_fs_name(uint8_t type);
+/*  The name of a format on the medium (FsStat_T.format): "fat16".  */
+const char *bsh_format_name(uint8_t format);
 /*  The type of the mount <path> is on (the deepest that holds it), 0 if none.
  *  Load the table first.  */
 uint8_t bsh_mount_type_at(const uint8_t *path);

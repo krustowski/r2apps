@@ -114,16 +114,53 @@ typedef struct {
 } __attribute__((packed)) FsckReport_T;
 
 /*
+ *  Mount types, MountInfo_T.fs_type and FsStat_T.fs_type: what is mounted
+ *  there.  The RAM disk at /mnt/tmp is FS_TYPE_MEMDISK whatever its format.
+ */
+#define FS_TYPE_NONE 0
+#define FS_TYPE_ROOTFS 1
+#define FS_TYPE_FAT12 2   /* the floppy at /mnt/fat */
+#define FS_TYPE_ISO9660 3 /* the CD at /mnt/iso */
+#define FS_TYPE_TAR 4     /* the boot medium's archive at /mnt/tar */
+#define FS_TYPE_MEMDISK 5 /* the RAM disk at /mnt/tmp */
+
+/*
+ *  Formats on the medium, FsStat_T.format.
+ */
+#define FS_FORMAT_NONE 0 /* the root: no filesystem, the way to the mounts */
+#define FS_FORMAT_FAT12 1
+#define FS_FORMAT_FAT16 2 /* the RAM disk, unless it is only 2 MiB */
+#define FS_FORMAT_ISO9660 3
+#define FS_FORMAT_TAR 4
+
+/*
  *  type MountInfo_T structure
  *
  *  Describes one VFS mount point as returned by syscall 0x2C (ScListMounts).
- *  fs_type: 0=none, 1=rootfs, 2=fat12, 3=iso9660, 4=tar, 5=memdisk (FAT12 in RAM)
+ *  fs_type: FS_TYPE_*: 0=none, 1=rootfs, 2=fat12, 3=iso9660, 4=tar,
+ *  5=memdisk (the RAM disk: FAT16, or FAT12 when it is only 2 MiB)
  */
 typedef struct {
     uint8_t path[32];
     uint8_t path_len;
     uint8_t fs_type;
 } __attribute__((packed)) MountInfo_T;
+
+/*
+ *  type FsStat_T structure
+ *
+ *  The size of the filesystem a path is on, as syscall 0x40 (ScFsStat)
+ *  returns it.  total_bytes is the whole volume and free_bytes what files can
+ *  still take; both are 0 for the root, and free_bytes is 0 on the read-only
+ *  mounts.
+ */
+typedef struct {
+    uint64_t total_bytes;
+    uint64_t free_bytes;
+    uint8_t fs_type; /* FS_TYPE_* */
+    uint8_t format;  /* FS_FORMAT_* */
+    uint8_t reserved[6];
+} __attribute__((packed)) FsStat_T;
 
 /*
  *  type VfsDirEntry_T structure
@@ -225,7 +262,9 @@ typedef enum SyscallNumber : int64_t {
     ScWriteFileAt = 0x3a,
     ScKillTask = 0x3b,
     ScMemInfo = 0x3c,
-    ScNetConfig = 0x3d
+    ScNetConfig = 0x3d,
+    // Filesystem size
+    ScFsStat = 0x40
 } SyscallNo_T;
 
 /*
@@ -736,6 +775,17 @@ int64_t run_fs_check(FsckReport_T *report);
  *  Fills buf with up to 8 MountInfo_T entries; returns the count of mounts.
  */
 int64_t list_mounts(MountInfo_T *buf);
+
+/*
+ *  int64_t fs_stat() prototype
+ *
+ *  Implementation of syscall 0x40.
+ *  Fills *out with the size of the filesystem <path> is on (absolute, or
+ *  relative to the working directory).  Returns 0, 0xfe when no mount holds
+ *  the path, 0xfd when its medium cannot be read, and 0xff on a kernel that
+ *  has no such syscall.
+ */
+int64_t fs_stat(const uint8_t *path, FsStat_T *out);
 
 /*
  *  int64_t list_dir_path() prototype

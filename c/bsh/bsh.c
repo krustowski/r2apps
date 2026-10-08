@@ -147,9 +147,24 @@ const char *bsh_fs_name(uint8_t type) {
     case 4:
         return "tar";
     case 5:
-        return "memdisk"; /* /mnt/tmp: FAT12 in RAM */
+        return "memdisk"; /* /mnt/tmp: the RAM disk, FAT16 (FAT12 when only 2 MiB) */
     default:
         return "unknown";
+    }
+}
+
+const char *bsh_format_name(uint8_t format) {
+    switch (format) {
+    case FS_FORMAT_FAT12:
+        return "fat12";
+    case FS_FORMAT_FAT16:
+        return "fat16";
+    case FS_FORMAT_ISO9660:
+        return "iso9660";
+    case FS_FORMAT_TAR:
+        return "tar";
+    default:
+        return "none";
     }
 }
 

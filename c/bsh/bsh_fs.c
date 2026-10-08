@@ -386,6 +386,23 @@ int bsh_cmd_read(BshSession *s, const uint8_t *arg) {
     return 0;
 }
 
+/*  A size in whole MiB from 10 MiB up, in KiB from 10 KiB, else in bytes.  */
+static void size_out(BshSession *s, uint64_t bytes) {
+    if (bytes >= (10ull << 20)) {
+        bsh_u64(s, bytes >> 20, 0);
+        bsh_str(s, " MiB");
+    } else if (bytes >= (10ull << 10)) {
+        bsh_u64(s, bytes >> 10, 0);
+        bsh_str(s, " KiB");
+    } else {
+        bsh_u64(s, bytes, 0);
+        bsh_str(s, " B");
+    }
+}
+
+/*  <path> (<type>[, <format>][, <size>][, <free> free]): the format where it
+ *  says more than the type (the RAM disk is a memdisk and FAT16), and the
+ *  sizes from syscall 0x40 -- none on a kernel without it.  */
 int bsh_cmd_mount(BshSession *s, const uint8_t *arg) {
     (void)arg;
     bsh_load_mounts();
@@ -398,7 +415,28 @@ int bsh_cmd_mount(BshSession *s, const uint8_t *arg) {
         bsh_out(s, bsh_mnt[i].path, bsh_mnt[i].path_len);
         bsh_color(s, BSH_RESET);
         bsh_str(s, " (");
-        bsh_label(s, BSH_CYAN, bsh_fs_name(bsh_mnt[i].fs_type));
+        const char *type = bsh_fs_name(bsh_mnt[i].fs_type);
+        bsh_label(s, BSH_CYAN, type);
+
+        uint8_t path[33];
+        bsh_copy(path, bsh_mnt[i].path, (uint8_t)((bsh_mnt[i].path_len > 32 ? 32 : bsh_mnt[i].path_len) + 1));
+        FsStat_T st;
+        if (fs_stat(path, &st) == 0) {
+            const char *format = bsh_format_name(st.format);
+            if (st.format != FS_FORMAT_NONE && !bsh_eq((const uint8_t *)type, format)) {
+                bsh_str(s, ", ");
+                bsh_label(s, BSH_CYAN, format);
+            }
+            if (st.total_bytes) {
+                bsh_str(s, ", ");
+                size_out(s, st.total_bytes);
+            }
+            if (st.free_bytes) {
+                bsh_str(s, ", ");
+                size_out(s, st.free_bytes);
+                bsh_label(s, BSH_C_DIM, " free");
+            }
+        }
         bsh_str(s, ")\n");
     }
     return 0;

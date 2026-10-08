@@ -23,7 +23,7 @@ EXTRA_CFLAGS := -I ../../bsh
 | `rmdir <path>` | remove an empty directory |
 | `rm <path>` | delete a file |
 | `read <path>` | print a file, read whole into the user heap first (up to 8 MiB) |
-| `mount` | the mounted filesystems |
+| `mount` | the mounted filesystems: each one's type, its format where that says more (the RAM disk is `memdisk` and `fat16`), its size and, on a writable one, what is free (syscall `0x40`; no sizes on a kernel without it) |
 | `sysinfo` | the kernel's system information |
 | `bg <name> [args]` (`run`) | start a program in the background |
 | `ts` | the tasks |
