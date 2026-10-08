@@ -19,6 +19,11 @@
  *
  *  Text goes out with '\n' line ends; a host whose terminal wants "\r\n"
  *  makes them in its write function.
+ *
+ *  Colour is off unless the host turns it on: a session with `color` set
+ *  colours the prompt and some output with ANSI sequences (ESC [ ... m),
+ *  which the kernel's console and Memento's Shell window understand.  One
+ *  whose host leaves `color_ok` clear (tnt) never has any, `color on` or not.
  */
 
 #define BSH_PATH 64       /* an absolute VFS path, NUL included */
@@ -44,6 +49,8 @@ struct BshSession {
     void (*write)(BshSession *s, const uint8_t *text, uint32_t len);
     /* Clears the screen; 0 when the host cannot. */
     void (*clear)(BshSession *s);
+    uint8_t color;    /* colour the output: off unless the host turns it on */
+    uint8_t color_ok; /* the host can show colour: `color on` may turn it on */
     /* The host's own commands, ended by one with no name; 0 for none. */
     const BshCommand *commands;
     void *host; /* the host's, for its commands */
@@ -81,6 +88,30 @@ void bsh_u64(BshSession *s, uint64_t v, uint8_t width);
 void bsh_hex(BshSession *s, uint64_t v, uint8_t digits);
 void bsh_ip(BshSession *s, const uint8_t ip[4]);
 void bsh_mac(BshSession *s, const uint8_t mac[6]);
+
+/*  Colour from here on, as an SGR parameter list (BSH_* below, or any such
+ *  as "1;33"), when the session has colour; nothing when it has not.  */
+void bsh_color(BshSession *s, const char *sgr);
+/*  <text> in a colour, and the colour back to plain after it.  */
+void bsh_label(BshSession *s, const char *sgr, const char *text);
+
+#define BSH_RESET "0"
+#define BSH_RED "1;31"
+#define BSH_GREEN "1;32"
+#define BSH_YELLOW "1;33"
+#define BSH_BLUE "1;34"
+#define BSH_MAGENTA "1;35"
+#define BSH_CYAN "1;36"
+#define BSH_GREY "0;37"
+
+/*  What the colours are for, so that commands agree on them.  */
+#define BSH_C_ERROR BSH_RED     /* something went wrong */
+#define BSH_C_USAGE BSH_YELLOW  /* how a command is used */
+#define BSH_C_HEAD BSH_YELLOW   /* a table's headings */
+#define BSH_C_LABEL BSH_CYAN    /* "System:", "RAM" */
+#define BSH_C_OK BSH_GREEN      /* done: launched, killed */
+#define BSH_C_DIM BSH_GREY      /* by the way: "(empty)", "free" */
+#define BSH_C_DIR BSH_BLUE      /* a directory */
 
 /*
  *  Files.

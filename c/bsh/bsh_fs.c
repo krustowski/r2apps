@@ -52,20 +52,26 @@ static int writable(BshSession *s, const char *cmd, const uint8_t *parent, const
     uint8_t type = bsh_mount_type_at(parent);
     if (type == 2 || type == 5)
         return 1;
+    bsh_color(s, BSH_C_ERROR);
     bsh_str(s, cmd);
     bsh_str(s, ": cannot change '");
     bsh_ustr(s, abs);
     bsh_str(s, "': only under /mnt/fat or /mnt/tmp\n");
+    bsh_color(s, BSH_RESET);
     return 0;
 }
 
 static void fail(BshSession *s, const char *cmd, const char *what, const uint8_t *path) {
+    bsh_color(s, BSH_C_ERROR);
     bsh_str(s, cmd);
     bsh_str(s, ": ");
     bsh_str(s, what);
     bsh_ustr(s, path);
+    bsh_color(s, BSH_RESET);
     bsh_str(s, "\n");
 }
+
+static void usage(BshSession *s, const char *text) { bsh_label(s, BSH_C_USAGE, text); }
 
 /* ------------------------------------------------------------------------ */
 
@@ -94,17 +100,21 @@ int bsh_cmd_ls(BshSession *s, const uint8_t *arg) {
             seen[shown] = name;
             seen_len[shown++] = len;
             bsh_str(s, "  ");
+            bsh_color(s, BSH_C_DIR); /* a directory, <DIR> and all */
             bsh_out(s, name, len);
             bsh_str(s, "/  <DIR>");
+            bsh_color(s, BSH_RESET);
             /*  A mount point itself: what is mounted there.  */
             if (bsh_mnt[i].path_len == (pl == 1 ? 1 : pl + 1) + len) {
                 bsh_str(s, "  ");
+                bsh_color(s, BSH_CYAN);
                 bsh_str(s, bsh_fs_name(bsh_mnt[i].fs_type));
+                bsh_color(s, BSH_RESET);
             }
             bsh_str(s, "\n");
         }
         if (!shown)
-            bsh_str(s, "  (empty)\n");
+            bsh_label(s, BSH_C_DIM, "  (empty)\n");
         return 0;
     }
 
@@ -121,17 +131,24 @@ int bsh_cmd_ls(BshSession *s, const uint8_t *arg) {
     for (int64_t i = 0; i < count; i++) {
         VfsDirEntry_T *e = &entries[i];
         bsh_str(s, "  ");
-        bsh_out(s, e->name, e->name_len);
         if (e->is_dir) {
-            bsh_str(s, "/  <DIR>\n");
+            bsh_color(s, BSH_C_DIR); /* a directory, <DIR> and all */
+            bsh_out(s, e->name, e->name_len);
+            bsh_str(s, "/  <DIR>");
+            bsh_color(s, BSH_RESET);
+            bsh_str(s, "\n");
         } else {
+            bsh_out(s, e->name, e->name_len);
             bsh_str(s, "  ");
+            bsh_color(s, BSH_C_DIM);
             bsh_u64(s, e->size, 0);
-            bsh_str(s, " bytes\n");
+            bsh_str(s, " bytes");
+            bsh_color(s, BSH_RESET);
+            bsh_str(s, "\n");
         }
     }
     if (count == 0)
-        bsh_str(s, "  (empty)\n");
+        bsh_label(s, BSH_C_DIM, "  (empty)\n");
     return 0;
 }
 
@@ -170,7 +187,7 @@ static int dir_name_ok(const uint8_t *n) {
  */
 int bsh_cmd_mkdir(BshSession *s, const uint8_t *arg) {
     if (!arg[0]) {
-        bsh_str(s, "mkdir: usage: mkdir <path>\n");
+        usage(s, "mkdir: usage: mkdir <path>\n");
         return 0;
     }
     uint8_t abs[BSH_PATH], parent[BSH_PATH];
@@ -178,9 +195,11 @@ int bsh_cmd_mkdir(BshSession *s, const uint8_t *arg) {
     const uint8_t *name = split_path(abs, parent);
 
     if (!dir_name_ok(name)) {
+        bsh_color(s, BSH_C_ERROR);
         bsh_str(s, "mkdir: '");
         bsh_ustr(s, name);
         bsh_str(s, "' cannot be a directory name: up to 8 letters, digits or -_, no dot\n");
+        bsh_color(s, BSH_RESET);
         return 0;
     }
     if (!writable(s, "mkdir", parent, abs))
@@ -209,8 +228,10 @@ int bsh_cmd_mkdir(BshSession *s, const uint8_t *arg) {
  */
 static int remove_entry(BshSession *s, const char *cmd, const uint8_t *arg, int dir) {
     if (!arg[0]) {
+        bsh_color(s, BSH_C_USAGE);
         bsh_str(s, cmd);
         bsh_str(s, dir ? ": usage: rmdir <path>\n" : ": usage: rm <path>\n");
+        bsh_color(s, BSH_RESET);
         return 0;
     }
     uint8_t abs[BSH_PATH], parent[BSH_PATH];
@@ -279,10 +300,12 @@ int bsh_load_file(BshSession *s, const char *cmd, const uint8_t *path, uint8_t *
         return 0;
     }
     if (size > (int64_t)BSH_READ_MAX) {
+        bsh_color(s, BSH_C_ERROR);
         bsh_str(s, cmd);
         bsh_str(s, ": ");
         bsh_u64(s, (uint64_t)size, 0);
         bsh_str(s, " bytes is more than it reads\n");
+        bsh_color(s, BSH_RESET);
         return 0;
     }
 
@@ -317,10 +340,12 @@ int bsh_load_file(BshSession *s, const char *cmd, const uint8_t *path, uint8_t *
             break; /* the end of it */
     }
     if (!buf) {
+        bsh_color(s, BSH_C_ERROR);
         bsh_str(s, cmd);
         bsh_str(s, ": no memory for ");
         bsh_u64(s, size >= 0 ? (uint64_t)size : cap, 0);
         bsh_str(s, " bytes\n");
+        bsh_color(s, BSH_RESET);
         return 0;
     }
     if (err) {
@@ -341,7 +366,7 @@ int bsh_load_file(BshSession *s, const char *cmd, const uint8_t *path, uint8_t *
  */
 int bsh_cmd_read(BshSession *s, const uint8_t *arg) {
     if (!arg[0]) {
-        bsh_str(s, "read: usage: read <path>\n");
+        usage(s, "read: usage: read <path>\n");
         return 0;
     }
     uint8_t abs[BSH_PATH];
@@ -351,7 +376,7 @@ int bsh_cmd_read(BshSession *s, const uint8_t *arg) {
     if (!bsh_load_file(s, "read", abs, &buf, &len))
         return 0;
     if (!len)
-        bsh_str(s, "(empty file)\n");
+        bsh_label(s, BSH_C_DIM, "(empty file)\n");
     else {
         bsh_out(s, buf, len);
         if (buf[len - 1] != '\n')
@@ -365,13 +390,15 @@ int bsh_cmd_mount(BshSession *s, const uint8_t *arg) {
     (void)arg;
     bsh_load_mounts();
     if (!bsh_mnt_count) {
-        bsh_str(s, "No mounts.\n");
+        bsh_label(s, BSH_C_DIM, "No mounts.\n");
         return 0;
     }
     for (int i = 0; i < bsh_mnt_count; i++) {
+        bsh_color(s, BSH_C_DIR);
         bsh_out(s, bsh_mnt[i].path, bsh_mnt[i].path_len);
+        bsh_color(s, BSH_RESET);
         bsh_str(s, " (");
-        bsh_str(s, bsh_fs_name(bsh_mnt[i].fs_type));
+        bsh_label(s, BSH_CYAN, bsh_fs_name(bsh_mnt[i].fs_type));
         bsh_str(s, ")\n");
     }
     return 0;

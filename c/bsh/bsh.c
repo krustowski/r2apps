@@ -56,6 +56,20 @@ void bsh_hex(BshSession *s, uint64_t v, uint8_t digits) {
     bsh_out(s, out, o);
 }
 
+void bsh_color(BshSession *s, const char *sgr) {
+    if (!s->color)
+        return;
+    bsh_str(s, "\x1b[");
+    bsh_str(s, sgr);
+    bsh_str(s, "m");
+}
+
+void bsh_label(BshSession *s, const char *sgr, const char *text) {
+    bsh_color(s, sgr);
+    bsh_str(s, text);
+    bsh_color(s, BSH_RESET);
+}
+
 void bsh_ip(BshSession *s, const uint8_t ip[4]) {
     uint8_t buf[16];
     uint8_t n = 0;
@@ -267,6 +281,8 @@ void bsh_init(BshSession *s, void (*write)(BshSession *, const uint8_t *, uint32
               void *host) {
     s->write = write;
     s->clear = 0;
+    s->color = 0;
+    s->color_ok = 0;
     s->commands = commands;
     s->host = host;
     if (bsh_dir_exists((const uint8_t *)"/mnt/fat"))
@@ -294,12 +310,16 @@ void bsh_prompt(BshSession *s) {
         /*  The kernel pads the host name with spaces.  */
         for (int i = 30; i >= 0 && (si.system_name[i] == ' ' || !si.system_name[i]); i--)
             si.system_name[i] = '\0';
+        bsh_color(s, BSH_GREEN);
         bsh_ustr(s, si.system_user);
         bsh_str(s, "@");
         bsh_ustr(s, si.system_name);
+        bsh_color(s, BSH_RESET);
         bsh_str(s, ":");
     }
+    bsh_color(s, BSH_BLUE);
     bsh_ustr(s, s->cwd);
+    bsh_color(s, BSH_RESET);
     bsh_str(s, "> ");
 }
 
@@ -315,12 +335,34 @@ static int cmd_exit(BshSession *s, const uint8_t *arg) {
     return BSH_EXIT;
 }
 
+/*  `color [on|off]`: where the host can show colour.  */
+static int cmd_color(BshSession *s, const uint8_t *arg) {
+    if (!s->color_ok) {
+        bsh_str(s, "color: this terminal shows no colours\n");
+        return 0;
+    }
+    if (bsh_eq(arg, "on"))
+        s->color = 1;
+    else if (bsh_eq(arg, "off"))
+        s->color = 0;
+    else if (arg[0]) {
+        bsh_label(s, BSH_C_USAGE, "color: usage: color [on|off]\n");
+        return 0;
+    }
+    bsh_str(s, "color: ");
+    bsh_color(s, BSH_GREEN);
+    bsh_str(s, s->color ? "on" : "off");
+    bsh_color(s, BSH_RESET);
+    bsh_str(s, "\n");
+    return 0;
+}
+
 static int cmd_clear(BshSession *s, const uint8_t *arg) {
     (void)arg;
     if (s->clear)
         s->clear(s);
     else
-        bsh_str(s, "clear: this terminal cannot be cleared\n");
+        bsh_label(s, BSH_C_ERROR, "clear: this terminal cannot be cleared\n");
     return 0;
 }
 
@@ -344,6 +386,7 @@ static const BshCommand base[] = {
     {"play", "<name>", "play a MIDI file", bsh_cmd_play},
     {"stop", "", "stop playback", bsh_cmd_stop},
     {"clear", "", "clear the screen", cmd_clear},
+    {"color", "[on|off]", "colour the prompt and listings", cmd_color},
     {"exit", "", "end the session", cmd_exit},
     {"quit", "", 0, cmd_exit},
     {0, 0, 0, 0},
@@ -364,10 +407,10 @@ static const BshCommand *find(BshSession *s, const uint8_t *name) {
 static void help_line(BshSession *s, const BshCommand *c) {
     uint32_t col = 2 + strlen((const uint8_t *)c->name);
     bsh_str(s, "  ");
-    bsh_str(s, c->name);
+    bsh_label(s, BSH_GREEN, c->name);
     if (c->usage[0]) {
         bsh_str(s, " ");
-        bsh_str(s, c->usage);
+        bsh_label(s, BSH_CYAN, c->usage);
         col += 1 + strlen((const uint8_t *)c->usage);
     }
     do
@@ -381,7 +424,8 @@ static void help_line(BshSession *s, const BshCommand *c) {
  *  host's that are not base ones.  */
 static int cmd_help(BshSession *s, const uint8_t *arg) {
     (void)arg;
-    bsh_str(s, "Commands:\n");
+    bsh_label(s, BSH_C_HEAD, "Commands:");
+    bsh_str(s, "\n");
     for (const BshCommand *b = base; b->name; b++) {
         const BshCommand *c = find(s, (const uint8_t *)b->name);
         if (c->help)
@@ -418,8 +462,10 @@ int bsh_dispatch(BshSession *s, uint8_t *line, uint32_t len) {
 
     const BshCommand *c = arg ? find(s, name) : 0;
     if (!c) {
+        bsh_color(s, BSH_RED);
         bsh_str(s, "Unknown command: ");
         bsh_out(s, line, n);
+        bsh_color(s, BSH_RESET);
         bsh_str(s, " ('help' lists them)\n");
         return 0;
     }

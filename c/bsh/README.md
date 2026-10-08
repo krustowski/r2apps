@@ -32,6 +32,7 @@ EXTRA_CFLAGS := -I ../../bsh
 | `heap` | the user heap in detail, and who holds it |
 | `play <name>`, `stop` | a MIDI file |
 | `clear` | clear the screen, when the host can |
+| `color [on\|off]` | colour the prompt and listings, when the host can show colour |
 | `exit` (`quit`) | end the session |
 
 Paths may be relative and use `.` and `..`.  A session starts in `/mnt/fat` when there is a floppy
@@ -68,6 +69,23 @@ TCP with resends); `help` then shows the host's line for it.  bsh writes `\n` li
 terminal wants `\r\n` makes them in its write function, as tnt does.  `bsh_abs_path`,
 `bsh_file_size` and `bsh_load_file` are there for the host's own commands, with the output helpers
 (`bsh_str`, `bsh_u64`, `bsh_hex`, `bsh_ip`, `bsh_mac`).
+
+## Colour
+
+Off unless the host turns it on.  With `color` set, bsh colours with ANSI sequences (ESC `[` ... `m`):
+the prompt (`user@host` green, the directory blue), directories (`ls`, `mount`; `<DIR>` and all) blue,
+filesystems cyan, `help`'s commands green and their arguments cyan, labels (`sysinfo`, `meminfo`,
+`heap`) cyan, table headings yellow, task states in `ts` by what they mean (running green, blocked
+yellow, crashed red), what went well green, errors red, usage yellow, and asides grey.  The roles
+are named in bsh.h (`BSH_C_ERROR`, `BSH_C_USAGE`, `BSH_C_HEAD`, `BSH_C_LABEL`, `BSH_C_OK`,
+`BSH_C_DIM`, `BSH_C_DIR`); `bsh_color(s, ...)` and `bsh_label(s, ..., text)` are the way for a host's
+own commands too, and write no colour when the session has none.  A host that can show colour sets
+`color_ok`, and `color on`/`color off` then switch it; one that cannot (tnt) leaves it clear and
+never sends any.
+
+`r2sh --color` starts with colour.  The kernel's console understands the sequences (syscall 0x10),
+and so does Memento's Shell window, which starts r2sh with `--color`; a kernel older than that
+prints them as they are.
 
 Each session has its own working directory; the kernel's (one per process) is set to the session's
 before each command, for `play` and `bg`, which take names relative to it.

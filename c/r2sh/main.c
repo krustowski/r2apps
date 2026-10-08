@@ -279,7 +279,7 @@ static int run_console(void) {
 int main(int argc, char **argv) {
     host = host_from_args(argc, argv);
 
-    if (!host && argc > 1) {
+    if (!host && argc > 1 && !(argc == 2 && str_eq((const uint8_t *)argv[1], (const uint8_t *)"--color"))) {
         sh_print((const uint8_t *)"r2sh: started with args:");
         for (int i = 1; i < argc; i++) {
             sh_print((const uint8_t *)" ");
@@ -290,6 +290,14 @@ int main(int argc, char **argv) {
 
     bsh_init(&sess, r2sh_write, 0, 0);
     sess.clear = r2sh_clear;
+
+    /*  The console and Memento's Shell window both show ANSI colours (a
+     *  kernel older than that prints the escapes as they are), so `color on`
+     *  may turn them on; --color starts with them.  */
+    sess.color_ok = 1;
+    for (int i = 1; i < argc; i++)
+        if (str_eq((const uint8_t *)argv[i], (const uint8_t *)"--color"))
+            sess.color = 1;
 
     /*  Where the kernel's working directory is, when that is a directory: the
      *  kernel shell's `cd` before `fg sh`.  */
