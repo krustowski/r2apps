@@ -35,7 +35,24 @@ enum class FsType : uint8_t {
     Fat12 = 2,
     Iso9660 = 3,
     Tar = 4,
-    MemDisk = 5, /*  /mnt/tmp: FAT12 in RAM  */
+    MemDisk = 5, /*  /mnt/tmp: the RAM disk, FAT16 (FAT12 when only 2 MiB)  */
+};
+
+/*  What a filesystem is on its medium, whatever it is mounted as.  */
+enum class FsFormat : uint8_t {
+    None = 0, /*  the root: no filesystem, the way to the mounts  */
+    Fat12 = 1,
+    Fat16 = 2,
+    Iso9660 = 3,
+    Tar = 4,
+};
+
+/*  How big the filesystem a path is on is, and how much of it is free.  */
+struct Usage {
+    uint64_t total;   /*  the whole volume, in bytes; 0 for the root  */
+    uint64_t free;    /*  what files can still take; 0 when read-only  */
+    FsType type;      /*  the mount's  */
+    FsFormat format;  /*  the medium's  */
 };
 
 struct Entry {
@@ -105,6 +122,13 @@ vector<Entry> list(string_view path);
 
 /*  The mount table (syscall 0x2c).  */
 vector<Mount> mounts();
+
+/*
+ *  The size of the filesystem `path` is on (syscall 0x40).  nullopt when no
+ *  mount holds the path, its medium cannot be read, or the kernel is too old
+ *  to say.
+ */
+optional<Usage> usage(string_view path);
 
 /*  Runs the FAT12 consistency check (syscall 0x2b).  */
 optional<FsckReport> check();

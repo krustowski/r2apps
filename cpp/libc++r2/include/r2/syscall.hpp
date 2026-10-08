@@ -97,6 +97,7 @@ enum class Sys : int64_t {
     NetConfig = 0x3d,
     Power = 0x3e,
     Audio = 0x3f,
+    FsStat = 0x40,
 };
 
 /*  Return codes the ABI uses in place of the 0 it returns on success.  */
@@ -191,6 +192,17 @@ struct __attribute__((packed)) MountInfo {
     uint8_t path_len;
     uint8_t fs_type; /*  0 none, 1 rootfs, 2 fat12, 3 iso9660, 4 tar, 5 memdisk  */
 };
+
+/*  The size of the filesystem a path is on (syscall 0x40).  */
+struct __attribute__((packed)) FsStat {
+    uint64_t total_bytes; /*  the whole volume; 0 for the root  */
+    uint64_t free_bytes;  /*  what files can still take; 0 when read-only  */
+    uint8_t fs_type;      /*  as MountInfo::fs_type  */
+    uint8_t format;       /*  0 none, 1 fat12, 2 fat16, 3 iso9660, 4 tar  */
+    uint8_t reserved[6];
+};
+
+static_assert(sizeof(FsStat) == 24, "FsStat must match the kernel's layout");
 
 struct __attribute__((packed)) VfsDirEntry {
     uint8_t name[32]; /*  not NUL-terminated --- use name_len  */

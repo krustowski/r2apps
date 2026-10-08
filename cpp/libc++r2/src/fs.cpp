@@ -274,6 +274,24 @@ vector<Mount> mounts() {
     return result;
 }
 
+optional<Usage> usage(string_view path) {
+    char name[PATH_MAX];
+    if (!to_path(path, name))
+        return nullopt;
+
+    FsStat raw;
+    memset(&raw, 0, sizeof(raw));
+    if (raw_syscall(Sys::FsStat, (int64_t)name, (int64_t)&raw) != 0)
+        return nullopt;
+
+    Usage usage;
+    usage.total = raw.total_bytes;
+    usage.free = raw.free_bytes;
+    usage.type = (FsType)raw.fs_type;
+    usage.format = (FsFormat)raw.format;
+    return usage;
+}
+
 optional<FsckReport> check() {
     FsckReport report;
     memset(&report, 0, sizeof(report));

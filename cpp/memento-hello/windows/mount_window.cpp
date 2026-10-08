@@ -132,6 +132,18 @@ private:
     int nMounts = 0;
     bool mountsStale = true;
 
+    // Each mount's size (syscall 0x40), read with the mount list.  Not known
+    // on a kernel too old to say, or a medium that cannot be read.
+    struct MountSize
+    {
+        bool known;
+        unsigned long long total; // the whole volume; 0 for the root
+        unsigned long long free;  // what files can still take; 0 when read-only
+        unsigned char format;     // 0 none, 1 fat12, 2 fat16, 3 iso9660, 4 tar
+    };
+    MountSize sizes[MAX_MOUNTS] = {};
+    char mountInfo[96] = {}; // the info line for the mount under the bar
+
     char scratch[160]; // path assembly, shared and short-lived
 
     // ── The context menu ────────────────────────────────────────────────────
@@ -281,8 +293,58 @@ private:
         if (t == 4)
             return "tar";
         if (t == 5)
-            return "memdisk"; // /mnt/tmp: FAT12 in RAM
+            return "memdisk"; // /mnt/tmp: the RAM disk, FAT16 (FAT12 when only 2 MiB)
         return "none";
+    }
+
+    // The format on the medium, which says more than the type for the RAM
+    // disk: a memdisk, and FAT16.
+    static const char *fsFormat(unsigned char f)
+    {
+        if (f == 1)
+            return "fat12";
+        if (f == 2)
+            return "fat16";
+        if (f == 3)
+            return "iso9660";
+        if (f == 4)
+            return "tar";
+        return "none";
+    }
+
+    // A size in whole MiB from 10 MiB up, in KiB from 10 KiB, else in bytes.
+    static void sizeStr(unsigned long long bytes, char *out)
+    {
+        const char *unit = " B";
+        if (bytes >= (10ull << 20))
+        {
+            bytes >>= 20;
+            unit = " MiB";
+        }
+        else if (bytes >= (10ull << 10))
+        {
+            bytes >>= 10;
+            unit = " KiB";
+        }
+        u32str((unsigned int)bytes, out);
+        int at = slen(out);
+        for (int i = 0; unit[i]; i++)
+            out[at++] = unit[i];
+        out[at] = 0;
+    }
+
+    // The mount's path, "/" when it is the root.
+    void mountPath(int mi, char *out)
+    {
+        int nl = mounts[mi].path_len < 32 ? mounts[mi].path_len : 32;
+        for (int i = 0; i < nl; i++)
+            out[i] = (char)mounts[mi].path[i];
+        out[nl] = 0;
+        if (nl == 0)
+        {
+            out[0] = '/';
+            out[1] = 0;
+        }
     }
 
     // ── Reading ─────────────────────────────────────────────────────────────
@@ -297,6 +359,53 @@ private:
             n = MAX_MOUNTS;
         nMounts = n;
         mountsStale = false;
+
+        // The sizes with the list: it is read again after anything that
+        // changes a disk (rescan), so the free space keeps up.
+        for (int i = 0; i < n; i++)
+        {
+            char path[40];
+            mountPath(i, path);
+            auto u = r2::fs::usage(r2::string_view(path, (size_t)slen(path)));
+            sizes[i].known = (bool)u;
+            sizes[i].total = u ? u->total : 0;
+            sizes[i].free = u ? u->free : 0;
+            sizes[i].format = u ? (unsigned char)u->format : 0;
+        }
+    }
+
+    // "/mnt/tmp: memdisk, fat16, 126 MiB, 125 MiB free", or as much of it as
+    // there is: the root is no filesystem and has no size.
+    const char *describeMount(int mi)
+    {
+        char n[24];
+        mountPath(mi, mountInfo);
+        catStr(mountInfo, sizeof(mountInfo), ": ");
+        const char *type = fsType(mounts[mi].fs_type);
+        catStr(mountInfo, sizeof(mountInfo), type);
+        const MountSize &z = sizes[mi];
+        if (!z.known)
+            return mountInfo;
+        const char *format = fsFormat(z.format);
+        if (z.format != 0 && !streq(format, type))
+        {
+            catStr(mountInfo, sizeof(mountInfo), ", ");
+            catStr(mountInfo, sizeof(mountInfo), format);
+        }
+        if (z.total)
+        {
+            sizeStr(z.total, n);
+            catStr(mountInfo, sizeof(mountInfo), ", ");
+            catStr(mountInfo, sizeof(mountInfo), n);
+        }
+        if (z.free)
+        {
+            sizeStr(z.free, n);
+            catStr(mountInfo, sizeof(mountInfo), ", ");
+            catStr(mountInfo, sizeof(mountInfo), n);
+            catStr(mountInfo, sizeof(mountInfo), " free");
+        }
+        return mountInfo;
     }
 
     // The filesystem is read when the pane changes directory, not on every
@@ -1453,18 +1562,19 @@ private:
 
             if (p.atMounts)
             {
-                char name[40];
-                int nl = mounts[item].path_len < 32 ? mounts[item].path_len : 32;
-                int at = 0;
-                for (int i = 0; i < nl; i++)
-                    name[at++] = (char)mounts[item].path[i];
+                // The path with the type beside it, and the size where a
+                // file has its own; the info line has the rest.
+                char name[48];
+                mountPath(item, name);
+                int at = slen(name);
+                while (at < 10)
+                    name[at++] = ' ';
                 name[at] = 0;
-                if (at == 0)
-                {
-                    name[0] = '/';
-                    name[1] = 0;
-                }
-                drawRow(target, px, y, name, fsType(mounts[item].fs_type), sel, isActive, opts);
+                catStr(name, sizeof(name), fsType(mounts[item].fs_type));
+                char sizebuf[16] = {};
+                if (sizes[item].known && sizes[item].total)
+                    sizeStr(sizes[item].total, sizebuf);
+                drawRow(target, px, y, name, sizebuf, sel, isActive, opts);
                 continue;
             }
 
@@ -1544,7 +1654,7 @@ private:
         opts.horizontalAlign = PlatformAlign::Begin;
         const char *info = "";
         if (p.atMounts)
-            info = "Mount points";
+            info = p.sel < nMounts ? describeMount(p.sel) : "Mount points";
         else if (p.sel == 0)
             info = "Parent directory";
         else
