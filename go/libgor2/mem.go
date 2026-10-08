@@ -61,8 +61,29 @@ func KBytes(addr uintptr, size int) []byte {
 }
 
 // ReadMemInfo fills info with the RAM, the per-process frames and the user
-// heap added up block by block (syscall 0x3c).  EBusy means the heap or the
-// scheduler was locked at that moment; ask again.
+// heap added up block by block (syscall 0x3c, version 2).  EBusy means the
+// heap or the scheduler was locked at that moment; ask again.  A kernel from
+// before 32 slots answers with version 1, which has room for 16; it is put
+// into this layout, and Version stays 1.
 func ReadMemInfo(info *MemInfo) error {
-	return err(Syscall(ScMemInfo, ptr(unsafe.Pointer(info)), 0))
+	info.Version = 0
+	if e := err(Syscall(ScMemInfo, ptr(unsafe.Pointer(info)), 2)); e != nil {
+		return e
+	}
+	if info.Version == 1 {
+		// The fields before HeapBySlot are where they belong already.
+		v1 := *(*memInfoV1)(unsafe.Pointer(info))
+		info.HeapBySlot = [MaxSlots + 1]uint64{}
+		copy(info.HeapBySlot[:16], v1.HeapBySlot[:16])
+		info.HeapBySlot[MaxSlots] = v1.HeapBySlot[16]
+		info.FrameBase = v1.FrameBase
+		info.FrameSize = v1.FrameSize
+		info.FrameVirt = v1.FrameVirt
+		info.Slots = v1.Slots
+		for k := range info.SlotTask {
+			info.SlotTask[k] = 0xFF
+		}
+		copy(info.SlotTask[:16], v1.SlotTask[:])
+	}
+	return nil
 }

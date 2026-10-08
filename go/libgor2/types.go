@@ -265,7 +265,12 @@ const (
 	MouseMiddle = 1 << 2
 )
 
-// MemInfo is the memory report (syscall 0x3c).  Every figure is in bytes.
+// MaxSlots is the most process slots a kernel has, so the most tasks
+// ListTasks reports.  A kernel from before 32 slots has 10.
+const MaxSlots = 32
+
+// MemInfo is the memory report (syscall 0x3c, version 2).  Every figure is in
+// bytes.
 type MemInfo struct {
 	Version  uint64
 	TotalRAM uint64 // usable RAM the boot loader reported
@@ -279,9 +284,9 @@ type MemInfo struct {
 	HeapBlocks      uint64
 	HeapFreeBlocks  uint64
 
-	// Used bytes by process slot; [16] is untagged (kernel staging, blocks
-	// with no owner).  SlotTask says which task sits in each slot.
-	HeapBySlot [17]uint64
+	// Used bytes by process slot; [MaxSlots] is untagged (kernel staging,
+	// blocks with no owner).  SlotTask says which task sits in each slot.
+	HeapBySlot [MaxSlots + 1]uint64
 
 	// Slot n's private frame is FrameBase + n*FrameSize physically, mapped
 	// at FrameVirt in that process.
@@ -289,8 +294,20 @@ type MemInfo struct {
 	FrameSize uint64
 	FrameVirt uint64
 
-	Slots    uint64   // process slots there are
-	SlotTask [16]byte // the task id ListTasks reports, 0xFF for a free slot
+	Slots    uint64         // process slots there are
+	SlotTask [MaxSlots]byte // the task id ListTasks reports, 0xFF for a free slot
+}
+
+// memInfoV1 is what a kernel from before 32 slots fills in, whatever version
+// is asked for: room for 16 slots, [16] untagged.
+type memInfoV1 struct {
+	head       [9]uint64 // Version .. HeapFreeBlocks, as in MemInfo
+	HeapBySlot [17]uint64
+	FrameBase  uint64
+	FrameSize  uint64
+	FrameVirt  uint64
+	Slots      uint64
+	SlotTask   [16]byte
 }
 
 // fileRange is the argument block for the ranged read and write syscalls
@@ -340,8 +357,11 @@ const (
 	_ = uint(unsafe.Sizeof(MousePacket{}) - 3)
 	_ = uint(3 - unsafe.Sizeof(MousePacket{}))
 
-	_ = uint(unsafe.Sizeof(MemInfo{}) - 256)
-	_ = uint(256 - unsafe.Sizeof(MemInfo{}))
+	_ = uint(unsafe.Sizeof(MemInfo{}) - 400)
+	_ = uint(400 - unsafe.Sizeof(MemInfo{}))
+
+	_ = uint(unsafe.Sizeof(memInfoV1{}) - 256)
+	_ = uint(256 - unsafe.Sizeof(memInfoV1{}))
 
 	_ = uint(unsafe.Sizeof(fileRange{}) - 24)
 	_ = uint(24 - unsafe.Sizeof(fileRange{}))

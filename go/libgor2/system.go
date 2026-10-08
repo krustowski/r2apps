@@ -51,10 +51,10 @@ func SleepMS(ms uint64) {
 	Syscall(ScSleep, uintptr(ms), 0)
 }
 
-// ListTasks returns the scheduler's task table (syscall 0x2f).  The kernel has
-// ten process slots, so it never returns more than ten entries.
+// ListTasks returns the scheduler's task table (syscall 0x2f): one entry per
+// task, so never more than MaxSlots.
 func ListTasks() []TaskInfo {
-	var buf [10]TaskInfo
+	var buf [MaxSlots]TaskInfo
 
 	n := int(Syscall(ScListTasks, ptr(unsafe.Pointer(&buf[0])), uintptr(len(buf))))
 	if n <= 0 || n > len(buf) {
