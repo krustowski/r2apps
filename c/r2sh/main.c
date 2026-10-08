@@ -237,6 +237,7 @@ static void cmd_mount(void) {
             case 2:  fsname = (const uint8_t *)"fat12";   break;
             case 3:  fsname = (const uint8_t *)"iso9660"; break;
             case 4:  fsname = (const uint8_t *)"tar";     break;
+            case 5:  fsname = (const uint8_t *)"memdisk"; break; /* FAT12 in RAM */
             default: fsname = (const uint8_t *)"unknown"; break;
         }
         sh_printf((const uint8_t *)" (%s)\n", fsname);

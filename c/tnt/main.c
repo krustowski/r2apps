@@ -56,11 +56,97 @@ typedef struct {
     uint8_t esc_state;           /* 0=normal  1=saw ESC  2=saw ESC+[ */
     uint8_t telnet;              /* the client sent a TELNET command: it is one */
     uint8_t cr;                  /* the last byte ended a line with CR */
+    uint8_t iac_state;           /* TELNET_* : where in a TELNET command */
+    uint8_t iac_verb;            /* its WILL/WONT/DO/DONT, for the option */
     uint8_t auth;                /* AUTH_* */
     uint8_t tries;               /* failed logins so far */
     uint8_t login[LINE_CAP];     /* the login, while the password is asked */
     uint8_t login_len;
 } Session_T;
+
+/*
+ *  TELNET option negotiation.
+ *
+ *  A telnet client offers and asks for options as it connects (to port 23;
+ *  to another port only when told to, `open host -port`).  None of them is
+ *  answered yes: every DO is answered WONT and every WILL is answered DONT,
+ *  but for ECHO, which the server offers itself for the password.  That
+ *  matters for SUPPRESS-GO-AHEAD: a client that asked for it and was never
+ *  refused believes it on, and the first option it hears about afterwards
+ *  (the WILL ECHO before the password) makes it work out its mode again and
+ *  go to a character at a time with its own echo, where Enter shows as ^M
+ *  and the server echoes nothing.  Refused, it stays in line mode, echo or
+ *  not.  Commands may be split across segments: hence the state per session.
+ */
+enum {
+    TELNET_DATA = 0, /* not in a command */
+    TELNET_IAC,      /* after IAC */
+    TELNET_OPTION,   /* after IAC WILL/WONT/DO/DONT: the option comes next */
+    TELNET_SB,       /* in a subnegotiation, up to IAC SE */
+    TELNET_SB_IAC    /* an IAC in it */
+};
+
+#define TN_SE 0xF0
+#define TN_SB 0xFA
+#define TN_WILL 0xFB
+#define TN_WONT 0xFC
+#define TN_DO 0xFD
+#define TN_DONT 0xFE
+#define TN_IAC 0xFF
+#define TN_OPT_ECHO 0x01
+
+/*  Takes <b> when it belongs to a TELNET command (1), or leaves it to the
+ *  line (0).  An IAC IAC is a 0xff byte of data, and goes to the line.  */
+static int telnet_byte(TcpSocket_T *sock, Session_T *sess, uint8_t b) {
+    switch (sess->iac_state) {
+    case TELNET_DATA:
+        if (b != TN_IAC)
+            return 0;
+        /*  That is how a telnet client is told apart from nc.  */
+        sess->telnet = 1;
+        sess->iac_state = TELNET_IAC;
+        return 1;
+
+    case TELNET_IAC:
+        if (b == TN_IAC) {
+            sess->iac_state = TELNET_DATA;
+            return 0;
+        }
+        if (b >= TN_WILL) {
+            sess->iac_verb = b;
+            sess->iac_state = TELNET_OPTION;
+        } else {
+            sess->iac_state = b == TN_SB ? TELNET_SB : TELNET_DATA;
+        }
+        return 1;
+
+    case TELNET_OPTION: {
+        sess->iac_state = TELNET_DATA;
+        /*  DO/DONT ECHO answer the server's own WILL/WONT ECHO; WONT and
+         *  DONT agree with what is already the case.  Neither is answered,
+         *  or the two sides would go on answering each other.  */
+        uint8_t reply = 0;
+        if (sess->iac_verb == TN_WILL)
+            reply = TN_DONT;
+        else if (sess->iac_verb == TN_DO && b != TN_OPT_ECHO)
+            reply = TN_WONT;
+        if (reply) {
+            uint8_t r[3] = {TN_IAC, reply, b};
+            write(sock, r, 3);
+        }
+        return 1;
+    }
+
+    case TELNET_SB:
+        if (b == TN_IAC)
+            sess->iac_state = TELNET_SB_IAC;
+        return 1;
+
+    default: /* TELNET_SB_IAC */
+        sess->iac_state = b == TN_SE ? TELNET_DATA : TELNET_SB;
+        return 1;
+    }
+}
 
 /*
  *  A line typed while the session is logging in.  Returns 1 when the
@@ -181,6 +267,7 @@ int main(int argc, char **argv) {
                     sessions[i].tries = 0;
                     sessions[i].telnet = 0;
                     sessions[i].cr = 0;
+                    sessions[i].iac_state = TELNET_DATA;
                     sessions[i].login_len = 0;
                     /*  Asked only now, so that the connections already in
                      *  the shell when Memento was logged in to stay there.  */
@@ -214,21 +301,9 @@ int main(int argc, char **argv) {
         for (uint32_t j = 0; j < rn; j++) {
             uint8_t b = rx_buf[j];
 
-            /*
-             *  Strip TELNET IAC option sequences so they don't pollute the
-             *  line buffer.  IAC (0xFF) is followed by a command byte; if the
-             *  command is WILL/WONT/DO/DONT (0xFB–0xFE) there is also an
-             *  option byte — skip all three bytes in that case.
-             */
-            if (b == 0xFF) {
-                /*  A telnet client negotiates options as it connects (to
-                 *  port 23; to another port only when told to, `telnet host
-                 *  -port`): that is how it is told apart from nc.  */
-                sess->telnet = 1;
-                if (j + 1 < rn)
-                    j += (rx_buf[j + 1] >= 0xFB) ? 2 : 1;
+            /*  TELNET commands never reach the line (telnet_byte).  */
+            if (telnet_byte(client, sess, b))
                 continue;
-            }
 
             /*
              *  ANSI/VT100 escape sequence state machine.

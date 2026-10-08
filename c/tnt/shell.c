@@ -500,6 +500,9 @@ static void cmd_mount(TcpSocket_T *sock) {
         case 4:
             fsname = (const uint8_t *)"tar";
             break;
+        case 5:
+            fsname = (const uint8_t *)"memdisk"; /* /mnt/tmp: FAT12 in RAM */
+            break;
         default:
             fsname = (const uint8_t *)"unknown";
             break;

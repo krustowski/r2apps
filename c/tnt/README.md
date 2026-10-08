@@ -40,7 +40,10 @@ client: `tnt` sends TELNET `WILL ECHO` before asking for it, so the client stops
 `WONT ECHO` after.  Only to a client that has sent TELNET commands itself, which `telnet` does as it
 connects to port 23 (to another port only with `open host -port`); `nc` would print those bytes,
 so it gets none, and its terminal shows the password as it is typed.  A line may end in CR LF,
-CR NUL (a telnet client sending a character at a time, as it does while the server echoes) or LF.
+CR NUL (a telnet client sending a character at a time) or LF.  Every option a telnet client
+offers or asks for is refused (`WONT`/`DONT`), but for the server's own ECHO: a client left to
+believe it has SUPPRESS-GO-AHEAD goes to a character at a time once the echo is switched, and then
+shows Enter as `^M` with the prompt on the same line.  Refused, it stays in line mode.
 Three wrong tries close the connection.  A SESSION.CFG that is there but cannot be read lets
 nobody in.  `auth.c` has its own SHA-256 for this and computes the hash the way Memento does.
 
