@@ -57,6 +57,19 @@ static uint8_t request_complete(const uint8_t *buf, uint32_t len) {
 }
 
 /*
+ *  append_2digits()
+ *
+ *  Appends v as two zero-padded decimal digits, so the clock reads 09:05:03
+ *  rather than 9:5:3.  Returns the new length.
+ */
+static uint32_t append_2digits(uint8_t *buf, uint32_t n, uint8_t v) {
+    buf[n++] = (uint8_t)('0' + (v / 10) % 10);
+    buf[n++] = (uint8_t)('0' + v % 10);
+
+    return n;
+}
+
+/*
  *  handle_client()
  *
  *  Serves one complete request.  Returns 1 when the connection has become an
@@ -355,7 +368,9 @@ int main(int argc, char **argv) {
         /* 3. Push to the event stream on wall time.  This is the stage that
          *    the blocking receive used to strand: with no packets arriving on
          *    an idle stream, it never ran and the client saw nothing until it
-         *    gave up. */
+         *    gave up.  One time event goes out per RTC second, as soon as the
+         *    seconds field rolls over; that also keeps the stream alive, so it
+         *    needs no separate heartbeat. */
         if (sse_client) {
             if (!sse_client->used || sse_client->state != SOCKET_ESTABLISHED || sse_client->remote_port != sse_remote_port) {
                 sse_client = 0;
@@ -363,26 +378,18 @@ int main(int argc, char **argv) {
                 RTC_T rtc;
                 if (read_rtc(&rtc) && rtc.seconds != sse_last_sec) {
                     sse_last_sec = rtc.seconds;
-                    if (rtc.seconds % 5 == 0) {
-                        uint8_t evt[64];
-                        uint8_t num[12];
-                        uint32_t en = 0;
-                        en = str_append(evt, en, (const uint8_t *)"event: time\ndata: ");
-                        u32_to_str(rtc.hours, num);
-                        en = str_append(evt, en, num);
-                        evt[en++] = ':';
-                        u32_to_str(rtc.minutes, num);
-                        en = str_append(evt, en, num);
-                        evt[en++] = ':';
-                        u32_to_str(rtc.seconds, num);
-                        en = str_append(evt, en, num);
-                        evt[en++] = '\n';
-                        evt[en++] = '\n';
-                        write(sse_client, evt, en);
-                    } else {
-                        static const uint8_t hb[] = ": \n";
-                        write(sse_client, hb, sizeof(hb) - 1);
-                    }
+
+                    uint8_t evt[64];
+                    uint32_t en = 0;
+                    en = str_append(evt, en, (const uint8_t *)"event: time\ndata: ");
+                    en = append_2digits(evt, en, rtc.hours);
+                    evt[en++] = ':';
+                    en = append_2digits(evt, en, rtc.minutes);
+                    evt[en++] = ':';
+                    en = append_2digits(evt, en, rtc.seconds);
+                    evt[en++] = '\n';
+                    evt[en++] = '\n';
+                    write(sse_client, evt, en);
                 }
             }
         }
