@@ -113,6 +113,10 @@ private:
             char url[r2web::TextCapacity]; web::scopy(url,block->openUrl,sizeof(url));
             r2web::store(&block->openPending,0); openBrowserWindow(url);
         }
+        // Ignored while the window has the focus: it is being looked at.
+        if (r2web::load(&block->attentionPending)) {
+            r2web::store(&block->attentionPending,0); wnd->SetAttention(true);
+        }
         if (r2web::load(&block->frame)!=shown) wnd->Repaint();
         uint64_t now=r2::ticks();
         if (now-started<2000 || now-lastCheck<1000) return;

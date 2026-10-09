@@ -5,14 +5,18 @@
 // started with --host and the address of a block this window allocates on the
 // user heap: it writes what it says into one ring of the block and reads what
 // is typed out of another, and this window is the terminal between them ---
-// 80 columns, the last 200 lines kept, PageUp and PageDown to look back.  The
-// layout has to match c/r2sh/host.h.
+// 80 columns by 25, the last 200 lines kept, PageUp and PageDown to look back.
+// Maximised, the text grows by whole multiples of the glyph while 80 columns
+// and 20 rows still fit, and the rows go down as far as the window does.
+// The layout has to match c/r2sh/host.h.
 //
 // Programs the shell runs are processes of their own and print to the console,
 // not here; the shell says so when it starts one.
 //
-// Closing the window, or `exit` in the shell, ends both.  If Memento stops
-// beating, the shell notices within ten seconds and leaves on its own.
+// Closing the window, or `exit` in the shell, ends both: a shell that does not
+// leave when asked is killed.  If Memento stops beating, the shell notices
+// within ten seconds and leaves on its own.  A shell that has said nothing a
+// few seconds after its start gets a line at the bottom saying how far it got.
 //
 
 // ── The shared block (c/r2sh/host.h) ────────────────────────────────────────
@@ -126,6 +130,10 @@ public:
                 blk->hostBeat = blk->hostBeat + 1;
                 r2::sleep(20);
             }
+            //  Not gone after a second: it is stuck in a call, or it is a
+            //  shell that never took the block and does not see `quit`.
+            if (!blk->exited && shellAlive())
+                r2::kill(pid);
         }
         if (blk->exited || !shellAlive())
             release();
@@ -156,6 +164,7 @@ public:
 
 private:
     static const int Keep = 200; // lines of scrollback, the screen's included
+    static const int MinRows = 20; // the fewest a bigger glyph may leave
 
     PlatformWindow *wnd = nullptr;
     ShHostBlock *blk = nullptr;
@@ -163,6 +172,10 @@ private:
     uint64_t startedAt = 0;
     uint64_t lastCheck = 0;
     char error[64];
+    //  Whether the shell has written anything yet; until it has, `quiet`
+    //  says how far its start got (onIdle, once a second).
+    bool heard = false;
+    char quiet[96] = "";
 
     //  The terminal: line n lives at lines[n % Keep]; `last` is the line the
     //  cursor is on, `first` the oldest one still kept.
@@ -183,8 +196,12 @@ private:
 
     PlatformColor *bg = nullptr, *fg = nullptr, *dim = nullptr, *cursor = nullptr;
     PlatformColor *palette[16] = {};
+    //  The glyph at each whole multiple of its size (fitFont), the one in use
+    //  and its cell in window units.
+    PlatformFont *fonts[8] = {};
     PlatformFont *font = nullptr;
     double cw = 3, ch = 6;
+    int rows = Rows; // on the screen, as many as the window has room for
 
     void forget()
     {
@@ -359,7 +376,67 @@ private:
         asm volatile("" ::: "memory");
         blk->outTail = tail;
         back = 0; // new output brings the view back to the bottom
+        heard = true;
+        quiet[0] = 0;
         return true;
+    }
+
+    static void append(char *out, size_t cap, const char *s)
+    {
+        size_t at = strlen(out);
+        while (*s && at + 1 < cap)
+            out[at++] = *s++;
+        out[at] = 0;
+    }
+
+    static void appendU(char *out, size_t cap, uint64_t v, int base = 10)
+    {
+        char tmp[20];
+        int k = 0;
+        do
+        {
+            tmp[k++] = "0123456789ABCDEF"[v % base];
+            v /= base;
+        } while (v);
+        char s[21];
+        int n = 0;
+        while (k)
+            s[n++] = tmp[--k];
+        s[n] = 0;
+        append(out, cap, s);
+    }
+
+    //  The shell has said nothing yet: what its beat tells of its start
+    //  (c/r2sh/host.h) --- 0 it never took the block, 1 and 2 it is in one of
+    //  the steps before its first words, 3 or more it is past them.
+    void sayQuiet(uint64_t now)
+    {
+        uint32_t beat = blk->shellBeat;
+        char s[sizeof(quiet)] = "sh.elf (task ";
+        appendU(s, sizeof(s), pid);
+        append(s, sizeof(s), ") quiet ");
+        appendU(s, sizeof(s), (now - startedAt) / 1000);
+        append(s, sizeof(s), " s: ");
+        if (beat == 0)
+            append(s, sizeof(s), "never took the block");
+        else if (beat == 1)
+            append(s, sizeof(s), "stuck reading the mounts");
+        else if (beat == 2)
+            append(s, sizeof(s), "stuck going to its directory");
+        else
+        {
+            append(s, sizeof(s), "beat ");
+            appendU(s, sizeof(s), beat);
+        }
+        append(s, sizeof(s), ", out ");
+        appendU(s, sizeof(s), blk->outHead);
+        append(s, sizeof(s), ", block ");
+        appendU(s, sizeof(s), (uint64_t)(uintptr_t)blk, 16);
+        if (strcmp(s, quiet))
+        {
+            strcpy(quiet, s);
+            wnd->Repaint();
+        }
     }
 
     void send(uint8_t c)
@@ -377,7 +454,7 @@ private:
     void scroll(int lines_)
     {
         long kept = last - first + 1;
-        long most = kept > Rows ? kept - Rows : 0;
+        long most = kept > rows ? kept - rows : 0;
         long b = back + lines_;
         if (b < 0)
             b = 0;
@@ -395,9 +472,9 @@ private:
         if (!key->isKeyDown)
             return;
         if (key->isPageUp)
-            return scroll(Rows - 1);
+            return scroll(rows - 1);
         if (key->isPageDown)
-            return scroll(-(Rows - 1));
+            return scroll(-(rows - 1));
         if (key->isEnter)
             send('\n');
         else if (key->isBackspace)
@@ -426,7 +503,10 @@ private:
             drain(); // its goodbye
             wnd->SetImmediateMode(false);
             wnd->Close();
+            return;
         }
+        if (!heard && now - startedAt >= 3000)
+            sayQuiet(now);
     }
 
     void onEvent_(struct PlatformWindowInterfaceInputEvent *data)
@@ -451,7 +531,7 @@ private:
 
     void makeResources(PlatformDrawingContext *dc)
     {
-        if (font)
+        if (bg)
             return;
         bg = dc->CreateColor(0xFF000000, nullptr, nullptr);
         fg = dc->CreateColor(0xFFAAAAAA, nullptr, nullptr);
@@ -462,22 +542,53 @@ private:
                                          0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF};
         for (int i = 0; i < 16; i++)
             palette[i] = dc->CreateColor(0xFF000000 | vga[i], nullptr, nullptr);
-        font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
-        if (font)
+    }
+
+    //  Screen pixels to a window unit: two on the 640x400 screen, more on a
+    //  bigger one.
+    static double pixels(PlatformDrawingContext *dc)
+    {
+        double px = dc->GetScaledSizeRounded(Coord(96)).intValue() / 96.0;
+        return px > 0 ? px : 2;
+    }
+
+    //  The font and the rows for a view <w> by <h>: the 6x12 glyph at the
+    //  largest whole multiple of its size that leaves 80 columns and MinRows
+    //  rows, and as many rows as there are room for --- 25 in the window's
+    //  first size.  The last column of a cell is the space between letters,
+    //  and the 80th cell's may go off the edge: that is what lets the glyph
+    //  double in a window maximised on a screen 960 pixels wide (1920x1080
+    //  shown at twice).  CreateFont takes units that it turns into points
+    //  (units * 100 / 75 * pixels to a unit), and the glyph is 12 points tall
+    //  a step: ask for the middle of the step wanted.
+    void fitFont(PlatformDrawingContext *dc, double w, double h)
+    {
+        double px = pixels(dc);
+        int s = 7;
+        while (s > 1 && ((Cols * 6 - 1) * s > w * px || MinRows * 12 * s > h * px))
+            s--;
+        rows = (int)(h * px / (12 * s));
+        if (rows < 1)
+            rows = 1;
+        if (rows > Keep)
+            rows = Keep;
+        if (!fonts[s])
+            fonts[s] = dc->CreateFont(Coord((12.0 * s + 6) * 0.75 / px), nullptr, false, false, false, nullptr, nullptr);
+        if (!fonts[s])
+            return; // the last one, at its own size
+        font = fonts[s];
+        cw = ch = 0;
+        Coord tw, th;
+        if (font->GetDrawnTextSize("MMMMMMMMMM", tw, th))
         {
-            Coord w, h;
-            if (font->GetDrawnTextSize("MMMMMMMMMM", w, h))
-            {
-                cw = COORD_VAL(w) / 10;
-                ch = COORD_VAL(h);
-            }
+            cw = COORD_VAL(tw) / 10;
+            ch = COORD_VAL(th);
         }
-        //  The r2 font can answer a measurement with nothing; its cell is 6x12
-        //  pixels, which at this window's DPI is 3x6.
+        //  The r2 font can answer a measurement with nothing.
         if (!(cw > 0))
-            cw = 3;
+            cw = 6 * s / px;
         if (!(ch > 0))
-            ch = 6;
+            ch = 12 * s / px;
     }
 
     void OnPaint(PlatformDrawingContext *dc, PlatformBitmap *target)
@@ -485,10 +596,11 @@ private:
         if (!target)
             return;
         makeResources(dc);
-        if (!font || !bg)
-            return;
         Coord Wc = target->GetWidth(), Hc = target->GetHeight();
         double W_ = COORD_VAL(Wc), H_ = COORD_VAL(Hc);
+        fitFont(dc, W_, H_);
+        if (!font || !bg)
+            return;
         target->FillRect(0, 0, Coord(W_), Coord(H_), bg, false);
 
         PlatformDrawTextOptions o{};
@@ -504,11 +616,16 @@ private:
             return;
         }
 
-        const double ox = (W_ - Cols * cw) / 2, oy = (H_ - Rows * ch) / 2;
+        //  The cells centred, on whole pixels; a row a little wider than the
+        //  window (fitFont) starts at its left edge.
+        double px = pixels(dc);
+        double ox = (int)((W_ - Cols * cw) / 2 * px) / px, oy = (int)((H_ - rows * ch) / 2 * px) / px;
+        if (ox < 0)
+            ox = 0;
         //  The bottom of the view is the cursor's line, less what is scrolled
         //  back; the top follows from it.
         long bottom = last - back;
-        long top = bottom - (Rows - 1);
+        long top = bottom - (rows - 1);
         if (top < first)
             top = first;
         char text[Cols + 1];
@@ -546,10 +663,13 @@ private:
 
         if (back == 0)
         {
-            //  The cursor: a bar under the cell it is on.
+            //  The cursor: a bar under the cell it is on, a sixth of it.
             double x = ox + (col < Cols ? col : Cols - 1) * cw;
-            double y = oy + (last - top) * ch + ch - 1;
-            target->FillRect(Coord(x), Coord(y), Coord(cw), 1, cursor, false);
+            double bar = (int)(ch / 6 * px) / px;
+            if (bar * px < 1)
+                bar = 1 / px;
+            double y = oy + (last - top) * ch + ch - bar;
+            target->FillRect(Coord(x), Coord(y), Coord(cw), Coord(bar), cursor, false);
         }
         else
         {
@@ -570,6 +690,15 @@ private:
             o.foreground = dim;
             o.horizontalAlign = PlatformAlign::End;
             target->DrawText(0, Coord(oy), Coord(W_ - 2), Coord(ch), (const mchar *)note, &o, false);
+        }
+
+        if (quiet[0])
+        {
+            //  Nothing from the shell yet: how far its start got, on the last
+            //  row.
+            o.foreground = palette[14] ? palette[14] : cursor;
+            o.horizontalAlign = PlatformAlign::Begin;
+            target->DrawText(Coord(ox), Coord(oy + (rows - 1) * ch), Coord(Cols * cw), Coord(ch), (const mchar *)quiet, &o, false);
         }
     }
 };
