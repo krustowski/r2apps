@@ -5,10 +5,9 @@
 // started with --host and the address of a block this window allocates on the
 // user heap: it writes what it says into one ring of the block and reads what
 // is typed out of another, and this window is the terminal between them ---
-// 80 columns by 25, the last 200 lines kept, PageUp and PageDown to look back.
-// Maximised, the text grows by whole multiples of the glyph while 80 columns
-// and 20 rows still fit, and the rows go down as far as the window does.
-// The layout has to match c/r2sh/host.h.
+// 80 columns by 25 in the window's first size and as many as fit when it is
+// maximised, the last 200 lines kept, PageUp and PageDown to look back.  The
+// layout has to match c/r2sh/host.h.
 //
 // Programs the shell runs are processes of their own and print to the console,
 // not here; the shell says so when it starts one.
@@ -164,7 +163,9 @@ public:
 
 private:
     static const int Keep = 200; // lines of scrollback, the screen's included
-    static const int MinRows = 20; // the fewest a bigger glyph may leave
+    //  The longest a line is kept: about what a window maximised on a
+    //  1920x1080 screen shows across (158).  More goes on in the next line.
+    static const int Wide = 160;
 
     PlatformWindow *wnd = nullptr;
     ShHostBlock *blk = nullptr;
@@ -177,12 +178,14 @@ private:
     bool heard = false;
     char quiet[96] = "";
 
-    //  The terminal: line n lives at lines[n % Keep]; `last` is the line the
-    //  cursor is on, `first` the oldest one still kept.
-    char lines[Keep][Cols];
+    //  The terminal: line n lives at lines[n % Keep] as the shell wrote it,
+    //  and is wrapped at the window's width when it is drawn, so that a
+    //  resize lays the lines out again.  `last` is the line the cursor is on,
+    //  `first` the oldest one still kept.
+    char lines[Keep][Wide];
     //  And each cell's colours: the foreground in the low nibble and the
     //  background in the high one, as VGA has them (palette below).
-    uint8_t attrs[Keep][Cols];
+    uint8_t attrs[Keep][Wide];
     static const uint8_t Plain = 0x07; // light grey on black
     uint8_t attr = Plain;              // what put() writes with now
     //  An ANSI escape sequence being read (ESC [ n ; n m): 0 none, 1 after
@@ -192,16 +195,13 @@ private:
     int escN = 0;
     long first = 0, last = 0;
     int col = 0;
-    int back = 0; // lines scrolled back from the bottom
+    int back = 0; // rows scrolled back from the bottom
 
     PlatformColor *bg = nullptr, *fg = nullptr, *dim = nullptr, *cursor = nullptr;
     PlatformColor *palette[16] = {};
-    //  The glyph at each whole multiple of its size (fitFont), the one in use
-    //  and its cell in window units.
-    PlatformFont *fonts[8] = {};
     PlatformFont *font = nullptr;
     double cw = 3, ch = 6;
-    int rows = Rows; // on the screen, as many as the window has room for
+    int cols = Cols, rows = Rows; // the window's size in letters, at its last paint
 
     void forget()
     {
@@ -242,15 +242,15 @@ private:
         first = last = 0;
         col = 0;
         back = 0;
-        memset(lines[0], ' ', Cols);
-        memset(attrs[0], attr, Cols);
+        memset(lines[0], ' ', Wide);
+        memset(attrs[0], attr, Wide);
     }
 
     void newLine()
     {
         last++;
-        memset(row(last), ' ', Cols);
-        memset(attrRow(last), attr, Cols);
+        memset(row(last), ' ', Wide);
+        memset(attrRow(last), attr, Wide);
         if (last - first >= Keep)
             first = last - Keep + 1;
         col = 0;
@@ -355,7 +355,7 @@ private:
         }
         if (c < 0x20)
             return;
-        if (col >= Cols)
+        if (col >= Wide)
             newLine();
         attrRow(last)[col] = attr;
         row(last)[col++] = (char)c;
@@ -451,10 +451,56 @@ private:
         blk->inHead = head + 1;
     }
 
+    //  Up to the last cell of line <n> that shows anything: a character, or
+    //  a background of its own.
+    int lineLength(long n)
+    {
+        const char *r = row(n);
+        const uint8_t *a = attrRow(n);
+        int len = Wide;
+        while (len > 0 && r[len - 1] == ' ' && !(a[len - 1] >> 4))
+            len--;
+        return len;
+    }
+
+    //  Where on its line the cursor is drawn, as a row and a column at the
+    //  window's width: after the letter it follows, or under the last of a
+    //  full row while the next one has not come.
+    void cursorAt(int &r, int &c)
+    {
+        if (col > 0 && col % cols == 0)
+            r = col / cols - 1, c = cols - 1;
+        else
+            r = col / cols, c = col % cols;
+    }
+
+    //  The rows line <n> takes at the window's width, and all lines together.
+    int rowsOf(long n)
+    {
+        int len = lineLength(n);
+        int r = len ? (len + cols - 1) / cols : 1;
+        if (n == last)
+        {
+            int cr, cc;
+            cursorAt(cr, cc);
+            if (cr + 1 > r)
+                r = cr + 1;
+        }
+        return r;
+    }
+
+    long totalRows()
+    {
+        long t = 0;
+        for (long n = first; n <= last; n++)
+            t += rowsOf(n);
+        return t;
+    }
+
     void scroll(int lines_)
     {
-        long kept = last - first + 1;
-        long most = kept > rows ? kept - rows : 0;
+        long total = totalRows();
+        long most = total > rows ? total - rows : 0;
         long b = back + lines_;
         if (b < 0)
             b = 0;
@@ -531,7 +577,7 @@ private:
 
     void makeResources(PlatformDrawingContext *dc)
     {
-        if (bg)
+        if (font)
             return;
         bg = dc->CreateColor(0xFF000000, nullptr, nullptr);
         fg = dc->CreateColor(0xFFAAAAAA, nullptr, nullptr);
@@ -542,53 +588,48 @@ private:
                                          0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF};
         for (int i = 0; i < 16; i++)
             palette[i] = dc->CreateColor(0xFF000000 | vga[i], nullptr, nullptr);
-    }
-
-    //  Screen pixels to a window unit: two on the 640x400 screen, more on a
-    //  bigger one.
-    static double pixels(PlatformDrawingContext *dc)
-    {
-        double px = dc->GetScaledSizeRounded(Coord(96)).intValue() / 96.0;
-        return px > 0 ? px : 2;
-    }
-
-    //  The font and the rows for a view <w> by <h>: the 6x12 glyph at the
-    //  largest whole multiple of its size that leaves 80 columns and MinRows
-    //  rows, and as many rows as there are room for --- 25 in the window's
-    //  first size.  The last column of a cell is the space between letters,
-    //  and the 80th cell's may go off the edge: that is what lets the glyph
-    //  double in a window maximised on a screen 960 pixels wide (1920x1080
-    //  shown at twice).  CreateFont takes units that it turns into points
-    //  (units * 100 / 75 * pixels to a unit), and the glyph is 12 points tall
-    //  a step: ask for the middle of the step wanted.
-    void fitFont(PlatformDrawingContext *dc, double w, double h)
-    {
-        double px = pixels(dc);
-        int s = 7;
-        while (s > 1 && ((Cols * 6 - 1) * s > w * px || MinRows * 12 * s > h * px))
-            s--;
-        rows = (int)(h * px / (12 * s));
-        if (rows < 1)
-            rows = 1;
-        if (rows > Keep)
-            rows = Keep;
-        if (!fonts[s])
-            fonts[s] = dc->CreateFont(Coord((12.0 * s + 6) * 0.75 / px), nullptr, false, false, false, nullptr, nullptr);
-        if (!fonts[s])
-            return; // the last one, at its own size
-        font = fonts[s];
-        cw = ch = 0;
-        Coord tw, th;
-        if (font->GetDrawnTextSize("MMMMMMMMMM", tw, th))
+        font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
+        if (font)
         {
-            cw = COORD_VAL(tw) / 10;
-            ch = COORD_VAL(th);
+            Coord w, h;
+            if (font->GetDrawnTextSize("MMMMMMMMMM", w, h))
+            {
+                cw = COORD_VAL(w) / 10;
+                ch = COORD_VAL(h);
+            }
         }
-        //  The r2 font can answer a measurement with nothing.
+        //  The r2 font can answer a measurement with nothing; its cell is 6x12
+        //  pixels, which at this window's DPI is 3x6.
         if (!(cw > 0))
-            cw = 6 * s / px;
+            cw = 3;
         if (!(ch > 0))
-            ch = 12 * s / px;
+            ch = 6;
+    }
+
+    //  Cells <from> to <to> of line <n> at <x>, <y>: in runs of one colour.
+    void drawCells(PlatformBitmap *target, PlatformDrawTextOptions &o, long n, int from, int to, double x, double y)
+    {
+        const char *r = row(n);
+        const uint8_t *a = attrRow(n);
+        char text[Wide + 1];
+        for (int k = from; k < to;)
+        {
+            int end = k;
+            while (end < to && a[end] == a[k])
+                end++;
+            for (int j = k; j < end; j++)
+            {
+                uint8_t c = (uint8_t)r[j];
+                text[j - k] = c < 0x20 ? ' ' : (char)c;
+            }
+            text[end - k] = 0;
+            double at = x + (k - from) * cw;
+            if ((a[k] >> 4) && palette[a[k] >> 4])
+                target->FillRect(Coord(at), Coord(y), Coord((end - k) * cw), Coord(ch), palette[a[k] >> 4], false);
+            o.foreground = palette[a[k] & 15] ? palette[a[k] & 15] : fg;
+            target->DrawText(Coord(at), Coord(y), Coord((end - k) * cw + cw), Coord(ch), (const mchar *)text, &o, false);
+            k = end;
+        }
     }
 
     void OnPaint(PlatformDrawingContext *dc, PlatformBitmap *target)
@@ -596,11 +637,10 @@ private:
         if (!target)
             return;
         makeResources(dc);
-        Coord Wc = target->GetWidth(), Hc = target->GetHeight();
-        double W_ = COORD_VAL(Wc), H_ = COORD_VAL(Hc);
-        fitFont(dc, W_, H_);
         if (!font || !bg)
             return;
+        Coord Wc = target->GetWidth(), Hc = target->GetHeight();
+        double W_ = COORD_VAL(Wc), H_ = COORD_VAL(Hc);
         target->FillRect(0, 0, Coord(W_), Coord(H_), bg, false);
 
         PlatformDrawTextOptions o{};
@@ -616,60 +656,52 @@ private:
             return;
         }
 
-        //  The cells centred, on whole pixels; a row a little wider than the
-        //  window (fitFont) starts at its left edge.
-        double px = pixels(dc);
-        double ox = (int)((W_ - Cols * cw) / 2 * px) / px, oy = (int)((H_ - rows * ch) / 2 * px) / px;
-        if (ox < 0)
-            ox = 0;
-        //  The bottom of the view is the cursor's line, less what is scrolled
-        //  back; the top follows from it.
-        long bottom = last - back;
-        long top = bottom - (rows - 1);
-        if (top < first)
-            top = first;
-        char text[Cols + 1];
-        for (long n = top; n <= bottom && n <= last; n++)
+        //  As many letters as the window has room for, with a margin of two
+        //  units round them: 80 by 25 in its first size.
+        cols = (int)((W_ - 4) / cw);
+        rows = (int)((H_ - 4) / ch);
+        if (cols < 1)
+            cols = 1;
+        if (cols > Wide)
+            cols = Wide;
+        if (rows < 1)
+            rows = 1;
+        const double ox = (int)((W_ - cols * cw) / 2), oy = (int)((H_ - rows * ch) / 2);
+
+        //  The view is the rows above the cursor's, less what is scrolled
+        //  back; it starts at the top while there are fewer than it holds.
+        long total = totalRows();
+        long most = total > rows ? total - rows : 0;
+        if (back > most)
+            back = (int)most;
+        long bottom = total - back, top = bottom - rows;
+        if (top < 0)
+            top = 0;
+        long first_ = total; // the first row of line n, from the cursor's up
+        for (long n = last; n >= first && first_ > top; n--)
         {
-            const char *r = row(n);
-            const uint8_t *a = attrRow(n);
-            //  Up to the last cell that shows anything: a character, or a
-            //  background of its own.
-            int len = Cols;
-            while (len > 0 && r[len - 1] == ' ' && !(a[len - 1] >> 4))
-                len--;
-            double y = oy + (n - top) * ch;
-            //  In runs of one colour.
-            for (int k = 0; k < len;)
+            int nr = rowsOf(n), len = lineLength(n);
+            first_ -= nr;
+            for (int k = 0; k < nr; k++)
             {
-                int end = k;
-                while (end < len && a[end] == a[k])
-                    end++;
-                for (int j = k; j < end; j++)
-                {
-                    uint8_t c = (uint8_t)r[j];
-                    text[j - k] = c < 0x20 ? ' ' : (char)c;
-                }
-                text[end - k] = 0;
-                double x = ox + k * cw;
-                if ((a[k] >> 4) && palette[a[k] >> 4])
-                    target->FillRect(Coord(x), Coord(y), Coord((end - k) * cw), Coord(ch), palette[a[k] >> 4], false);
-                o.foreground = palette[a[k] & 15] ? palette[a[k] & 15] : fg;
-                target->DrawText(Coord(x), Coord(y), Coord((end - k) * cw + cw), Coord(ch), (const mchar *)text, &o, false);
-                k = end;
+                long d = first_ + k;
+                if (d < top || d >= bottom)
+                    continue;
+                int from = k * cols, to = from + cols < len ? from + cols : len;
+                if (from < to)
+                    drawCells(target, o, n, from, to, ox, oy + (d - top) * ch);
             }
         }
         o.foreground = fg;
 
         if (back == 0)
         {
-            //  The cursor: a bar under the cell it is on, a sixth of it.
-            double x = ox + (col < Cols ? col : Cols - 1) * cw;
-            double bar = (int)(ch / 6 * px) / px;
-            if (bar * px < 1)
-                bar = 1 / px;
-            double y = oy + (last - top) * ch + ch - bar;
-            target->FillRect(Coord(x), Coord(y), Coord(cw), Coord(bar), cursor, false);
+            //  The cursor: a bar under the cell it is on.
+            int cr, cc;
+            cursorAt(cr, cc);
+            double x = ox + cc * cw;
+            double y = oy + (total - rowsOf(last) + cr - top) * ch + ch - 1;
+            target->FillRect(Coord(x), Coord(y), Coord(cw), 1, cursor, false);
         }
         else
         {
@@ -698,7 +730,7 @@ private:
             //  row.
             o.foreground = palette[14] ? palette[14] : cursor;
             o.horizontalAlign = PlatformAlign::Begin;
-            target->DrawText(Coord(ox), Coord(oy + (rows - 1) * ch), Coord(Cols * cw), Coord(ch), (const mchar *)quiet, &o, false);
+            target->DrawText(Coord(ox), Coord(oy + (rows - 1) * ch), Coord(cols * cw), Coord(ch), (const mchar *)quiet, &o, false);
         }
     }
 };

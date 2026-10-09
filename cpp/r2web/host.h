@@ -40,7 +40,12 @@ struct HostBlock {
     // Child-to-host mailboxes: the writer waits for pending to return to 0.
     uint32_t copyPending, openPending;
     char copyText[TextCapacity], openUrl[TextCapacity], initialUrl[TextCapacity];
-    char error[128];
+    char error[124];
+    // Child-to-host: mark the window for attention (red title and taskbar
+    // button until focused), as IRC and Telegram windows do. Taken from the
+    // end of error[128], so the layout stays Version 1: an older host never
+    // reads it, and an older child never writes it (its errors are short).
+    uint32_t attentionPending;
     Frame frames[2];
     Command commands[Queue];
 };
