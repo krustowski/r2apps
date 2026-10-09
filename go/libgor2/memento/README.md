@@ -58,8 +58,11 @@ for host.Poll(r2.Ticks()) == memento.Running {
 host.Close()
 ```
 
-`Attach` checks `--host`, alignment, the entire block's range in the shared
-`0xC00000..0x1000000` user heap, magic and version. It accepts extra app
+`Attach` checks `--host`, alignment, that the entire block lies in the shared
+user heap, magic and version. The heap is the 4 MiB from `0xC00000` and, once
+they are full, the extension the kernel adds below 1 GiB (from `0xA000000`, or
+past the tar archive); on r2 the kernel is asked (syscall `0x43`, through
+`libgor2.SharedHeapContains`) before the block is read. It accepts extra app
 arguments after the address. `Connect` takes an already mapped block and is
 useful for ordinary Go tests.
 

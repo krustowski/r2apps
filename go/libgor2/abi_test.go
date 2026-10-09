@@ -186,3 +186,35 @@ func TestCaptureInfoLayout(t *testing.T) {
 		t.Fatal("capture metadata no longer matches the packed kernel/C ABI")
 	}
 }
+
+func TestSharedHeapContains(t *testing.T) {
+	answer := uintptr(1)
+	mockSyscall(t, func(number, arg1, arg2, arg3 uintptr) uintptr {
+		if number != ScHeapContains || arg1 != 0xa104ce0 || arg2 != 8336 || arg3 != 0 {
+			t.Fatal("wrong heap check arguments")
+		}
+		return answer
+	})
+	if !SharedHeapContains(0xa104ce0, 8336) {
+		t.Fatal("rejected a block in the heap extension")
+	}
+	answer = 0
+	if SharedHeapContains(0xa104ce0, 8336) {
+		t.Fatal("accepted what the kernel refused")
+	}
+
+	// A kernel without 0x43 can only vouch for the first 4 MiB.
+	mockSyscall(t, func(number, arg1, arg2, arg3 uintptr) uintptr { return uintptr(EInvalidSyscall) })
+	for _, c := range []struct {
+		addr uintptr
+		size uint64
+		want bool
+	}{
+		{0xc00000, 8336, true}, {0xffdf70, 8336, true}, {0xffdf71, 8336, false},
+		{0xbffff0, 16, false}, {0xc00000, 0, false}, {0xa104ce0, 8336, false},
+	} {
+		if SharedHeapContains(c.addr, c.size) != c.want {
+			t.Fatalf("old kernel, %#x+%d: want %v", c.addr, c.size, c.want)
+		}
+	}
+}

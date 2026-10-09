@@ -69,15 +69,25 @@ type Client[S any] struct {
 	reason   ExitReason
 }
 
+// The shared heap Memento hosts allocate blocks from: the 4 MiB from
+// 0xC00000, and the extension the kernel adds once they are full, which lies
+// below the first GiB (from 0xA000000, or past the tar archive).
+const (
+	heapStart = 0xc00000
+	heapLimit = 0x40000000
+)
+
 // HostAddress validates the launch prefix and the complete block's range
 // before any shared memory is read. Extra application arguments may follow
-// args[2]. This is the shared 0xC00000..0x1000000 region used by Memento hosts.
+// args[2]. The block has to lie where the shared heap can be, and on r2 the
+// kernel is asked whether it lies in one of the heap's regions (heapContains).
 func HostAddress(args []string, size uintptr) (uintptr, error) {
 	if len(args) < 3 || args[1] != "--host" {
 		return 0, ErrArguments
 	}
 	address, err := strconv.ParseUint(args[2], 0, 64)
-	if err != nil || address%4 != 0 || address < 0xc00000 || address >= 0x1000000 || size == 0 || uint64(size) > 0x1000000-address {
+	if err != nil || address%4 != 0 || address < heapStart || address >= heapLimit || size == 0 ||
+		uint64(size) > heapLimit-address || !heapContains(uintptr(address), size) {
 		return 0, ErrAddress
 	}
 	return uintptr(address), nil

@@ -36,20 +36,35 @@ func TestHostAddress(t *testing.T) {
 		nil, {"app.elf"}, {"app.elf", "--host"}, {"app.elf", "--other", "0xc00000"},
 		{"app.elf", "--host", "garbage"}, {"app.elf", "--host", "-1"},
 		{"app.elf", "--host", "0xbffffc"}, {"app.elf", "--host", "0xc00001"},
-		{"app.elf", "--host", "0x1000000"}, {"app.elf", "--host", "0xfffffc"},
+		{"app.elf", "--host", "0x40000000"}, {"app.elf", "--host", "0x3ffffffc"},
 		{"app.elf", "--host", "0xffffffffffffffff"},
 	} {
 		if address, err := HostAddress(args, 4040); err == nil || address != 0 {
 			t.Fatalf("accepted %v", args)
 		}
 	}
-	for _, address := range []string{"0xc00000", "0xfff038"} {
+	// The first 4 MiB, and the extension the kernel adds past them (a block
+	// a host got there on bare metal: 0xa104ce0).
+	for _, address := range []string{"0xc00000", "0xfff038", "0x1000000", "0xa104ce0"} {
 		if _, err := HostAddress([]string{"app.elf", "--host", address, "extra"}, 4040); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if _, err := HostAddress([]string{"app.elf", "--host", "0xc00000"}, 0); err != ErrAddress {
 		t.Fatal(err)
+	}
+
+	// What the kernel says is not in the heap is refused, and the whole
+	// block is what it is asked about.
+	previous := heapContains
+	t.Cleanup(func() { heapContains = previous })
+	var asked [2]uintptr
+	heapContains = func(address, size uintptr) bool {
+		asked = [2]uintptr{address, size}
+		return false
+	}
+	if _, err := HostAddress([]string{"app.elf", "--host", "0xa104ce0"}, 4040); err != ErrAddress || asked != [2]uintptr{0xa104ce0, 4040} {
+		t.Fatalf("kernel refusal: %v, asked %#x", err, asked)
 	}
 }
 

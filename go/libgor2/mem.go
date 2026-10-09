@@ -44,6 +44,20 @@ func KFree(addr uintptr) {
 	Syscall(ScFree, addr, 0)
 }
 
+// SharedHeapContains tells whether the whole of [addr, addr+size) lies in one
+// region of the shared heap: the 4 MiB from 0xC00000 or the extension the
+// kernel adds once they are full (syscall 0x43).  Nothing is read at addr, so
+// it is the check to make before using an address another process passed on
+// the command line.  It does not say whether the range is still allocated.
+// A kernel from before 0x43 can only vouch for the first 4 MiB.
+func SharedHeapContains(addr uintptr, size uint64) bool {
+	r := Syscall(ScHeapContains, addr, uintptr(size))
+	if Errno(r) == EInvalidSyscall {
+		return size != 0 && addr >= 0xc00000 && addr < 0x1000000 && size <= uint64(0x1000000-addr)
+	}
+	return r == 1
+}
+
 // KBytes is the size bytes at addr, a block from KMalloc, as a slice that can
 // be passed to ReadFileAt, WriteVGA, Send and the rest.  It returns nil for a
 // zero address.

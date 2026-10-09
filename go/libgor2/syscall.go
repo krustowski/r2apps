@@ -101,6 +101,7 @@ const (
 	ScFsStat          = 0x40
 	ScCmdline         = 0x41
 	ScDesktopRelaunch = 0x42
+	ScHeapContains    = 0x43
 )
 
 // Errno is a kernel return code.  Zero means success; every other value is one
