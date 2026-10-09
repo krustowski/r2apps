@@ -133,9 +133,11 @@ Turbo C++.
 
 ## No floating point, anywhere
 
-r2 does not save a task's SSE or x87 registers when it switches tasks, so a
-program that uses them can have them changed under it by another program
-that does too. So this one uses none:
+The player was written when r2 did not save a task's SSE or x87 registers
+when it switched tasks, so a program that used them could have them changed
+under it by another program that did too. Current kernels save and restore
+them (`fxsave64`/`fxrstor64` in `r2_main/src/abi/timer_interrupt.asm`), so
+that is no longer a hazard, but the player still uses none:
 
 - `pl_mpeg_r2.h` is generated from `third_party/pl_mpeg.h` by
   `tools/trim_pl_mpeg.py`, which keeps the buffer, the demuxer and the video
@@ -222,11 +224,6 @@ seen, and the pictures after an expensive I-picture catch up. The first time sta
 Pause stops the stream's DMA, so the clock stands still with the picture.
 When the audio runs out, or there is no sound device or no audio, the
 pictures keep time by the tick counter as before.
-
-The proper fix is in the kernel: `fxsave`/`fxrstor` around the task switch
-in `r2_main/src/abi/timer_interrupt.asm`. Until then, memento itself (which
-uses `double` throughout) and other SSE-using programs remain exposed to
-each other.
 
 ## Building
 
