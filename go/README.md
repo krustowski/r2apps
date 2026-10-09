@@ -3,13 +3,15 @@
 | Project name | Purpose | State |
 | ------------ | ------- | ----- |
 | `libgor2` | The Go binding for the `r2` kernel ABI: every syscall, plus the types they read and write. | usable |
-| `r2net` | The TCP/IP stack: ARP, IPv4, ICMP, UDP, DNS, TCP and an HTTP/1.0 client, over the kernel's raw packets. | usable |
+| `r2net` | The TCP/IP stack: ARP, IPv4, ICMP, UDP, DNS, TCP and an HTTP/1.0 client, over the kernel's raw packets; the RTL8139 or E1000, SLIP, and the kernel's loopback device. | usable |
+| `r2tls` | Certificate-verified HTTPS over r2net's TCP: Memento's portable BearSSL through Cgo. Used by `spotify`. | usable |
+| `libgor2/memento` | The window bridge for a Go program hosted in Memento: launch checks, commands, double-buffered snapshots, heartbeat and shutdown, with the C++ side in `host.hpp` (see its [README](libgor2/memento/README.md)). | usable |
 | `tinygo-r2` | The TinyGo target that makes Go run on `r2` at all --- runtime hooks, entry point, memory map. | usable |
 | `hello` | The minimal Go program: says who it is, what it was given, and what time the machine thinks it is. | stable |
 | `gfxdemo` | Graphics test: plasma, bouncing balls and kernel-font text, through whichever of the three display paths the machine has. | stable |
 | `routtest` | Goroutine evaluation: what one costs, how many fit, what the cooperative scheduler does, and where the collector has to be pushed. | stable |
 | `icmpresp` | ICMP Echo responder over SLIP. A port of `c/icmpresp`, and the proof that a Go program can be a real `r2` service. | stable |
-| `spotify` | Standalone Go Spotify playlist prototype hosted by Memento, with native HTTPS, local PCM playback and runtime statistics. | experimental |
+| `spotify` | Spotify client hosted by Memento: playlists from the Web API, and Premium tracks streamed, decrypted and decoded (Ogg Vorbis, through Tremor) to HD Audio inside r2, over r2net and r2tls; generated test tones without an account (see its [README](spotify/README.md)). | experimental |
 | `dish` | The [vxn.dev](https://github.com/thevxn/dish) one-shot monitoring service, ported: HTTP, TCP and ICMP checks, results pushed to plain-HTTP channels. | stable |
 
 Go on `r2` is TinyGo, not the `gc` toolchain.  What you get is the whole Go
@@ -43,9 +45,10 @@ Copy the `.elf` onto the floppy image and run it from the shell like any other
 `r2` program:
 
 ```shell
-mcopy -i fat.img hello/hello.elf ::BIN/HELLO.ELF
+mcopy -i fat.img hello/hello.elf ::HELLO.ELF
 # in the r2 shell
-run HELLO
+cd /mnt/fat
+fg hello
 ```
 
 ## How it works
@@ -240,17 +243,18 @@ package-level cell as `libgor2` does.  It is worth disassembling a hot loop
 
 ### Floating point across a context switch
 
-The kernel's timer interrupt saves the fifteen general-purpose registers and
-nothing else --- no `fxsave`, so the SSE and x87 state is not preserved across
-a context switch.  Two processes using floating point at the same time will
-corrupt each other.  This is not specific to Go (a `gcc -O2` C program uses SSE
-too), but Go leans on it harder.  The fix belongs in the kernel's
-`timer_interrupt.asm`.
+Current kernels save each process's x87/MMX/SSE state across a context switch
+(`fxsave64`/`fxrstor64` in `timer_interrupt.asm`), and a new process starts
+with a clean one, so Go's floating point is safe alongside other programs that
+use it. Older kernels saved the general-purpose registers only, and two
+processes using floating point at once corrupted each other there. AVX is not
+enabled.
 
 ### One address space
 
 Processes share a single address space above their own 2 MiB frame, and the
-kernel's userland heap is 4 MiB shared by all ten process slots.  A Go program
+kernel's userland heap (4 MiB, plus an extension the kernel maps once that is
+full) is shared by all 32 process slots.  A Go program
 holds its own heap inside its own frame, which is why `libgor2.KMalloc` returns
 a `uintptr` rather than a pointer: memory from there is invisible to the
 collector and must be freed by hand --- or is freed by the kernel when the
