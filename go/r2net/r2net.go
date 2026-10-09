@@ -116,6 +116,13 @@ type Options struct {
 	// with none published, resolution is disabled.
 	DNS IP
 
+	// PortBase is the first local TCP port, and PortCount how many from it
+	// are used round robin (at most eight).  Zero means 40000 and eight.
+	// Two programs on the network at once need ranges of their own, and the
+	// kernel's port registry has sixteen entries for the whole machine.
+	PortBase  uint16
+	PortCount uint16
+
 	// Trace, when set, is called with one line per packet sent or
 	// received.  It is a function rather than a flag because the
 	// application owns the question of where a log line goes --- on this
@@ -152,24 +159,34 @@ type Stack struct {
 	rxBuf [frameLen]byte
 	txBuf [frameLen]byte
 
-	ipID     uint16
-	nextPort uint16
-	bound    map[uint16]bool
+	ipID      uint16
+	portBase  uint16
+	portCount uint16
+	nextPort  uint16
+	bound     map[uint16]bool
 }
 
 // Open brings up a stack on the requested link.
 func Open(opts Options) (*Stack, error) {
 	s := &Stack{
-		check:    opts.Check,
-		localIP:  opts.LocalIP,
-		netmask:  opts.Netmask,
-		gateway:  opts.Gateway,
-		dns:      opts.DNS,
-		trace:    opts.Trace,
-		ipID:     uint16(libgor2.Ticks()),
-		nextPort: ephemeralBase,
-		bound:    make(map[uint16]bool),
+		check:     opts.Check,
+		localIP:   opts.LocalIP,
+		netmask:   opts.Netmask,
+		gateway:   opts.Gateway,
+		dns:       opts.DNS,
+		trace:     opts.Trace,
+		ipID:      uint16(libgor2.Ticks()),
+		portBase:  opts.PortBase,
+		portCount: opts.PortCount,
+		bound:     make(map[uint16]bool),
 	}
+	if s.portBase == 0 {
+		s.portBase = ephemeralBase
+	}
+	if s.portCount == 0 || s.portCount > ephemeralCount {
+		s.portCount = ephemeralCount
+	}
+	s.nextPort = s.portBase
 
 	// What the eth driver published, for whatever the caller left zero.
 	var kcfg libgor2.NetConfig

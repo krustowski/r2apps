@@ -76,6 +76,11 @@ Two consequences worth knowing before designing around this:
 - **While registered, this stack is the machine's network stack.**  It answers
   ARP who-has for the local address and ICMP echo requests, because nothing
   else is going to.
+- **Two programs on the network need port ranges of their own.**  Local TCP
+  ports go round robin from `Options.PortBase` (40000 by default), eight of
+  them or `Options.PortCount`, and the kernel's port registry has sixteen
+  entries for the whole machine.  A program hosted in a Memento window takes
+  its range from the window (`48000 + slot*32`), as telegram.elf does.
 
 Local Ethernet traffic to `127.0.0.0/8` or this machine's address uses the
 kernel's loopback device. `Ping` to these addresses works even when another

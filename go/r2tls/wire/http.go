@@ -11,13 +11,19 @@ import (
 
 const MaxBody = 64 * 1024
 
+// ErrTooLarge is returned when a body exceeds the limit it was read with.
+var ErrTooLarge = errors.New("HTTP body exceeds its limit")
+
 type Response struct {
 	Status int
 	Header map[string]string
 	Body   []byte
 }
 
-func Read(r io.Reader) (Response, error) {
+func Read(r io.Reader) (Response, error) { return ReadLimit(r, MaxBody) }
+
+// ReadLimit is Read with a body of at most limit bytes rather than MaxBody.
+func ReadLimit(r io.Reader, limit int) (Response, error) {
 	var out Response
 	b := bufio.NewReaderSize(r, 2048)
 	line, err := b.ReadSlice('\n')
@@ -102,8 +108,8 @@ func Read(r io.Reader) (Response, error) {
 					}
 				}
 			}
-			if uint64(len(out.Body))+n > MaxBody {
-				return out, errors.New("HTTP body exceeds 64 KiB")
+			if uint64(len(out.Body))+n > uint64(limit) {
+				return out, ErrTooLarge
 			}
 			at := len(out.Body)
 			out.Body = append(out.Body, make([]byte, int(n))...)
@@ -121,16 +127,19 @@ func Read(r io.Reader) (Response, error) {
 	}
 	if s, ok := out.Header["content-length"]; ok {
 		n, err := strconv.ParseUint(s, 10, 32)
-		if err != nil || n > MaxBody {
-			return out, errors.New("invalid or excessive HTTP content length")
+		if err != nil {
+			return out, errors.New("invalid HTTP content length")
+		}
+		if n > uint64(limit) {
+			return out, ErrTooLarge
 		}
 		out.Body = make([]byte, int(n))
 		_, err = io.ReadFull(b, out.Body)
 		return out, err
 	}
-	out.Body, err = io.ReadAll(io.LimitReader(b, MaxBody+1))
-	if len(out.Body) > MaxBody {
-		return out, errors.New("HTTP body exceeds 64 KiB")
+	out.Body, err = io.ReadAll(io.LimitReader(b, int64(limit)+1))
+	if len(out.Body) > limit {
+		return out, ErrTooLarge
 	}
 	return out, err
 }

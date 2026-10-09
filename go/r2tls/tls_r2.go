@@ -264,6 +264,29 @@ func (c *tlsConn) Close() {
 	c.engine = nil
 }
 
+// Conn is a certificate-verified TLS connection opened with Dial, for a
+// caller that frames its own requests (wire.ReadLimit reads a response).
+type Conn struct{ c *tlsConn }
+
+// Dial resolves host, connects and completes the TLS handshake. timeout is
+// how long the connection may then go without progress; SetTimeout changes it.
+// Unlike Do, any host is accepted: the certificate is what is checked.
+func (c *Client) Dial(host string, port uint16, timeout time.Duration) (*Conn, error) {
+	t, err := c.connect(host, port, timeout)
+	if err != nil {
+		return nil, err
+	}
+	t.setTimeout(timeout)
+	return &Conn{t}, nil
+}
+
+func (c *Conn) Read(b []byte) (int, error)  { return c.c.Read(b) }
+func (c *Conn) Write(b []byte) (int, error) { return c.c.Write(b) }
+func (c *Conn) Close() error                { c.c.Close(); return nil }
+
+// SetTimeout gives the connection a new budget without progress.
+func (c *Conn) SetTimeout(timeout time.Duration) { c.c.setTimeout(timeout) }
+
 func (c *Client) Do(method, url string, headers map[string]string, body []byte) (wire.Response, error) {
 	return c.request(method, url, headers, body, false, 60*time.Second)
 }

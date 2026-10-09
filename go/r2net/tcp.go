@@ -38,7 +38,8 @@ const (
 	// where servers live, and on this machine the port registry the kernel
 	// keeps is only sixteen entries long, so a program that wants to be
 	// runnable twice should keep using the same few.
-	ephemeralBase = 40000
+	ephemeralBase  = 40000
+	ephemeralCount = 8
 
 	// Retransmission.  The first timeout is generous by LAN standards
 	// because the kernel only polls the NIC on a timer tick and a reply can
@@ -169,8 +170,8 @@ func (s *Stack) allocPort() (uint16, error) {
 	port := s.nextPort
 
 	s.nextPort++
-	if s.nextPort < ephemeralBase || s.nextPort > ephemeralBase+7 {
-		s.nextPort = ephemeralBase
+	if s.nextPort < s.portBase || s.nextPort >= s.portBase+s.portCount {
+		s.nextPort = s.portBase
 	}
 
 	if s.driver || s.bound[port] {
