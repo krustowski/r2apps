@@ -8,8 +8,9 @@
  *
  *  With --host the shell neither prints to the console nor reads the keyboard.
  *  Its output goes into a ring in a block of memory that the host --- Memento's
- *  Shell window --- allocated on r2's user heap (0xC00_000 up, mapped the same
- *  way in every process) and named on the command line, and its keys come out
+ *  Shell window --- allocated on r2's user heap (0xC00_000 up, or the extension
+ *  the kernel adds once that is full; mapped the same way in every process)
+ *  and named on the command line, and its keys come out
  *  of a second ring in the same block.  The host draws the one as a terminal
  *  and fills the other with what is typed.
  *
@@ -18,10 +19,14 @@
  *  Enter, '\b' for Backspace, 0x1B for Escape.
  *
  *  One writer per field.  Each side bumps its beat while it is there; the
- *  shell leaves when the host's has stood still for ten seconds.
+ *  shell leaves when the host's has stood still for ten seconds.  The shell
+ *  also bumps its own once when it has taken the block and once after each of
+ *  the next two steps of its start (bsh's mount table, the kernel's working
+ *  directory): a host whose shell has said nothing can tell how far it got.
  *
- *  Memento's windows/shell_window.cpp has the same layout: change one, change
- *  both, and bump the version.
+ *  Memento's windows/shell_window.cpp has the same layout, and so has the
+ *  Terminal of Turbo C++ 23 on r2 (tcpp/r2/src/terminal.cpp): change one,
+ *  change all three, and bump the version.
  */
 
 #include "types.h"

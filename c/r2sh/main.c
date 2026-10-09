@@ -101,6 +101,13 @@ static void sh_write(const uint8_t *s, uint32_t len) {
     host->outHead = head;
 }
 
+/* One step of the start done: the host reads from the beat how far a shell
+ * that has said nothing got (host.h). */
+static void host_step(void) {
+    if (host)
+        host->shellBeat = host->shellBeat + 1;
+}
+
 static void sh_print(const uint8_t *s) {
     uint32_t n = 0;
     while (s[n])
@@ -188,13 +195,17 @@ static uint64_t parse_hex(const uint8_t *s) {
 }
 
 /* The block named by --host, if it is one: on the user heap, whole, and with
- * the magic and version this build speaks. */
+ * the magic and version this build speaks.  The heap is the 4 MiB from
+ * 0xC00000 and, once those are full, the extension the kernel adds (from
+ * 0xA000000 or past the tar archive): a host that has used up the first gets
+ * its block in the second, so the kernel is asked rather than the range
+ * taken for granted. */
 static ShHostBlock_T *host_from_args(int argc, char **argv) {
     for (int i = 1; i + 1 < argc; i++) {
         if (!str_eq((const uint8_t *)argv[i], (const uint8_t *)"--host"))
             continue;
         uint64_t addr = parse_hex((const uint8_t *)argv[i + 1]);
-        if (addr < 0xC00000 || addr + sizeof(ShHostBlock_T) > 0x1000000)
+        if (!addr || !shared_heap_contains((const void *)addr, sizeof(ShHostBlock_T)))
             return 0;
         ShHostBlock_T *b = (ShHostBlock_T *)addr;
         if (b->magic != SH_HOST_MAGIC || b->version != SH_HOST_VERSION)
@@ -278,6 +289,7 @@ static int run_console(void) {
 
 int main(int argc, char **argv) {
     host = host_from_args(argc, argv);
+    host_step(); /* 1: the block is taken */
 
     /*  Options: --color, --run <file.bsh> (a script before the prompt, the
      *  shell staying after it), --host <block> (Memento's Shell window).
@@ -303,6 +315,7 @@ int main(int argc, char **argv) {
 
     bsh_init(&sess, r2sh_write, 0, 0);
     sess.clear = r2sh_clear;
+    host_step(); /* 2: the mount table read, /mnt/fat looked for */
 
     /*  The console and Memento's Shell window both show ANSI colours (a
      *  kernel older than that prints the escapes as they are), so `color on`
@@ -332,6 +345,7 @@ int main(int argc, char **argv) {
                     sess.start[k] = sess.cwd[k];
         }
     }
+    host_step(); /* 3: in the kernel's working directory */
 
     sh_print((const uint8_t *)"r2sh - rou2ex userland shell\nType 'help' for commands.\n");
 
