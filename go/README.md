@@ -6,6 +6,7 @@
 | `r2net` | The TCP/IP stack: ARP, IPv4, ICMP, UDP, DNS, TCP and an HTTP/1.0 client, over the kernel's raw packets; the RTL8139 or E1000, SLIP, and the kernel's loopback device. | usable |
 | `r2tls` | Certificate-verified HTTPS over r2net's TCP: Memento's portable BearSSL through Cgo. Used by `spotify`. | usable |
 | `libgor2/memento` | The window bridge for a Go program hosted in Memento: launch checks, commands, double-buffered snapshots, heartbeat and shutdown, with the C++ side in `host.hpp` (see its [README](libgor2/memento/README.md)). | usable |
+| `libgor2/memento/hosted` | The child side of Memento's `HostedWindow`, the window `r2web.elf` and `jug.elf` are shown in: a Go program draws its whole window itself, nothing app-specific in Memento. | usable |
 | `tinygo-r2` | The TinyGo target that makes Go run on `r2` at all --- runtime hooks, entry point, memory map. | usable |
 | `hello` | The minimal Go program: says who it is, what it was given, and what time the machine thinks it is. | stable |
 | `gfxdemo` | Graphics test: plasma, bouncing balls and kernel-font text, through whichever of the three display paths the machine has. | stable |
@@ -13,6 +14,7 @@
 | `icmpresp` | ICMP Echo responder over SLIP. A port of `c/icmpresp`, and the proof that a Go program can be a real `r2` service. | stable |
 | `spotify` | Spotify client hosted by Memento: playlists from the Web API, and Premium tracks streamed, decrypted and decoded (Ogg Vorbis, through Tremor) to HD Audio inside r2, over r2net and r2tls; generated test tones without an account (see its [README](spotify/README.md)). | experimental |
 | `dish` | The [vxn.dev](https://github.com/thevxn/dish) one-shot monitoring service, ported: HTTP, TCP and ICMP checks, results pushed to plain-HTTP channels. | stable |
+| `telegram` | The Telegram client of Memento's Telegram window, out of Memento: a bot over the Bot API (r2net and r2tls), photos, GIFs and H.264 MP4s through Memento's own decoders, screenshots; it draws its window itself (see its [README](telegram/README.md)). | usable |
 
 Go on `r2` is TinyGo, not the `gc` toolchain.  What you get is the whole Go
 *language* --- slices, maps, strings, interfaces, closures, `defer`, `panic`,
