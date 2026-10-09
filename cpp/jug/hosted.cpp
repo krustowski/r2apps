@@ -38,6 +38,10 @@ static void clipboardSet(const char *s)
     }
 }
 
+//  Fresh builds found by a check: Memento marks the window (red title and
+//  taskbar button) unless it has the focus.
+static void askAttention() { r2web::store(&g_host->attentionPending, 1); }
+
 #include "window.cpp"
 
 namespace {

@@ -153,6 +153,7 @@ bool Config::load(const char *path)
     scopy(repo, DEFAULT_REPO, sizeof(repo));
     scopy(listName_, DEFAULT_LIST, sizeof(listName_));
     insecure = false;
+    check = CHECK_DEFAULT;
     source[0] = 0;
 
     //  The floppy's, which a user can edit, before the boot medium's.
@@ -203,6 +204,13 @@ bool Config::load(const char *path)
             scopy(listName_, value, sizeof(listName_));
         else if (ieq(key, "insecure"))
             insecure = value == r2::string_view("1") || ieq(value, "yes") || ieq(value, "true");
+        else if (ieq(key, "check"))
+        {
+            //  A list a few lines long, but not fetched every second.
+            uint64_t seconds = 0;
+            if (r2::parse_uint(value, seconds))
+                check = !seconds ? 0 : seconds < CHECK_MIN ? CHECK_MIN : seconds > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)seconds;
+        }
     }
     finish();
     return true;
@@ -262,6 +270,36 @@ r2::vector<Local> scan_local()
     }
     r2::sort(out.begin(), out.end(), [](const Local &a, const Local &b) { return strcmp(a.name, b.name) < 0; });
     return out;
+}
+
+Digest downloads_stamp()
+{
+    Sha256 sha;
+    if (!mounted("/mnt/tmp"))
+        return sha.finish();
+    Registry reg;
+    if (r2::optional<r2::string> text = r2::fs::read_text(sv(REGISTRY_PATH), 64 * 1024))
+        (void)reg.parse(text->view());
+    r2::vector<Record> here;
+    for (const r2::fs::Entry &e : r2::fs::list(sv(DIR)))
+    {
+        Record r;
+        if (e.is_dir || !program_name(e.name.view(), r.name))
+            continue; // not SUMS.TXT, nor a .NEW or .BAK on its way
+        r.size = e.size;
+        //  A same-size build put in place by another jug shows in its record.
+        if (const Record *known = reg.find(r.name))
+            r.sum = known->sum;
+        (void)here.push_back(r);
+    }
+    r2::sort(here.begin(), here.end(), [](const Record &a, const Record &b) { return strcmp(a.name, b.name) < 0; });
+    for (const Record &r : here)
+    {
+        sha.update(r.name, sizeof(r.name));
+        sha.update(&r.size, sizeof(r.size));
+        sha.update(r.sum.b, sizeof(r.sum.b));
+    }
+    return sha.finish();
 }
 
 bool hash_file(const char *path, uint32_t size, Digest &out)
@@ -566,14 +604,16 @@ bool Model::open(const char *configPath)
     return ok;
 }
 
-bool Model::takeList(const uint8_t *data, size_t len, const char *lastModified)
+bool Model::takeList(const uint8_t *data, size_t len, const char *lastModified, bool *changed)
 {
     Catalog fresh;
     if (!fresh.parse(r2::string_view((const char *)data, len)))
         return false;
-    (void)save_list(data, len, lastModified, config.list);
     if (!fresh.updated[0] && lastModified)
         scopy(fresh.updated, lastModified, sizeof(fresh.updated));
+    if (changed && !(*changed = !haveList || !fresh.same(catalog)))
+        return true;
+    (void)save_list(data, len, lastModified, config.list);
     catalog = fresh;
     haveList = true;
     rebuild();
@@ -584,6 +624,13 @@ void Model::rescan()
 {
     locals = scan_local();
     rebuild();
+}
+
+void Model::reload()
+{
+    (void)registry.load();
+    registryDirty_ = false;
+    rescan();
 }
 
 void Model::judge(Row &r)

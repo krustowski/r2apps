@@ -11,9 +11,15 @@
 //  U fetches the list again (it is fetched when the window opens), G or
 //  Enter downloads the program on the bar, A every program the server has a
 //  newer build of, R restarts the running copies of the program on the bar
-//  (Y to confirm), Del removes a download, Ctrl+C copies the SHA-256.
+//  (Y to confirm), Del removes a download, Ctrl+C copies the SHA-256, and F
+//  hides the programs that are current, or shows them again.
 //  Tab / Shift+Tab cycle between the list and bottom buttons; Enter or Space
 //  activates the focused button. Left / Right move between the buttons.
+//
+//  While it is open the window keeps looking: at the list every `check`
+//  seconds of jug.cfg, and every few seconds at /mnt/tmp/jug, which the
+//  console's jug may change.  Fresh builds a check finds are named on the
+//  status line, and Memento marks the window until it is looked at.
 //
 
 class JugWindow
@@ -49,15 +55,24 @@ private:
         LIST,
         PROGRAM,
     } job = NO_JOB;
+    bool checking = false;                         // the LIST job is a check nobody asked for
     char current[jug::NAME_CAP] = {};              // the program being fetched
     r2::vector<r2::string> queue;                  // and those after it
-    int sel = 0, top = 0;
-    char selName[jug::NAME_CAP] = {};              // the bar, across a new list
+    int sel = 0, top = 0;                          // into `view`
+    char selName[jug::NAME_CAP] = {};              // the bar, across a new list or F
     char confirm[jug::NAME_CAP] = {};              // R pressed: Y restarts this
     bool mementoUpdated = false;                  // prompt after the download queue
+    bool onlyUpdates = false;                      // F: the programs that are not current
+    r2::vector<int> view;                          // the rows shown, as indices into model.rows
+    r2::vector<r2::string> fresh;                  // what a check found new, named once read
+    bool announce = false;
+    jug::Digest diskSeen;                          // /mnt/tmp/jug as this window left it
+    bool restamp = true;                           // ... once the rows are read again
     char status[160] = {};
     char shownProgress[96] = {};
-    uint64_t progressAt = 0, runningAt = 0;
+    uint64_t progressAt = 0, runningAt = 0, listAt = 0, diskAt = 0;
+
+    static const uint64_t DISK_EVERY = 5000;       // ms between looks at /mnt/tmp/jug
 
     // Layout, in the window's units.  Text is 4 units a character.
     static const int TOP_Y = 2, HEAD_Y = 13, ROW_Y = 25, ROW_H = 10;
@@ -89,17 +104,39 @@ private:
 
     // ── Jobs ────────────────────────────────────────────────────────────────
 
-    void startList()
+    //  `automatic`: a check, which keeps the status line unless it finds
+    //  something, and gives way to anything the user asks for.
+    void startList(bool automatic = false)
     {
         queue = r2::vector<r2::string>();
         if (!fetch.start(model.config.list, model.config.insecure))
         {
+            listAt = r2::ticks();
             say(fetch.error());
             return;
         }
         job = LIST;
-        say("Fetching ", model.config.list);
+        checking = automatic;
+        if (!automatic)
+            say("Fetching ", model.config.list);
         busy(true);
+    }
+
+    //  Stops a check under way; the next one is due at once, so it runs
+    //  again when the window is idle.
+    void yieldCheck()
+    {
+        if (job != LIST || !checking)
+            return;
+        fetch.cancel();
+        fetch.response().body.release();
+        job = NO_JOB;
+        checking = false;
+    }
+
+    bool checkDue(uint64_t now) const
+    {
+        return model.config.check && !confirm[0] && now - listAt >= (uint64_t)model.config.check * 1000;
     }
 
     bool startProgram(const char *name)
@@ -124,6 +161,7 @@ private:
 
     void get(const jug::Row &r)
     {
+        yieldCheck();
         if (job != NO_JOB)
         {
             say("Wait for ", job == LIST ? "the list" : current, " first.");
@@ -139,6 +177,7 @@ private:
 
     void getAll()
     {
+        yieldCheck();
         if (job != NO_JOB)
             return;
         if (model.count(jug::State::Unknown))
@@ -177,15 +216,35 @@ private:
         web::HttpResponse &resp = fetch.response();
         if (done == LIST)
         {
+            bool automatic = checking, changed = true;
+            checking = false;
+            listAt = r2::ticks();
+            jug::Catalog older;
+            if (automatic)
+                older = model.catalog;
             if (!fetch.ok())
-                say("The list: ", fetch.error());
-            else if (!model.takeList(resp.body.data, resp.body.len, resp.lastModified))
+                say(automatic ? "Checking the list: " : "The list: ", fetch.error());
+            else if (!model.takeList(resp.body.data, resp.body.len, resp.lastModified, automatic ? &changed : nullptr))
                 say("That is no list of programs: ", model.config.list);
+            else if (!changed)
+            {
+                // the same list: nothing to say
+            }
             else
             {
-                char n[16] = {};
-                jug::scatU(n, model.catalog.packages.size(), sizeof(n));
-                say(n, " programs on the server.");
+                restamp = true;
+                if (automatic)
+                {
+                    //  Named once the programs here are read again.
+                    fresh = model.catalog.freshSince(older);
+                    announce = true;
+                }
+                else
+                {
+                    char n[16] = {};
+                    jug::scatU(n, model.catalog.packages.size(), sizeof(n));
+                    say(n, " programs on the server.");
+                }
                 select(selName);
             }
             resp.body.release();
@@ -205,6 +264,7 @@ private:
             char size[16] = {};
             jug::scatSize(size, resp.body.len, sizeof(size));
             model.rescan();
+            restamp = true;
             r = model.row(current);
             if (!strcmp(current, "memento") && r && r->npids)
                 mementoUpdated = true;
@@ -218,9 +278,38 @@ private:
         if (job == NO_JOB && mementoUpdated)
         {
             mementoUpdated = false;
-            select("memento");
-            askRestart();
+            select("memento"); // with F, the bar is on the next program shown
+            askRestart(model.row("memento"));
         }
+    }
+
+    //  The builds a check found that this machine has not got.
+    void tellFresh()
+    {
+        char names[64] = {};
+        int n = 0;
+        for (const r2::string &name : fresh)
+            if (const jug::Row *r = model.row(name.view()))
+                if (r->state == jug::State::Outdated || r->state == jug::State::Available)
+                {
+                    if (n++)
+                        jug::scat(names, ", ", sizeof(names));
+                    jug::scat(names, r->name, sizeof(names));
+                }
+        fresh = r2::vector<r2::string>();
+        if (!n)
+        {
+            say("The list changed; nothing new for this machine.");
+            return;
+        }
+        if (n > 4)
+        {
+            names[0] = 0;
+            jug::scatU(names, (uint64_t)n, sizeof(names));
+            jug::scat(names, " programs", sizeof(names));
+        }
+        say("Fresh on the server: ", names, ".  G gets one, A all updates.");
+        askAttention();
     }
 
     void onIdle()
@@ -249,6 +338,39 @@ private:
             }
             return;
         }
+        //  Everything here is read, and the registry saved.
+        if (restamp)
+        {
+            restamp = false;
+            diskSeen = jug::downloads_stamp();
+            diskAt = now;
+        }
+        if (announce)
+        {
+            announce = false;
+            tellFresh();
+            wnd->Repaint();
+        }
+        //  Neither look talks over a Y / N question.
+        if (!confirm[0] && now - diskAt >= DISK_EVERY)
+        {
+            diskAt = now;
+            if (jug::downloads_stamp() != diskSeen)
+            {
+                model.reload();
+                restamp = true;
+                select(selName);
+                say("Programs in /mnt/tmp/jug changed outside this window; reading them again.");
+                wnd->Repaint();
+                return;
+            }
+        }
+        if (checkDue(now))
+        {
+            startList(true);
+            wnd->Repaint();
+            return;
+        }
         if (now - runningAt >= 1000)
         {
             model.readRunning();
@@ -261,34 +383,73 @@ private:
 
     const jug::Row *selected() const
     {
-        return sel >= 0 && sel < (int)model.rows.size() ? &model.rows[sel] : nullptr;
+        if (sel < 0 || sel >= (int)view.size() || view[sel] >= (int)model.rows.size())
+            return nullptr;
+        return &model.rows[view[sel]];
+    }
+
+    //  The rows to show: all, or with F those not current.  The bar stays
+    //  on its program, or moves to the next one shown when that is hidden.
+    //  Made again whenever the rows may have changed.
+    void refreshView()
+    {
+        int want = -1;
+        view.clear();
+        for (size_t i = 0; i < model.rows.size(); i++)
+        {
+            if (!strcmp(model.rows[i].name, selName))
+                want = (int)i;
+            if (!onlyUpdates || model.rows[i].state != jug::State::Current)
+                (void)view.push_back((int)i);
+        }
+        int at = sel;
+        if (want >= 0)
+        {
+            at = (int)view.size() - 1;
+            for (size_t i = 0; i < view.size(); i++)
+                if (view[i] >= want)
+                {
+                    at = (int)i;
+                    break;
+                }
+        }
+        //  Scrolled only when the bar moved: the wheel leaves it behind.
+        place(at, at != sel);
+    }
+
+    //  The bar on shown row `i`, scrolled into sight when `show`.
+    void place(int i, bool show)
+    {
+        int n = (int)view.size();
+        sel = i < 0 ? 0 : i >= n ? (n ? n - 1 : 0) : i;
+        if (top > n - rowsShown)
+            top = n - rowsShown;
+        if (top < 0)
+            top = 0;
+        if (show && sel < top)
+            top = sel;
+        if (show && sel >= top + rowsShown)
+            top = sel - rowsShown + 1;
+        if (const jug::Row *r = selected())
+            jug::scopy(selName, r->name, sizeof(selName));
     }
 
     void select(const char *name)
     {
-        sel = 0;
-        for (size_t i = 0; i < model.rows.size(); i++)
-            if (!strcmp(model.rows[i].name, name))
-                sel = (int)i;
-        moveTo(sel);
+        if (name != selName)
+            jug::scopy(selName, name, sizeof(selName));
+        refreshView();
+        confirm[0] = 0;
     }
 
     void moveTo(int i)
     {
-        int n = (int)model.rows.size();
-        sel = i < 0 ? 0 : i >= n ? (n ? n - 1 : 0) : i;
-        if (sel < top)
-            top = sel;
-        if (sel >= top + rowsShown)
-            top = sel - rowsShown + 1;
-        if (const jug::Row *r = selected())
-            jug::scopy(selName, r->name, sizeof(selName));
+        place(i, true);
         confirm[0] = 0;
     }
 
-    void askRestart()
+    void askRestart(const jug::Row *r)
     {
-        const jug::Row *r = selected();
         if (!r)
             return;
         model.readRunning();
@@ -336,6 +497,7 @@ private:
         else
         {
             model.rescan();
+            restamp = true;
             say(name, ": download removed; the shipped copy runs again.");
             busy(true); // hash the copy that runs now
         }
@@ -362,6 +524,11 @@ private:
         case B_UPDATE:
             if (job == NO_JOB)
                 startList();
+            else if (job == LIST && checking)
+            {
+                checking = false; // the user's own now: its outcome is told
+                say("Fetching ", model.config.list);
+            }
             break;
         case B_GET:
             if (const jug::Row *r = selected())
@@ -371,7 +538,7 @@ private:
             getAll();
             break;
         case B_RESTART:
-            askRestart();
+            askRestart(selected());
             break;
         case B_REMOVE:
             remove();
@@ -387,6 +554,9 @@ private:
 
     void onEvent_(struct PlatformWindowInterfaceInputEvent *data)
     {
+        if (data->type != PlatformWindowInputEventType::OnImmediateModeIdleLoop &&
+            data->type != PlatformWindowInputEventType::OnMouseMove)
+            refreshView();
         switch (data->type)
         {
         case PlatformWindowInputEventType::OnImmediateModeIdleLoop:
@@ -397,8 +567,8 @@ private:
             return;
         case PlatformWindowInputEventType::OnMouseWheel:
             top += data->Data.OnMouseWheel.up ? -3 : 3;
-            if (top > (int)model.rows.size() - rowsShown)
-                top = (int)model.rows.size() - rowsShown;
+            if (top > (int)view.size() - rowsShown)
+                top = (int)view.size() - rowsShown;
             if (top < 0)
                 top = 0;
             wnd->Repaint();
@@ -433,7 +603,7 @@ private:
         if (y >= ROW_Y && y < ROW_Y + rowsShown * ROW_H)
         {
             int i = top + (y - ROW_Y) / ROW_H;
-            if (i < (int)model.rows.size())
+            if (i < (int)view.size())
             {
                 focusedButton = -1;
                 moveTo(i);
@@ -483,9 +653,12 @@ private:
         {
             if (job != NO_JOB)
             {
+                if (job == LIST)
+                    listAt = r2::ticks(); // a check waits its turn again
                 queue = r2::vector<r2::string>();
                 fetch.cancel();
                 job = NO_JOB;
+                checking = false;
                 fetch.response().body.release();
                 say("Stopped.");
             }
@@ -513,7 +686,7 @@ private:
         else if (k->isHome)
             moveTo(0);
         else if (k->isEnd)
-            moveTo((int)model.rows.size() - 1);
+            moveTo((int)view.size() - 1);
         else if (k->isEnter || c == 'g' || c == 'G')
         {
             press(B_GET);
@@ -539,6 +712,12 @@ private:
             press(B_RESTART);
             return;
         }
+        else if ((c == 'f' || c == 'F') && !ctrl && !k->isLeftAlt && !k->isRightAlt) // Alt+F: Memento's maximise
+        {
+            onlyUpdates = !onlyUpdates;
+            refreshView();
+            say(onlyUpdates ? "Hiding the programs that are current; F shows them again." : "Showing every program.");
+        }
         else
             return;
         wnd->Repaint();
@@ -549,6 +728,16 @@ private:
     void text(PlatformBitmap *t, PlatformDrawTextOptions &o, int x, int y, int w, const char *s)
     {
         t->DrawText(x, y, w, ROW_H - 1, (const mchar *)s, &o, false);
+    }
+
+    //  At the right edge, over whatever runs into it.
+    void textRight(PlatformBitmap *t, PlatformDrawTextOptions &o, int y, int W, const char *s)
+    {
+        int w = (int)strlen(s) * 4;
+        t->FillRect(W - 4 - w - 4, y, w + 4, ROW_H - 1, light, false);
+        o.horizontalAlign = PlatformAlign::End;
+        text(t, o, COL_NAME, y, W - 8, s);
+        o.horizontalAlign = PlatformAlign::Begin;
     }
 
     void paint(PlatformDrawingContext *dc, PlatformBitmap *target)
@@ -598,10 +787,7 @@ private:
         {
             jug::scopy(line, "updated ", sizeof(line));
             jug::scat(line, model.catalog.updated, sizeof(line));
-            o.horizontalAlign = PlatformAlign::End;
-            target->FillRect(W - 4 - (int)strlen(line) * 4 - 4, TOP_Y, (int)strlen(line) * 4 + 4, ROW_H - 1, light, false);
-            text(target, o, COL_NAME, TOP_Y, W - 8, line);
-            o.horizontalAlign = PlatformAlign::Begin;
+            textRight(target, o, TOP_Y, W, line);
         }
 
         text(target, o, COL_NAME, HEAD_Y, 36, "Name");
@@ -610,13 +796,22 @@ private:
         text(target, o, COL_HERE, HEAD_Y, 22, "Here");
         text(target, o, COL_STATE, HEAD_Y, 36, "State");
         text(target, o, COL_RUN, HEAD_Y, W - COL_RUN - 4, "Running");
+        if (onlyUpdates)
+        {
+            jug::scopy(line, "", sizeof(line));
+            jug::scatU(line, (uint64_t)model.count(jug::State::Current), sizeof(line));
+            jug::scat(line, " hidden", sizeof(line));
+            textRight(target, o, HEAD_Y, W, line);
+        }
         target->FillRect(2, ROW_Y - 2, W - 4, 1, dark, false);
 
-        if (model.rows.empty())
+        if (view.empty())
             text(target, o, COL_NAME, ROW_Y, W - 8,
-                 model.haveList ? "The server lists no programs." : "No list yet.");
-        for (int i = 0; i < rowsShown && top + i < (int)model.rows.size(); i++)
-            drawRow(target, o, model.rows[top + i], ROW_Y + i * ROW_H, W, top + i == sel);
+                 !model.rows.empty() ? "Every program here is the server's build; F shows them."
+                 : model.haveList    ? "The server lists no programs."
+                                     : "No list yet.");
+        for (int i = 0; i < rowsShown && top + i < (int)view.size(); i++)
+            drawRow(target, o, model.rows[view[top + i]], ROW_Y + i * ROW_H, W, top + i == sel);
 
         // Where the work is, or what came of it.
         o.foreground = dark;
@@ -624,7 +819,7 @@ private:
         if (job != NO_JOB)
         {
             jug::scopy(shownProgress, fetch.status(), sizeof(shownProgress));
-            jug::scopy(line, job == LIST ? "The list: " : current, sizeof(line));
+            jug::scopy(line, job == PROGRAM ? current : checking ? "Checking the list: " : "The list: ", sizeof(line));
             if (job == PROGRAM)
                 jug::scat(line, ": ", sizeof(line));
             jug::scat(line, shownProgress, sizeof(line));

@@ -43,8 +43,11 @@ itself from restart. Memento uses the cooperative protocol described below.
 
 In the window, **Update/U** refreshes the list, **Get/G** downloads the
 selected program, **Get all/A** downloads available updates, **Restart/R** then
-**Y** restarts its instances, **Remove/Del** removes its downloaded copy, and
-**Ctrl+C** copies its full SHA-256. The list shows the publication timestamp,
+**Y** restarts its instances, **Remove/Del** removes its downloaded copy,
+**Ctrl+C** copies its full SHA-256, and **F** hides the programs that are
+current (and shows them again), leaving those with updates, new programs and
+downloads no longer on the server; the header says how many are hidden. The
+list shows the publication timestamp,
 program name, size, checksum prefix, local origin, update status and running
 PIDs. Escape cancels a transfer; Escape when idle closes the window.
 
@@ -54,6 +57,17 @@ PIDs. Escape cancels a transfer; Escape when idle closes the window.
 keys (**Up/Down**, **Page Up/Down**, **Home/End**) return focus to the list;
 **Enter** there downloads the selected program. Clicking a row or button also
 sets keyboard focus. Restart still requires **Y** to confirm.
+
+While open, the window keeps checking. It fetches the list again every `check`
+seconds (see below); a list that has not changed leaves the window as it was.
+When it has, the status line names the fresh builds this machine does not
+have yet, and Memento marks the Jug window for attention (red title bar and
+taskbar button until it is focused), as it does for IRC and Telegram
+messages. Every five seconds it also looks at `/mnt/tmp/jug`, and reads the
+programs again when another Jug (such as `fg jug upgrade` on the console)
+downloaded, replaced or removed one. Checks wait while a transfer runs or a
+**Y / N** question is open; **Get** and **Get all** interrupt a check in
+progress, which then runs again later.
 
 ## Relaunching Memento
 
@@ -86,12 +100,14 @@ Jug reads the first configuration present in this order:
 repo = https://cdn.vxn.dev/jug
 list = sums.txt
 insecure = 0
+check = 600     # seconds between the window's list checks; 0 turns them off
 ```
 
 `list` can instead be `list.txt`, a relative path, or an absolute HTTP(S) URL.
 Program paths are resolved against the list's directory. Console options
 `--repo URL`, `--config FILE` and `-k` override the repository, configuration
-file and TLS certificate checking. HTTPS verifies certificates using the same
+file and TLS certificate checking. `check` is at least 30 seconds; the
+console commands do not use it. HTTPS verifies certificates using the same
 `opt/memento/cacerts.bin` bundle as Web; the ISO includes it. Networking requires
 the `eth` userland driver to be running.
 
@@ -140,8 +156,9 @@ Downloads are limited to the HTTP engine's 4 MiB body limit.
 ## Tests
 
 `make check` covers standard SHA-256 vectors, catalogs, damaged ELF files,
-registry round trips, config precedence, same-size file changes, source-specific
-caches, failed writes and readback, replacement rollback, and multi-instance
+registry round trips, config precedence and `check`, list changes and fresh
+builds, the downloads stamp the window watches, same-size file changes,
+source-specific caches, failed writes and readback, replacement rollback, and multi-instance
 restarts, cooperative Memento requests, unsupported desktops, and damaged
 Memento downloads. The manifest generator is tested against real filesystem fixtures.
 

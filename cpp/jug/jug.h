@@ -105,6 +105,11 @@ struct Catalog
     //  False when nothing in `text` is a package line: an error page, say.
     bool parse(r2::string_view text);
     const Package *find(r2::string_view name) const;
+    //  The same programs, paths, sums and sizes, and the same "updated".
+    bool same(const Catalog &o) const;
+    //  The programs this list has a build of that `older` did not: new
+    //  programs, and ones whose sum changed.
+    r2::vector<r2::string> freshSince(const Catalog &older) const;
 };
 
 // ─── The registry ────────────────────────────────────────────────────────────
@@ -161,12 +166,16 @@ bool ieq(r2::string_view a, r2::string_view b);
 //      repo     = https://cdn.vxn.dev/jug
 //      list     = sums.txt            (a name below repo, or a whole URL)
 //      insecure = 0                   (1: take any TLS certificate)
+//      check    = 600                 (the window's list checks, in seconds; 0: none)
 //
 struct Config
 {
+    static const uint32_t CHECK_DEFAULT = 600, CHECK_MIN = 30;
+
     char repo[URL_CAP] = {};
     char list[URL_CAP] = {};    // the list's URL, made whole by load()
     bool insecure = false;
+    uint32_t check = CHECK_DEFAULT; // seconds between the window's list checks; 0: never
     char source[PATH_CAP] = {}; // the file read, or "" for the defaults
 
     //  `path` when given, else the first of /mnt/fat/JUG.CFG and the boot
@@ -209,6 +218,12 @@ r2::vector<Local> scan_local();
 
 //  "/mnt/tmp/jug/TNT.ELF"
 void jug_path(const char *name, char *out, size_t cap);
+
+//  What the downloads are now: the programs in DIR, their sizes and their
+//  sums in the registry.  Another stamp means another jug (the console's
+//  `jug upgrade`, say) downloaded, removed or replaced one.  Reads the RAM
+//  disk only, so it is cheap enough to ask every few seconds.
+Digest downloads_stamp();
 
 //  The SHA-256 of a file, read in pieces; false unless exactly `size` bytes
 //  could be read.
@@ -279,10 +294,13 @@ struct Model
     //  what is on the disks.  False when the configuration cannot be read.
     bool open(const char *configPath = nullptr);
     //  A list just fetched: kept for the next look, and taken in.  False
-    //  when it is not a list.
-    bool takeList(const uint8_t *data, size_t len, const char *lastModified);
+    //  when it is not a list.  With `changed`, a list the same as the one
+    //  held is left at that (*changed false): the rows keep their sums.
+    bool takeList(const uint8_t *data, size_t len, const char *lastModified, bool *changed = nullptr);
     //  Looks at the disks again and makes the rows anew.
     void rescan();
+    //  The same after another jug changed the downloads: its registry too.
+    void reload();
     //  Hashes the next local copy that has no sum yet; false once none is
     //  left (and the registry is saved, when it learnt anything).
     bool hashNext();

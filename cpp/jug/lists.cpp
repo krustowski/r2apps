@@ -253,6 +253,31 @@ const Package *Catalog::find(r2::string_view name) const
     return nullptr;
 }
 
+bool Catalog::same(const Catalog &o) const
+{
+    if (strcmp(updated, o.updated) || packages.size() != o.packages.size())
+        return false;
+    for (size_t i = 0; i < packages.size(); i++)
+    {
+        const Package &a = packages[i], &b = o.packages[i]; // both sorted by name
+        if (strcmp(a.name, b.name) || strcmp(a.path, b.path) || a.sum != b.sum || a.size != b.size)
+            return false;
+    }
+    return true;
+}
+
+r2::vector<r2::string> Catalog::freshSince(const Catalog &older) const
+{
+    r2::vector<r2::string> out;
+    for (const Package &p : packages)
+    {
+        const Package *was = older.find(p.name);
+        if (!was || was->sum != p.sum)
+            (void)out.push_back(r2::string(p.name));
+    }
+    return out;
+}
+
 // ─── The registry ────────────────────────────────────────────────────────────
 
 bool Registry::parse(r2::string_view text)

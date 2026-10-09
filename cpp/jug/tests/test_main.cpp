@@ -187,6 +187,14 @@ void listTests() {
     CHECK(c.find("sh")->size == -1); CHECK(!strcmp(c.updated, "2026-10-08 12:00:00 UTC"));
     CHECK(!c.parse("<html>server error</html>")); CHECK(c.parse("# updated empty catalog\n"));
     CHECK(!c.parse("# updated bad catalog\ngarbage\n"));
+    jug::Catalog a, b; CHECK(a.parse(text.view())); CHECK(b.parse(text.view()));
+    CHECK(a.same(b)); CHECK(b.freshSince(a).empty());
+    b.packages[1].sum.b[0] ^= 1; CHECK(!a.same(b)); // tnt rebuilt
+    jug::scopy(b.packages[0].name, "aa", sizeof(b.packages[0].name)); // sh gone, aa new
+    auto fresh = b.freshSince(a); CHECK(fresh.size() == 2);
+    CHECK(fresh[0].view() == r2::string_view("aa")); CHECK(fresh[1].view() == r2::string_view("tnt"));
+    b = a; jug::scopy(b.updated, "later", sizeof(b.updated)); CHECK(!a.same(b)); CHECK(b.freshSince(a).empty());
+    CHECK(a.freshSince(jug::Catalog()).size() == 2);
     char name[jug::NAME_CAP]; CHECK(jug::program_name("bin/TNT.ELF;1", name)); CHECK(!strcmp(name, "tnt"));
     CHECK(!jug::valid_name("../tnt")); CHECK(!jug::valid_name("123456789"));
     jug::Registry reg; jug::Record r; jug::scopy(r.name, "tnt", sizeof(r.name));
@@ -213,6 +221,12 @@ void storeTests() {
     CHECK(!strcmp(url, "https://example.test/programs/bin/tnt.elf"));
     fake::text("/mnt/fat/JUG.CFG", "repo = http://local.test/jug\nlist = sums.txt\ninsecure = yes # local only\n");
     CHECK(cfg.load()); CHECK(cfg.insecure); CHECK(!strcmp(cfg.source, "/mnt/fat/JUG.CFG"));
+    CHECK(cfg.check == jug::Config::CHECK_DEFAULT);
+    fake::text("/mnt/fat/JUG.CFG", "check = 0\n"); CHECK(cfg.load()); CHECK(cfg.check == 0);
+    fake::text("/mnt/fat/JUG.CFG", "check = 5 # often\n"); CHECK(cfg.load()); CHECK(cfg.check == jug::Config::CHECK_MIN);
+    fake::text("/mnt/fat/JUG.CFG", "check = 3600\n"); CHECK(cfg.load()); CHECK(cfg.check == 3600);
+    fake::text("/mnt/fat/JUG.CFG", "check = soon\n"); CHECK(cfg.load()); CHECK(cfg.check == jug::Config::CHECK_DEFAULT);
+    fake::text("/mnt/fat/JUG.CFG", "repo = http://local.test/jug\nlist = sums.txt\ninsecure = yes # local only\n");
     CHECK(!cfg.load("/missing.cfg"));
     uint8_t older[160], fresh[160]; elf(older, 1); elf(fresh, 2);
     auto p = package(fresh, sizeof(fresh)); jug::Registry reg;
@@ -245,6 +259,38 @@ void storeTests() {
     jug::Catalog cached; CHECK(jug::load_list(cached, model.config.list)); CHECK(!strcmp(cached.updated, "today"));
     CHECK(!jug::load_list(cached, "https://different.test/sums.txt"));
     CHECK(!model.takeList((const uint8_t *)"bad", 3, "later")); CHECK(model.haveList);
+    // A check that finds the same list keeps the rows and their sums.
+    bool changed = true; reads = fake::reads;
+    CHECK(model.takeList((const uint8_t *)list.c_str(), list.size(), "today", &changed)); CHECK(!changed);
+    CHECK(model.row("tnt")->state == jug::State::Outdated); CHECK(fake::reads == reads);
+    CHECK(model.takeList((const uint8_t *)list.c_str(), list.size(), "tomorrow", &changed)); CHECK(changed);
+    CHECK(!strcmp(model.catalog.updated, "tomorrow"));
+}
+void stampTests() {
+    fake::reset(); jug::Registry reg;
+    uint8_t older[160], fresh[160], other[160]; elf(older, 1); elf(fresh, 2); elf(other, 3);
+    jug::Digest empty = jug::downloads_stamp();
+    fake::text("/mnt/tmp/jug/SUMS.TXT", "# list\n"); fake::text("/mnt/tmp/jug/TNT.NEW", "partial");
+    CHECK(jug::downloads_stamp() == empty); // neither the list nor a download on its way
+    CHECK(!jug::install(package(older, sizeof(older)), older, sizeof(older), reg));
+    jug::Digest one = jug::downloads_stamp(); CHECK(one != empty);
+    CHECK(jug::downloads_stamp() == one);
+    // Another jug: a same-size build, known by its registry record.
+    jug::Registry console; CHECK(console.load());
+    CHECK(!jug::install(package(fresh, sizeof(fresh)), fresh, sizeof(fresh), console));
+    jug::Digest two = jug::downloads_stamp(); CHECK(two != one);
+    // Records of shipped programs, and their order, do not count.
+    jug::Record shipped; jug::scopy(shipped.name, "aaa", sizeof(shipped.name)); shipped.size = 5;
+    jug::scopy(shipped.path, "/mnt/tar/bin/aaa.elf", sizeof(shipped.path));
+    CHECK(console.load()); CHECK(console.put(shipped)); CHECK(console.save());
+    CHECK(jug::downloads_stamp() == two);
+    fake::put("/mnt/tmp/jug/SH.ELF", other, sizeof(other)); CHECK(jug::downloads_stamp() != two);
+    CHECK(!jug::uninstall("sh", console)); CHECK(jug::downloads_stamp() == two);
+    // The window's model, told by the stamp, takes the console's registry.
+    jug::Model model; CHECK(model.open());
+    CHECK(!jug::install(package(older, sizeof(older)), older, sizeof(older), console));
+    CHECK(model.registry.find("tnt")->sum != console.find("tnt")->sum);
+    model.reload(); CHECK(model.registry.find("tnt")->sum == console.find("tnt")->sum);
 }
 void restartTests() {
     fake::reset(); fake::task(4, "TNT", "tnt eth"); fake::task(5, "TNT", "tnt other");
@@ -282,6 +328,6 @@ void restartTests() {
 } // namespace
 
 int main() {
-    shaTests(); listTests(); elfTests(); storeTests(); restartTests();
+    shaTests(); listTests(); elfTests(); storeTests(); stampTests(); restartTests();
     printf("Jug: %d checks, %d failures\n", checks, failed); return failed ? 1 : 0;
 }
