@@ -142,6 +142,18 @@ static uint8_t eth_arp_cache_lookup(const uint8_t ip[4], uint8_t mac_out[6]) {
     return 0;
 }
 
+static NetFrameSink_T eth_frame_sink = 0;
+
+void net_set_frame_sink(NetFrameSink_T fn) { eth_frame_sink = fn; }
+
+/* One frame out, wherever frames go: see net_set_frame_sink(). */
+static void eth_send(const uint8_t *frame, uint32_t len) {
+    if (eth_frame_sink)
+        eth_frame_sink(frame, len);
+    else
+        send_eth_frame(frame, len);
+}
+
 static void eth_send_arp_reply(const EthHdr_T *req_eth, const ArpPkt_T *req_arp) {
     uint8_t frame[ETH_HDR_LEN + ARP_PKT_LEN];
     EthHdr_T *eth = (EthHdr_T *)frame;
@@ -162,7 +174,7 @@ static void eth_send_arp_reply(const EthHdr_T *req_eth, const ArpPkt_T *req_arp)
     memcpy(arp->tha, req_arp->sha, 6);
     memcpy(arp->tpa, req_arp->spa, 4);
 
-    send_eth_frame(frame, ETH_HDR_LEN + ARP_PKT_LEN);
+    eth_send(frame, ETH_HDR_LEN + ARP_PKT_LEN);
 }
 
 /* 1518: the kernel hands frames over with the card's 4-byte CRC still on. */
@@ -270,7 +282,7 @@ static int eth_drv_recv(uint8_t *buf, uint32_t maxlen) {
             ricmp[2] = (uint8_t)(ck >> 8);
             ricmp[3] = (uint8_t)(ck & 0xff);
 
-            send_eth_frame(reply, frame_len);
+            eth_send(reply, frame_len);
 
             return 0;
         }
@@ -366,7 +378,7 @@ static int eth_drv_recv_nb(uint8_t *buf, uint32_t maxlen) {
             uint16_t ck = inet_cksum(ricmp, icmp_len);
             ricmp[2] = (uint8_t)(ck >> 8);
             ricmp[3] = (uint8_t)(ck & 0xff);
-            send_eth_frame(reply, frame_len);
+            eth_send(reply, frame_len);
             return 0;
         }
 
@@ -402,14 +414,8 @@ static void eth_drv_send(const uint8_t *ip_pkt, uint32_t len) {
     memcpy(pkt, ip_pkt, ip_total);
     Ipv4Header_T *hdr = (Ipv4Header_T *)pkt;
 
-    /* send_tcp_packet builds a dummy IPv4 header with src/dst inverted for the kernel;
-     * ensure source=eth_my_ip. */
-    if (memcmp(hdr->source_addr, eth_my_ip, 4) != 0) {
-        uint8_t tmp[4];
-        memcpy(tmp, hdr->source_addr, 4);
-        memcpy(hdr->source_addr, hdr->destination_addr, 4);
-        memcpy(hdr->destination_addr, tmp, 4);
-    }
+    /* CRAFT_IPV4_PACKET already put src/dst in wire order. Preserve the
+     * socket's local address, including a tunnel or loopback address. */
     hdr->header_checksum = 0;
     hdr->header_checksum = htons(inet_cksum(pkt, hdr_len));
 
@@ -487,7 +493,7 @@ static void eth_drv_send(const uint8_t *ip_pkt, uint32_t len) {
     feth->ethertype = htons(ETYPE_IPV4);
     memcpy(frame + ETH_HDR_LEN, pkt, ip_total);
 
-    send_eth_frame(frame, frame_len);
+    eth_send(frame, frame_len);
 }
 
 NetDriver_T net_drv;

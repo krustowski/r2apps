@@ -122,6 +122,18 @@ typedef int64_t (*NetFrameSource_T)(uint8_t *buf, uint32_t cap, uint8_t blocking
 void net_set_frame_source(NetFrameSource_T fn);
 
 /*
+ *  void net_set_frame_sink() prototype
+ *
+ *  The way out, to match net_set_frame_source(): where the driver hands the
+ *  Ethernet frames it sends.  By default send_eth_frame() (syscall 0x34); a
+ *  program that sends through a path of its own --- Memento counts its
+ *  traffic --- passes a function that sends `len` bytes of `frame`.  Null
+ *  goes back to the syscall.
+ */
+typedef void (*NetFrameSink_T)(const uint8_t *frame, uint32_t len);
+void net_set_frame_sink(NetFrameSink_T fn);
+
+/*
  *  void net_set_nonblocking() prototype
  *
  *  Switches the ETH driver between the blocking receive (the default, which
