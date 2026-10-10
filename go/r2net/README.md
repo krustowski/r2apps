@@ -142,6 +142,14 @@ sends a few hundred bytes and reads a few kilobytes that costs one round trip
 per segment and saves a send queue, a retransmission list and the timers that
 go with them, in a program whose whole heap is 1.5 MiB.
 
+Outgoing segments honor the server's SYN MSS (536 bytes when omitted) and
+are capped at 1024 bytes. Hosted programs cannot receive path-MTU ICMP errors
+while another process holds the Ethernet driver, so sending 1460-byte payloads
+with DF set could silently stall uploads on a smaller internet path.
+`Conn.SetTimeout` gives an idle budget renewed by TCP progress; a large write
+may take longer than the budget while acknowledgements keep arriving.
+`SetDeadline` keeps an absolute budget for callers that require one.
+
 ## TLS adapter
 
 The HTTP helpers in this package handle cleartext HTTP. Certificate-verified

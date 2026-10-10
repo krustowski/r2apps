@@ -42,6 +42,20 @@ const (
 // clipboard, in a window that asked for pictures.  Text names a PNG of it.
 const PasteImage = 1
 
+// An opt-in notification queue occupies InitialURL for apps that do not use
+// a startup URL. Memento initializes its magic before launching the child.
+// The shared block's Version 1 layout and its pixel offsets stay unchanged.
+const (
+	notificationMagic        = 0x31594c4e // "NLY1", cpp/r2web/host.h
+	NotificationSlots        = 8
+	NotificationTextCapacity = 96
+)
+
+type notificationQueue struct {
+	Magic, Head, Tail uint32
+	Text              [NotificationSlots][NotificationTextCapacity]byte
+}
+
 // Frame slot states.
 const (
 	slotReady = iota
@@ -240,6 +254,32 @@ func (c *Client) Open(url string) bool {
 // Attention marks the window (a red title and taskbar button) unless it has
 // the focus.
 func (c *Client) Attention() { atomic.StoreUint32(&c.b.AttentionPending, 1) }
+
+func (c *Client) notifications() *notificationQueue {
+	return (*notificationQueue)(unsafe.Pointer(&c.b.InitialURL[0]))
+}
+
+// Notifications says whether this host enabled clock bubbles for the window.
+// Older hosts leave a startup URL here and continue to support Attention.
+func (c *Client) Notifications() bool {
+	return c.b != nil && atomic.LoadUint32(&c.notifications().Magic) == notificationMagic
+}
+
+// Notify queues a bubble's text (code page 437). False while the queue is
+// full or notifications are unavailable; callers may retry on a later turn.
+func (c *Client) Notify(text string) bool {
+	if c.reason != Running || !c.Notifications() {
+		return false
+	}
+	q := c.notifications()
+	head, tail := atomic.LoadUint32(&q.Head), atomic.LoadUint32(&q.Tail)
+	if head-tail >= NotificationSlots {
+		return false
+	}
+	putText(q.Text[head%NotificationSlots][:], text)
+	atomic.StoreUint32(&q.Head, head+1)
+	return true
+}
 
 // Fail leaves a message the window shows once the program has ended.
 func (c *Client) Fail(msg string) { putText(c.b.Error[:], msg) }

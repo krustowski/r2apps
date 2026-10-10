@@ -193,6 +193,38 @@ type NetStatus struct {
 	Ports     [16]uint16
 }
 
+// NetStats holds physical NIC totals since boot and a coherent sample time
+// (0x45). Bytes include Ethernet headers/padding, exclude FCS and loopback.
+// TX counts successful submissions to the card, not delivery confirmations.
+type NetStats struct {
+	TimestampMS uint64
+	RXFrames    uint64
+	RXBytes     uint64
+	TXFrames    uint64
+	TXBytes     uint64
+}
+
+// NetNoPID marks an absent global Ethernet driver in NetPortTable.
+const NetNoPID = ^uint64(0)
+
+// NetPortBinding identifies a TCP destination port's owner. PID is the full
+// process id, not its scheduler slot. Name may occupy all 16 bytes.
+type NetPortBinding struct {
+	Port     uint16
+	Reserved [6]byte
+	PID      uint64
+	Name     [16]byte
+}
+
+// NetPortTable is an atomic port/owner snapshot (0x46). Entries after NPorts
+// and all reserved bytes are zero; DriverPID is NetNoPID without a driver.
+type NetPortTable struct {
+	DriverPID uint64
+	NPorts    uint8
+	Reserved  [7]byte
+	Bindings  [16]NetPortBinding
+}
+
 // NetConfig is the machine's network configuration (syscall 0x3d): what the
 // Ethernet driver got by DHCP or was given.  Unset fields are zero.
 // GatewayMAC is the gateway's hardware address as the driver resolved it; a
@@ -364,6 +396,13 @@ const (
 
 	_ = uint(unsafe.Sizeof(NetStatus{}) - 44)
 	_ = uint(44 - unsafe.Sizeof(NetStatus{}))
+
+	_ = uint(unsafe.Sizeof(NetStats{}) - 40)
+	_ = uint(40 - unsafe.Sizeof(NetStats{}))
+	_ = uint(unsafe.Sizeof(NetPortBinding{}) - 32)
+	_ = uint(32 - unsafe.Sizeof(NetPortBinding{}))
+	_ = uint(unsafe.Sizeof(NetPortTable{}) - 528)
+	_ = uint(528 - unsafe.Sizeof(NetPortTable{}))
 
 	_ = uint(unsafe.Sizeof(NetConfig{}) - 30)
 	_ = uint(30 - unsafe.Sizeof(NetConfig{}))

@@ -177,7 +177,7 @@ func (c *tlsConn) step() error {
 		received, gaps := c.tcp.ReceiveStats()
 		return fmt.Errorf("%w (rx=%d gap=%d)", r2net.ErrTimeout, received, gaps)
 	}
-	c.tcp.SetDeadline(time.Duration(c.deadline-now) * time.Millisecond)
+	c.tcp.SetTimeout(time.Duration(c.deadline-now) * time.Millisecond)
 	state := uint(C.web_tls_state(c.engine))
 	if state&1 != 0 {
 		code := C.web_tls_error(c.engine)

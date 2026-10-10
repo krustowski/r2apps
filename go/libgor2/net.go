@@ -217,3 +217,43 @@ func WriteNetConfig(cfg *NetConfig) error {
 func ReadNetStatus(ns *NetStatus) error {
 	return err(Syscall(ScNetStatus, ptr(unsafe.Pointer(ns)), 0))
 }
+
+// ReadNetStats reads physical NIC totals and their sample timestamp (0x45).
+// Rates in bytes/second are delta bytes * 1000 / delta TimestampMS.
+// An older kernel returns EInvalidSyscall. Nil output is EInvalidInput.
+func ReadNetStats(stats *NetStats) error {
+	if stats == nil {
+		return EInvalidInput
+	}
+	return err(Syscall(ScNetStats, ptr(unsafe.Pointer(stats)), 0))
+}
+
+// ReadNetPorts reads TCP owners and the global driver's PID (0x46).
+// EBusy means retry; on an error the output is untouched.
+func ReadNetPorts(table *NetPortTable) error {
+	if table == nil {
+		return EInvalidInput
+	}
+	return err(Syscall(ScNetPorts, ptr(unsafe.Pointer(table)), 0))
+}
+
+// NetPortOwner returns a current binding, false when port is unbound, and an
+// error if the kernel is busy or does not support the registry syscall.
+func NetPortOwner(port uint16) (NetPortBinding, bool, error) {
+	if port == 0 {
+		return NetPortBinding{}, false, EInvalidInput
+	}
+	var table NetPortTable
+	if e := ReadNetPorts(&table); e != nil {
+		return NetPortBinding{}, false, e
+	}
+	if table.NPorts > 16 {
+		return NetPortBinding{}, false, EInvalidInput
+	}
+	for i := uint8(0); i < table.NPorts; i++ {
+		if table.Bindings[i].Port == port {
+			return table.Bindings[i], true, nil
+		}
+	}
+	return NetPortBinding{}, false, nil
+}

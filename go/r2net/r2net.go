@@ -175,7 +175,7 @@ func Open(opts Options) (*Stack, error) {
 		gateway:   opts.Gateway,
 		dns:       opts.DNS,
 		trace:     opts.Trace,
-		ipID:      uint16(libgor2.Ticks()),
+		ipID:      uint16(ticksNow()),
 		portBase:  opts.PortBase,
 		portCount: opts.PortCount,
 		bound:     make(map[uint16]bool),
@@ -379,7 +379,7 @@ func (s *Stack) step() {
 		}
 	}
 
-	now := libgor2.Ticks()
+	now := ticksNow()
 
 	for _, c := range s.conns {
 		c.tick(now)
@@ -404,7 +404,7 @@ func (s *Stack) waitUntil(cond func() bool, deadline uint64) error {
 			return nil
 		}
 
-		if libgor2.Ticks() >= deadline {
+		if ticksNow() >= deadline {
 			return ErrTimeout
 		}
 
@@ -449,7 +449,7 @@ func deadlineFor(timeout time.Duration) uint64 {
 		ms = 1000
 	}
 
-	return libgor2.Ticks() + uint64(ms)
+	return ticksNow() + uint64(ms)
 }
 
 // logf hands one trace line to the application, when it asked for them.

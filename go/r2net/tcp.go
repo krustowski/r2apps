@@ -27,6 +27,11 @@ const (
 	// Ethernet frame's worth, 1514 bytes on the wire, which fits the
 	// kernel's 2048-byte frame buffers with room to spare.
 	mss = 1460
+	// ICMP for a hosted app goes to the Ethernet driver, so this stack cannot
+	// discover a smaller path MTU. Keep outgoing DF packets below common
+	// tunnel/PPPoE MTUs, as Memento's C++ stack does, and honor the peer's MSS.
+	maxSendMSS     = 1024
+	defaultPeerMSS = 536
 
 	// rxCap is how much unread data a connection will hold.  The window we
 	// advertise is whatever is left of it, so a peer that respects the
@@ -76,9 +81,10 @@ type Conn struct {
 	state connState
 	err   error
 
-	snd    uint32 // next sequence number we will send
-	sndUna uint32 // oldest sequence number we have sent and not seen acknowledged
-	rcv    uint32 // next sequence number we expect from the peer
+	snd     uint32 // next sequence number we will send
+	sndUna  uint32 // oldest sequence number we have sent and not seen acknowledged
+	rcv     uint32 // next sequence number we expect from the peer
+	peerMSS int
 
 	rx             []byte
 	reorder        tcpReorder
@@ -98,6 +104,7 @@ type Conn struct {
 
 	advertisedWindow int
 	deadline         uint64
+	idleMS           uint64
 }
 
 // Dial opens a connection to port on dst.
@@ -113,7 +120,7 @@ func (s *Stack) Dial(dst IP, port uint16, timeout time.Duration) (*Conn, error) 
 	// connection on this four-tuple.  A number drawn from the clock is
 	// almost always ahead of the last one, which is what lets the peer
 	// accept the new connection instead of treating it as an old duplicate.
-	isn := uint32(libgor2.Ticks() * 1000)
+	isn := uint32(ticksNow() * 1000)
 
 	c := &Conn{
 		s:        s,
@@ -187,9 +194,36 @@ func (s *Stack) allocPort() (uint16, error) {
 	return port, nil
 }
 
-// SetDeadline gives every later call on this connection a fresh budget.
+// SetDeadline sets an absolute budget shared by later calls.
 func (c *Conn) SetDeadline(timeout time.Duration) {
+	c.idleMS = 0
 	c.deadline = deadlineFor(timeout)
+}
+
+// SetTimeout limits time without TCP progress. An upload can take longer
+// than timeout as long as the peer keeps acknowledging bytes. SetDeadline
+// retains its absolute budget for callers that need one.
+func (c *Conn) SetTimeout(timeout time.Duration) {
+	now := ticksNow()
+	c.deadline = deadlineFor(timeout)
+	c.idleMS = c.deadline - now
+}
+
+func (c *Conn) progress() {
+	if c.idleMS > 0 {
+		c.deadline = ticksNow() + c.idleMS
+	}
+}
+
+// An ACK may advance only part of the outstanding segment. In that case the
+// wait's original deadline can expire after progress has extended the budget.
+func (c *Conn) waitUntil(cond func() bool) error {
+	for {
+		err := c.s.waitUntil(cond, c.deadline)
+		if err != ErrTimeout || ticksNow() >= c.deadline {
+			return err
+		}
+	}
 }
 
 // RemoteIP is the address this connection is to.
@@ -207,9 +241,9 @@ func (c *Conn) Write(b []byte) (int, error) {
 
 		// Stop-and-wait: there is only ever one segment in flight, so
 		// the previous one has to be acknowledged first.
-		if err := c.s.waitUntil(func() bool {
+		if err := c.waitUntil(func() bool {
 			return c.pending == nil || c.state == stateClosed
-		}, c.deadline); err != nil {
+		}); err != nil {
 			return sent, err
 		}
 
@@ -218,8 +252,15 @@ func (c *Conn) Write(b []byte) (int, error) {
 		}
 
 		n := len(b) - sent
-		if n > mss {
-			n = mss
+		limit := c.peerMSS
+		if limit <= 0 {
+			limit = defaultPeerMSS
+		}
+		if limit > maxSendMSS {
+			limit = maxSendMSS
+		}
+		if n > limit {
+			n = limit
 		}
 
 		if err := c.transmit(flagACK|flagPSH, b[sent:sent+n]); err != nil {
@@ -232,9 +273,9 @@ func (c *Conn) Write(b []byte) (int, error) {
 	// Nothing has really been sent until it has been acknowledged, and a
 	// caller that writes a request and then waits for a reply would
 	// otherwise never find out that the request never arrived.
-	if err := c.s.waitUntil(func() bool {
+	if err := c.waitUntil(func() bool {
 		return c.pending == nil || c.state == stateClosed
-	}, c.deadline); err != nil {
+	}); err != nil {
 		return sent, err
 	}
 
@@ -248,9 +289,9 @@ func (c *Conn) Read(b []byte) (int, error) {
 		return 0, nil
 	}
 
-	if err := c.s.waitUntil(func() bool {
+	if err := c.waitUntil(func() bool {
 		return len(c.rx) > 0 || c.peerFIN || c.state == stateClosed || c.err != nil
-	}, c.deadline); err != nil {
+	}); err != nil {
 		return 0, err
 	}
 
@@ -261,7 +302,7 @@ func (c *Conn) Read(b []byte) (int, error) {
 		if !c.peerFIN && tcpWindowNeedsUpdate(c.advertisedWindow, c.receiveWindow()) {
 			_ = c.send(flagACK, c.snd, nil)
 			// Window updates are not sequence-acknowledged; repeat a lost one.
-			c.windowRetryAt = libgor2.Ticks() + 250
+			c.windowRetryAt = ticksNow() + 250
 			c.windowRetries = 3
 		}
 
@@ -294,7 +335,7 @@ func (c *Conn) Close() error {
 		// process that has already exited.
 		_ = c.s.waitUntil(func() bool {
 			return c.state == stateClosed
-		}, libgor2.Ticks()+finWaitMS)
+		}, ticksNow()+finWaitMS)
 
 	case stateSynSent:
 		_ = c.transmit(flagRST, nil)
@@ -376,7 +417,7 @@ func (c *Conn) transmit(flags byte, data []byte) error {
 	c.pending = data
 	c.pendFlags = flags
 	c.pendSeq = seq
-	c.sentAt = libgor2.Ticks()
+	c.sentAt = ticksNow()
 	c.retries = 0
 	c.rto = initialRTO
 
@@ -496,6 +537,9 @@ func (s *Stack) onTCP(pkt ipPacket) {
 
 	for _, c := range s.conns {
 		if c.lport == dstPort && c.rport == srcPort && c.remote == pkt.src {
+			if c.state == stateSynSent && flags&(flagSYN|flagACK) == flagSYN|flagACK && uint32From(seg[8:12]) == c.snd {
+				c.peerMSS = tcpPeerMSS(seg[tcpHeaderLen:hdrLen])
+			}
 			c.onSegment(flags, uint32From(seg[4:8]), uint32From(seg[8:12]), seg[hdrLen:])
 
 			return
@@ -631,8 +675,14 @@ func (c *Conn) onSegment(flags byte, seq, ack uint32, data []byte) {
 
 // onAck releases the outstanding segment once the peer has taken it.
 func (c *Conn) onAck(ack uint32) {
+	// Only an ACK of bytes actually sent is progress. Duplicate ACKs must
+	// not keep a stalled upload alive, and an ACK beyond snd is invalid.
+	if seqLess(c.snd, ack) {
+		return
+	}
 	if seqLess(c.sndUna, ack) {
 		c.sndUna = ack
+		c.progress()
 	}
 
 	if c.pending == nil && c.pendFlags == 0 {
@@ -685,6 +735,7 @@ func (c *Conn) onData(seq uint32, data []byte) {
 	c.rx = append(c.rx, accepted...)
 	c.rcv += uint32(len(accepted))
 	c.received += uint32(len(accepted))
+	c.progress()
 	for {
 		queued := c.reorder.take(c.rcv)
 		if len(queued) == 0 {

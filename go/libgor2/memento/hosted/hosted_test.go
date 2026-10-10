@@ -1,7 +1,9 @@
 package hosted
 
 import (
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"unsafe"
 )
@@ -23,6 +25,91 @@ func TestLayout(t *testing.T) {
 	}
 	if off := unsafe.Offsetof(b.Commands); off != 4020 {
 		t.Fatalf("commands at %d", off)
+	}
+	if off := unsafe.Offsetof(b.InitialURL); off != 2468 {
+		t.Fatalf("notification storage at %d", off)
+	}
+	var q notificationQueue
+	if unsafe.Sizeof(q) != 780 || unsafe.Offsetof(q.Text) != 12 {
+		t.Fatal("notification queue ABI differs from cpp/r2web/host.h")
+	}
+}
+
+func TestNotifications(t *testing.T) {
+	b, px := newBlock(4, 4)
+	c, _ := Connect(b, px, 0x31474554, 0)
+	copy(b.InitialURL[:], "about:home")
+	if c.Notifications() || c.Notify("legacy") {
+		t.Fatal("startup URL mistaken for a notification queue")
+	}
+	q := c.notifications()
+	*q = notificationQueue{Magic: notificationMagic, Head: ^uint32(0) - 3, Tail: ^uint32(0) - 3}
+	if !c.Notifications() {
+		t.Fatal("enabled queue not found")
+	}
+	for i := 0; i < NotificationSlots; i++ {
+		if !c.Notify(string(rune('a' + i))) {
+			t.Fatal("queue filled too early")
+		}
+	}
+	if c.Notify("full") {
+		t.Fatal("overwrote an unread notice")
+	}
+	for i := 0; i < NotificationSlots; i++ {
+		tail := atomic.LoadUint32(&q.Tail)
+		if text := q.Text[tail%NotificationSlots]; text[0] != byte('a'+i) || text[1] != 0 {
+			t.Fatalf("notice out of order across counter wrap: %q", text)
+		}
+		atomic.StoreUint32(&q.Tail, tail+1)
+	}
+	if !c.Notify(strings.Repeat("x", 200)) || q.Text[q.Tail%NotificationSlots][NotificationTextCapacity-1] != 0 {
+		t.Fatal("notice not bounded / terminated")
+	}
+	c.Attention()
+	if b.AttentionPending != 1 || q.Head-q.Tail != 1 {
+		t.Fatal("notification and attention interfered")
+	}
+	c.Close()
+	if c.Notifications() || c.Notify("closed") {
+		t.Fatal("used a closed host")
+	}
+}
+
+func TestNotificationDeliveryConcurrent(t *testing.T) {
+	b, px := newBlock(4, 4)
+	c, _ := Connect(b, px, 0x31474554, 0)
+	q := c.notifications()
+	q.Magic = notificationMagic
+	const total = 10000
+	done := make(chan bool, 1)
+	go func() {
+		valid := true
+		for i := 0; i < total; i++ {
+			tail := atomic.LoadUint32(&q.Tail)
+			for atomic.LoadUint32(&q.Head) == tail {
+				runtime.Gosched()
+			}
+			text := q.Text[tail%NotificationSlots]
+			for j := 0; j < NotificationTextCapacity-1; j++ {
+				if text[j] != byte('A'+i%26) {
+					valid = false
+				}
+			}
+			if text[NotificationTextCapacity-1] != 0 {
+				valid = false
+			}
+			atomic.StoreUint32(&q.Tail, tail+1)
+		}
+		done <- valid
+	}()
+	for i := 0; i < total; i++ {
+		text := strings.Repeat(string(byte('A'+i%26)), NotificationTextCapacity-1)
+		for !c.Notify(text) {
+			runtime.Gosched()
+		}
+	}
+	if !<-done {
+		t.Fatal("a concurrent notification tore or arrived out of order")
 	}
 }
 
