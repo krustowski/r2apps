@@ -227,6 +227,10 @@ void storeTests() {
     fake::text("/mnt/fat/JUG.CFG", "check = 3600\n"); CHECK(cfg.load()); CHECK(cfg.check == 3600);
     fake::text("/mnt/fat/JUG.CFG", "check = soon\n"); CHECK(cfg.load()); CHECK(cfg.check == jug::Config::CHECK_DEFAULT);
     fake::text("/mnt/fat/JUG.CFG", "repo = http://local.test/jug\nlist = sums.txt\ninsecure = yes # local only\n");
+    fake::text("/mnt/tmp/jug/jug.cfg", "repo = http://ram.test/jug\n");
+    CHECK(cfg.load()); CHECK(!cfg.insecure); CHECK(!strcmp(cfg.source, "/mnt/tmp/jug/jug.cfg"));
+    CHECK(!strcmp(cfg.list, "http://ram.test/jug/sums.txt"));
+    CHECK(r2::fs::remove("/mnt/tmp/jug/jug.cfg")); CHECK(cfg.load()); CHECK(!strcmp(cfg.source, "/mnt/fat/JUG.CFG"));
     CHECK(!cfg.load("/missing.cfg"));
     uint8_t older[160], fresh[160]; elf(older, 1); elf(fresh, 2);
     auto p = package(fresh, sizeof(fresh)); jug::Registry reg;

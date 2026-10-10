@@ -156,8 +156,10 @@ bool Config::load(const char *path)
     check = CHECK_DEFAULT;
     source[0] = 0;
 
-    //  The floppy's, which a user can edit, before the boot medium's.
+    //  The RAM disk's, which can be written while the system runs, then the
+    //  floppy's, which a user can edit, before the boot medium's.
     static const SearchDir FILES[] = {
+        {"/mnt/tmp", "/mnt/tmp/jug/jug.cfg", Origin::None},
         {"/mnt/fat", "/mnt/fat/JUG.CFG", Origin::None},
         {"/mnt/tar", "/mnt/tar/opt/jug/jug.cfg", Origin::None},
         {"/mnt/iso", "/mnt/iso/opt/jug/jug.cfg", Origin::None},

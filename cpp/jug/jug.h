@@ -178,8 +178,9 @@ struct Config
     uint32_t check = CHECK_DEFAULT; // seconds between the window's list checks; 0: never
     char source[PATH_CAP] = {}; // the file read, or "" for the defaults
 
-    //  `path` when given, else the first of /mnt/fat/JUG.CFG and the boot
-    //  medium's opt/jug/jug.cfg.  False only when `path` cannot be read.
+    //  `path` when given, else the first of /mnt/tmp/jug/jug.cfg,
+    //  /mnt/fat/JUG.CFG and the boot medium's opt/jug/jug.cfg.  False only
+    //  when `path` cannot be read.
     bool load(const char *path = nullptr);
     //  --repo on the command line: the list moves with it.
     void setRepo(r2::string_view url);

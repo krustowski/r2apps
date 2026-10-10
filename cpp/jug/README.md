@@ -92,9 +92,15 @@ registers/polls/requests the handoff; Memento commits it only by exiting with
 The default repository is `https://cdn.vxn.dev/jug`, with `sums.txt` below it.
 Jug reads the first configuration present in this order:
 
-1. `/mnt/fat/JUG.CFG`
-2. `/mnt/tar/opt/jug/jug.cfg`
-3. `/mnt/iso/opt/jug/jug.cfg`
+1. `/mnt/tmp/jug/jug.cfg`
+2. `/mnt/fat/JUG.CFG`
+3. `/mnt/tar/opt/jug/jug.cfg`
+4. `/mnt/iso/opt/jug/jug.cfg`
+
+The first is on the RAM disk, so it can be written while the system runs
+(for example when there is no floppy); it is lost at the next boot. Jug reads
+its configuration when it starts, so a changed one applies to the next `jug`
+command or the next Jug window.
 
 ```ini
 repo = https://cdn.vxn.dev/jug
