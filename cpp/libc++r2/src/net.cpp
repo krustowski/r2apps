@@ -109,7 +109,7 @@ optional<Status> status() {
     NetStatus raw;
     memset(&raw, 0, sizeof(raw));
 
-    if (raw_syscall(Sys::NetStatus, (int64_t)&raw, 0) < 0)
+    if (raw_syscall(Sys::NetStatus, (int64_t)&raw, 0) != 0)
         return nullopt;
 
     Status result;
@@ -127,6 +127,32 @@ optional<Status> status() {
     }
 
     return result;
+}
+
+optional<NetStats> stats() {
+    NetStats result{};
+    if (raw_syscall(Sys::NetStats, (int64_t)&result) != 0)
+        return nullopt;
+    return result;
+}
+
+optional<NetPortTable> ports() {
+    NetPortTable result{};
+    if (raw_syscall(Sys::NetPorts, (int64_t)&result) != 0 || result.n_ports > 16)
+        return nullopt;
+    return result;
+}
+
+optional<NetPortBinding> port_owner(uint16_t port) {
+    if (port == 0)
+        return nullopt;
+    auto table = ports();
+    if (table) {
+        for (uint8_t i = 0; i < table->n_ports; i++)
+            if (table->bindings[i].port == port)
+                return table->bindings[i];
+    }
+    return nullopt;
 }
 
 optional<Ipv4> wait_for_address(uint64_t timeout_ms) {

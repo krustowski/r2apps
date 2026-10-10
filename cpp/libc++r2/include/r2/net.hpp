@@ -98,6 +98,16 @@ struct Status {
 /*  Network status (syscall 0x38).  */
 optional<Status> status();
 
+/*  Physical NIC totals and sample time (0x45); nullopt on older kernels.  */
+optional<NetStats> stats();
+
+/*  Atomic TCP port -> full PID/name table (0x46). nullopt when the scheduler
+ *  is busy or the kernel lacks the call. Names are at most 16 bytes.  */
+optional<NetPortTable> ports();
+
+/*  One owner from the current table, or nullopt for an unbound port/error.  */
+optional<NetPortBinding> port_owner(uint16_t port);
+
 /*
  *  The machine's network configuration (syscall 0x3d): what the ETH driver got
  *  by DHCP or was given.  Use it rather than addresses of your own --- the

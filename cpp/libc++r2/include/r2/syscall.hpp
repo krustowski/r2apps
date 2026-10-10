@@ -101,6 +101,8 @@ enum class Sys : int64_t {
     Cmdline = 0x41,
     DesktopRelaunch = 0x42,
     HeapContains = 0x43,
+    NetStats = 0x45,
+    NetPorts = 0x46,
 };
 
 /*  Return codes the ABI uses in place of the 0 it returns on success.  */
@@ -248,6 +250,33 @@ struct __attribute__((packed)) NetStatus {
     uint8_t n_ports;
     uint16_t ports[16];
 };
+
+/*  Physical NIC traffic since boot (0x45), including Ethernet headers and
+ *  padding, excluding FCS and loopback. TX counts successful submissions.  */
+struct NetStats {
+    uint64_t timestamp_ms;
+    uint64_t rx_frames;
+    uint64_t rx_bytes;
+    uint64_t tx_frames;
+    uint64_t tx_bytes;
+};
+
+inline constexpr uint64_t NetNoPid = ~uint64_t(0);
+struct NetPortBinding {
+    uint16_t port;
+    uint8_t reserved[6];
+    uint64_t pid;
+    uint8_t name[16]; /*  bounded bytes; may have no NUL terminator  */
+};
+struct NetPortTable {
+    uint64_t driver_pid; /*  NetNoPid when no global driver is registered  */
+    uint8_t n_ports;
+    uint8_t reserved[7];
+    NetPortBinding bindings[16];
+};
+static_assert(sizeof(NetStats) == 40, "NetStats ABI");
+static_assert(sizeof(NetPortBinding) == 32, "NetPortBinding ABI");
+static_assert(sizeof(NetPortTable) == 528, "NetPortTable ABI");
 
 /*  Syscall 0x3d: the network configuration the ETH driver publishes.  */
 struct __attribute__((packed)) NetConfig {
