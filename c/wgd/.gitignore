@@ -1,0 +1,6 @@
+/build/
+/wgd.elf
+/WGD.CFG
+/wgd.cfg
+/*.key
+__pycache__/

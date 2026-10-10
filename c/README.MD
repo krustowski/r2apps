@@ -20,6 +20,7 @@
 | `tcc` | TinyCC ported to `r2`, with the small C library it and its programs link against (see its [README](tcc/README.md)). | unstable |
 | `them` | A simple 16-bit CPU emulator focused on MS-DOS; runs full screen, or in a Memento window from its file manager (see its [README](them/README.md)). | unstable |
 | `tnt` | TELNET server and remote shell on TCP/23, over SLIP or Ethernet, with `bsh`'s commands plus `get` and `net` (see its [README](tnt/README.md)). | unstable |
+| `wgd` | Standalone WireGuard daemon: one IPv4 peer, encrypted ping and access to r2 TCP services, alongside `eth` (see its [README](wgd/README.md)). | experimental |
 
 ## crt0
 

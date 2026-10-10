@@ -1,0 +1,227 @@
+/* SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause */
+/*
+ * Architecture / OS-specific FIPS mode detection.
+ *
+ * Definition of jent_fips_enabled() (declared in
+ * arch/jitterentropy-arch-fips.h). The crypto-library branches include the
+ * relevant headers (gcrypt.h / openssl) themselves; only .c files include
+ * these headers (the arch headers intentionally include nothing).
+ *
+ * Copyright Stephan Mueller <smueller@chronox.de>, 2014 - 2026
+ *
+ * License
+ * =======
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, and the entire permission notice in its entirety,
+ *    including the disclaimer of warranties.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. The name of the author may not be used to endorse or promote
+ *    products derived from this software without specific prior
+ *    written permission.
+ *
+ * ALTERNATIVELY, this product may be distributed under the terms of
+ * the GNU General Public License, in which case the provisions of the GPL are
+ * required INSTEAD OF the above restrictions.  (This clause is
+ * necessary due to a potential bad interaction between the GPL and
+ * the restrictions contained in a BSD-style copyright.)
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE, ALL OF
+ * WHICH ARE HEREBY DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+ * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+ * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+ * USE OF THIS SOFTWARE, EVEN IF NOT ADVISED OF THE POSSIBILITY OF SUCH
+ * DAMAGE.
+ */
+
+/*
+ * The feature-test macros that make glibc declare O_CLOEXEC, and the Windows
+ * SDK version that declares BCryptGetFipsAlgorithmMode(). Must be the first
+ * line: both have to precede every system header, the <windows.h> included
+ * below among them.
+ */
+#include "jitterentropy-arch-compat.h"
+
+#include "jitterentropy.h"
+#include "jitterentropy-internal.h"
+
+#ifdef LINUX_KERNEL
+
+#include <linux/fips.h>
+
+int jent_fips_enabled(void)
+{
+	return fips_enabled;
+}
+
+#else /* LINUX_KERNEL */
+
+#ifdef LIBGCRYPT
+# include <gcrypt.h>
+# include <stdlib.h>		/* getenv() */
+# include <string.h>
+# ifdef _WIN32
+#  include <io.h>		/* _access() */
+# else
+#  include <unistd.h>		/* access() */
+# endif
+#endif
+#ifdef AWSLC
+# include <openssl/crypto.h>
+#endif
+#ifdef OPENSSL
+# include <openssl/evp.h>
+#endif
+
+/*
+ * The switch file below is a Linux interface. It used to be read on every
+ * platform that is neither Windows nor backed by a crypto library, which meant
+ * the BSDs, macOS, AIX and Solaris each performed an open() that could only
+ * ever fail. The answer was still correct - no file, not in FIPS mode - but the
+ * dispatch said nothing about which platforms actually have the concept.
+ */
+/* No /proc on a baremetal target, and nothing else there to ask either. */
+#if !defined(AWSLC) && !defined(OPENSSL) && !defined(JENT_BAREMETAL) && \
+    defined(__linux__)
+# include <errno.h>
+# include <fcntl.h>
+# include <sys/types.h>
+# include <unistd.h>
+# define JENT_ARCH_FIPS_PROC
+#endif
+
+/*
+ * The Windows FIPS mode is the system policy "System cryptography: Use FIPS
+ * compliant algorithms", reported by BCryptGetFipsAlgorithmMode() - the
+ * counterpart of the Linux indicator. A compiled-in crypto library still
+ * answers first. bcrypt is linked by the pragma (MSVC) or by CMakeLists.txt
+ * (MinGW).
+ */
+#if !defined(LIBGCRYPT) && !defined(AWSLC) && !defined(OPENSSL) && \
+    !defined(JENT_BAREMETAL) && (defined(_MSC_VER) || defined(__MINGW32__))
+# include <windows.h>
+# include <bcrypt.h>
+# if defined(_MSC_VER)
+#  pragma comment(lib, "bcrypt.lib")
+# endif
+# define JENT_ARCH_FIPS_WINDOWS
+#endif
+
+#ifdef JENT_ARCH_FIPS_PROC
+#define FIPS_MODE_SWITCH_FILE "/proc/sys/crypto/fips_enabled"
+
+/* The branch that selected JENT_ARCH_FIPS_PROC included <fcntl.h>. */
+#include "jitterentropy-arch-cloexec.h"
+
+/*
+ * Read the kernel's FIPS indicator out of @file. The path is a parameter so
+ * this can be checked against a file the caller controls: the real one exists
+ * only on a CONFIG_CRYPTO_FIPS kernel, so "present and 1", "present and 0" and
+ * "absent" would otherwise go untested.
+ *
+ * An unreadable or empty file means not enabled, as does a kernel without the
+ * indicator.
+ */
+static int jent_fips_enabled_file(const char *file)
+{
+	char buf[2] = "0";
+	int fd = 0;
+	ssize_t rlen;
+
+	if ((fd = open(file, O_RDONLY | JENT_O_CLOEXEC)) >= 0) {
+		do {
+			rlen = read(fd, buf, sizeof(buf));
+		} while (rlen < 0 && errno == EINTR);
+		close(fd);
+		if (rlen <= 0)
+			return 0;
+	}
+	if (buf[0] == '1')
+		return 1;
+	else
+		return 0;
+}
+#endif /* JENT_ARCH_FIPS_PROC */
+
+int jent_fips_enabled(void)
+{
+#ifdef LIBGCRYPT
+	/*
+	 * Only a started libgcrypt knows: before gcry_check_version() it
+	 * reports FIPS mode on every system. Until then the system decides, as
+	 * it decides libgcrypt's own mode once started.
+	 */
+	if (JENT_GCRY_STARTED())
+		return gcry_fips_mode_active();
+	/*
+	 * Until then, the decision libgcrypt will take, from the inputs it
+	 * takes it on (check_fips_system_setting() in its fips.c): the
+	 * environment variable, its force file - on Windows under
+	 * %ALLUSERSPROFILE%\GNU\etc\gcrypt since 1.12, /etc/gcrypt of the
+	 * current drive before - and on Linux the kernel's indicator, which
+	 * elsewhere does not exist. Not seen is the GCRYCTL_FORCE_FIPS_MODE an
+	 * application may send before initializing it, which leaves no trace
+	 * until then.
+	 */
+	if (getenv("LIBGCRYPT_FORCE_FIPS_MODE"))
+		return 1;
+# ifdef _WIN32
+	{
+		static const char tail[] = "\\GNU\\etc\\gcrypt\\fips_enabled";
+		const char *pd = getenv("ALLUSERSPROFILE");
+		char path[260];
+
+		if (pd && strlen(pd) + sizeof(tail) <= sizeof(path)) {
+			memcpy(path, pd, strlen(pd));
+			memcpy(path + strlen(pd), tail, sizeof(tail));
+			if (!_access(path, 0))
+				return 1;
+		}
+		if (!_access("/etc/gcrypt/fips_enabled", 0))
+			return 1;
+	}
+# else
+	if (!access("/etc/gcrypt/fips_enabled", F_OK))
+		return 1;
+# endif
+# ifdef JENT_ARCH_FIPS_PROC
+	return jent_fips_enabled_file(FIPS_MODE_SWITCH_FILE);
+# else
+	return 0;
+# endif
+#elif defined(AWSLC)
+	return FIPS_mode();
+#elif defined(OPENSSL)
+	return EVP_default_properties_is_fips_enabled(NULL);
+#elif defined(JENT_ARCH_FIPS_PROC)
+	return jent_fips_enabled_file(FIPS_MODE_SWITCH_FILE);
+#undef FIPS_MODE_SWITCH_FILE
+#elif defined(JENT_ARCH_FIPS_WINDOWS)
+	/* A failed query means not enabled. */
+	BOOLEAN enabled = FALSE;
+
+	if (!BCRYPT_SUCCESS(BCryptGetFipsAlgorithmMode(&enabled)))
+		return 0;
+	return enabled ? 1 : 0;
+#else
+	/*
+	 * No system-wide FIPS indicator on this platform (the BSDs, macOS,
+	 * AIX, Solaris, ...). Callers that need FIPS behaviour there ask for it
+	 * explicitly with the JENT_FORCE_FIPS flag.
+	 */
+	return 0;
+#endif
+}
+
+#endif /* LINUX_KERNEL */

@@ -1,0 +1,17 @@
+# Replace both placeholders with keys generated using wg genkey / wg pubkey.
+# A fixed single-peer configuration; the daemon does not reload this file.
+[Interface]
+PrivateKey = REPLACE_WITH_R2_PRIVATE_KEY
+Address = 10.77.0.1/32
+ListenPort = 51820
+
+[Peer]
+PublicKey = REPLACE_WITH_CLIENT_PUBLIC_KEY
+AllowedIPs = 10.77.0.2/32
+# Up to 16 comma-separated IPv4 prefixes are supported, for example:
+# AllowedIPs = 10.77.0.0/24, 10.4.5.128/25, 10.4.6.0/24
+# Address can also carry a subnet prefix; its host address remains the tunnel IP.
+# Optional: PresharedKey = REPLACE_WITH_SHARED_PRESHARED_KEY
+# A listening server learns the endpoint from an authenticated handshake.
+# Optional: Endpoint = 192.0.2.20:51820
+# Optional: PersistentKeepalive = 25
