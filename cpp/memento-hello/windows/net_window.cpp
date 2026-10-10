@@ -1,6 +1,8 @@
 // Network tools share the process frame mux; closing any way stops them and
-// releases their port. The statistics page samples Memento's traffic only.
+// releases their port. Stats prefer the kernel NIC counters and owner table,
+// with Memento-only traffic and port numbers as the old-kernel fallback.
 #include "../nsk.h"
+#include <r2/net.hpp>
 
 class NetWindow
 {
@@ -13,7 +15,7 @@ public:
     void SetWindow(PlatformWindow *w) { wnd = w; updateIdle(); }
 
 private:
-    enum { STATS, SCAN, PING, TRACE, TABS };
+    enum { STATS, SCAN, PING, TRACE, CHARTS, TABS };
     static const int MARGIN = 6, ROW_H = 10, BUTTON_W = 40, BUTTON_H = 11;
     static const int FIELD_Y = TabStrip::BELOW, FIELD_H = 11;
     static const int STATUS_Y = FIELD_Y + 13, HEAD_Y = STATUS_Y + 12, LIST_Y = HEAD_Y + 12;
@@ -21,15 +23,18 @@ private:
     PlatformColor *dark = nullptr, *light = nullptr;
     PlatformFont *font = nullptr;
     NetTools tools;
+    MetricsCharts charts;
+    uint64_t chartRead = 0;
     NetStatus_T ns{};
     int tab = STATS, top[TABS] = {}, rows = 1;
     bool followPing = true, idleOn = false, suggested = false, sampled = false;
-    bool haveStatus = false;
+    bool haveStatus = false, haveKernelTraffic = false, havePorts = false;
+    r2::NetPortTable portTable{};
     char cidr[20] = {}, pingIp[16] = "1.1.1.1", traceIp[16] = "1.1.1.1";
     char inputError[TABS][64] = {};
     int listBottom = 0, btnX = 0;
     uint64_t lastSample = 0, lastRepaint = 0;
-    NetmuxStats previous{};
+    r2::NetStats previous{};
     uint64_t rxRate = 0, txRate = 0;
 
     static void append(char *out, const char *s) { strcpy(out + strlen(out), s); }
@@ -49,19 +54,33 @@ private:
     }
     void updateIdle()
     {
-        bool on = tab == STATS || tools.busy();
+        bool on = tab == STATS || tab == CHARTS || tools.busy();
         if (wnd && idleOn != on) { wnd->SetImmediateMode(on); idleOn = on; }
     }
     void sample(uint64_t now)
     {
         memset(&ns, 0, sizeof(ns)); haveStatus = get_net_status(&ns) == 0;
-        NetmuxStats current = netmux_stats();
-        if (sampled && now > lastSample)
+        auto owners = r2::net::ports();
+        havePorts = (bool)owners;
+        if (owners) portTable = *owners;
+
+        auto traffic = r2::net::stats();
+        bool kernelTraffic = (bool)traffic;
+        r2::NetStats current{};
+        if (traffic) current = *traffic;
+        else
         {
-            rxRate = (current.rx_bytes - previous.rx_bytes) * 1000 / (now - lastSample);
-            txRate = (current.tx_bytes - previous.tx_bytes) * 1000 / (now - lastSample);
+            NetmuxStats local = netmux_stats();
+            current = {now, local.rx_frames, local.rx_bytes, local.tx_frames, local.tx_bytes};
         }
-        previous = current; lastSample = now; sampled = true;
+        rxRate = txRate = 0;
+        if (sampled && kernelTraffic == haveKernelTraffic && current.timestamp_ms > previous.timestamp_ms)
+        {
+            uint64_t elapsed = current.timestamp_ms - previous.timestamp_ms;
+            if (current.rx_bytes >= previous.rx_bytes) rxRate = (current.rx_bytes - previous.rx_bytes) * 1000 / elapsed;
+            if (current.tx_bytes >= previous.tx_bytes) txRate = (current.tx_bytes - previous.tx_bytes) * 1000 / elapsed;
+        }
+        previous = current; haveKernelTraffic = kernelTraffic; lastSample = now; sampled = true;
     }
     void setTab(int next)
     {
@@ -98,7 +117,7 @@ private:
     }
     int count() const
     {
-        return tab == STATS ? (ns.n_ports > 16 ? 16 : ns.n_ports) : tab == SCAN ? tools.scan.up() :
+        return tab == STATS ? (havePorts ? portTable.n_ports : (ns.n_ports > 16 ? 16 : ns.n_ports)) : tab == SCAN ? tools.scan.up() :
                tab == PING ? tools.ping.lines() : tools.trace.hops();
     }
     void scroll(int by)
@@ -115,6 +134,7 @@ private:
         uint64_t now = r2::ticks();
         bool wasBusy = tools.busy(), changed = tools.step();
         if (tab == STATS && (!sampled || now - lastSample >= 1000)) { sample(now); changed = true; }
+        if (tab == CHARTS && now / 1000 != chartRead / 1000) { chartRead = now; changed = true; }
         updateIdle();
         if ((changed && now - lastRepaint >= 250) || (wasBusy && !tools.busy()))
         {
@@ -132,13 +152,14 @@ private:
         }
         if (data->type == PlatformWindowInputEventType::OnPaint) { paint(data->Data.OnPaint.ctx, data->Data.OnPaint.target); return; }
         if (data->type == PlatformWindowInputEventType::OnImmediateModeIdleLoop) { onIdle(); return; }
-        if (data->type == PlatformWindowInputEventType::OnMouseWheel) { scroll(data->Data.OnMouseWheel.up ? -3 : 3); return; }
+        if (data->type == PlatformWindowInputEventType::OnMouseWheel) { if (tab != CHARTS) scroll(data->Data.OnMouseWheel.up ? -3 : 3); return; }
         if (data->type == PlatformWindowInputEventType::OnMouseClick)
         {
             if (data->Data.OnMouseClick.state != PlatformWindowButtonState::Pressed) return;
             int x = F_COORD(data->Data.OnMouseClick.mouseX), y = F_COORD(data->Data.OnMouseClick.mouseY);
             int hit = TabStrip::at(x, y, TABS);
             if (hit >= 0) { setTab(hit); return; }
+            if (tab == CHARTS) { if (charts.click(x, y)) wnd->Repaint(); return; }
             if (tab != STATS && x >= btnX && x < btnX + BUTTON_W && y >= FIELD_Y && y < FIELD_Y + FIELD_H) startOrStop();
             return;
         }
@@ -148,6 +169,7 @@ private:
         if (key->isEscape) { wnd->Close(); return; }
         if (key->isTab || key->isArrowRight) { setTab(tab + 1); return; }
         if (key->isArrowLeft) { setTab(tab - 1); return; }
+        if (tab == CHARTS) { if (key->isChar && charts.key((char)key->theChar)) wnd->Repaint(); return; }
         if (key->isArrowUp) { scroll(-1); return; }
         if (key->isArrowDown) { scroll(1); return; }
         if (key->isPageUp) { scroll(-rows); return; }
@@ -195,22 +217,37 @@ private:
         char buf[128], ip[16], mac[18]; NetLink::formatAddress(ns.ip, ip); macText(ns.mac, mac);
         int y = TabStrip::BELOW;
         strcpy(buf, "IP: "); append(buf, ip); append(buf, "    MAC: "); append(buf, mac); text(target, opts, MARGIN, y, width - 12, buf);
-        text(target, opts, MARGIN, y + 11, width - 12, !haveStatus ? "Network status unavailable" : ns.drv_active ? "Network driver: active" : "Network driver: inactive");
-        strcpy(buf, "Memento traffic: RX "); number(rxRate, buf + strlen(buf)); append(buf, " B/s    TX "); number(txRate, buf + strlen(buf)); append(buf, " B/s");
+        if (havePorts && portTable.driver_pid != r2::NetNoPid)
+        {
+            strcpy(buf, "Network driver: PID "); number(portTable.driver_pid, buf + strlen(buf));
+        }
+        else strcpy(buf, havePorts ? "Network driver: inactive" : !haveStatus ? "Network status unavailable" : ns.drv_active ? "Network driver: active" : "Network driver: inactive");
+        text(target, opts, MARGIN, y + 11, width - 12, buf);
+        strcpy(buf, haveKernelTraffic ? "NIC traffic: RX " : "Memento traffic: RX "); number(rxRate, buf + strlen(buf)); append(buf, " B/s    TX "); number(txRate, buf + strlen(buf)); append(buf, " B/s");
         text(target, opts, MARGIN, y + 24, width - 12, buf);
         strcpy(buf, "Totals: RX "); number(previous.rx_bytes / 1024, buf + strlen(buf)); append(buf, " KiB    TX "); number(previous.tx_bytes / 1024, buf + strlen(buf)); append(buf, " KiB");
         text(target, opts, MARGIN, y + 35, width - 12, buf);
-        text(target, opts, MARGIN, y + 48, width - 12, "Bound TCP ports (PID/name unavailable from kernel)");
+        text(target, opts, MARGIN, y + 48, width - 12, havePorts ? "Bound TCP ports" : "Bound TCP ports (owners unavailable)");
         int head = y + 61, first = head + 12;
-        text(target, opts, 6, head, 38, "Port"); text(target, opts, 48, head, 30, "PID");
-        text(target, opts, 82, head, 76, "Process"); text(target, opts, 162, head, width - 174, "Use in Memento");
+        text(target, opts, 6, head, 38, "Port"); text(target, opts, 48, head, 48, "PID");
+        text(target, opts, 100, head, 98, "Process"); text(target, opts, 202, head, width - 214, "Memento use");
         target->FillRect(4, head + 10, width - 8, 1, dark, false); listLayout(target, width, first);
-        if (!count()) text(target, opts, MARGIN, first, width - 12, haveStatus ? "No bound TCP ports." : "Port registry unavailable.");
+        if (!count()) text(target, opts, MARGIN, first, width - 12, (havePorts || haveStatus) ? "No bound TCP ports." : "Port registry unavailable.");
         for (int r = 0; r < rows && top[tab] + r < count(); r++)
         {
-            uint16_t port = ns.ports[top[tab] + r]; int ry = first + r * ROW_H; number(port, buf);
-            text(target, opts, 6, ry, 38, buf); text(target, opts, 48, ry, 30, "-"); text(target, opts, 82, ry, 76, "-");
-            const char *use = netmux_port_use(port); text(target, opts, 162, ry, width - 174, use ? use : "-");
+            int index = top[tab] + r, ry = first + r * ROW_H;
+            uint16_t port = havePorts ? portTable.bindings[index].port : ns.ports[index];
+            number(port, buf); text(target, opts, 6, ry, 38, buf);
+            char name[17] = "-";
+            if (havePorts)
+            {
+                const r2::NetPortBinding &owner = portTable.bindings[index];
+                number(owner.pid, buf);
+                memcpy(name, owner.name, 16); name[16] = 0;
+            }
+            else strcpy(buf, "-");
+            text(target, opts, 48, ry, 48, buf); text(target, opts, 100, ry, 98, name[0] ? name : "-");
+            const char *use = netmux_port_use(port); text(target, opts, 202, ry, width - 214, use ? use : "-");
         }
     }
     int liveAt(int row) const
@@ -282,15 +319,17 @@ private:
         if (!dark || !light || !font) return;
         if (!suggested) { HostScan::suggest(cidr); suggested = true; }
         if (tab == STATS && !sampled) sample(r2::ticks());
+        sampleMementoMetrics(r2::ticks());
         Coord cw = target->GetWidth(), ch = target->GetHeight();
         int width = F_COORD(cw), height = F_COORD(ch);
         listBottom = height - MARGIN; btnX = width - MARGIN - BUTTON_W;
         target->FillRect(0, 0, width, height, light, false);
         PlatformDrawTextOptions opts{}; opts.font = font; opts.foreground = dark;
         opts.horizontalAlign = PlatformAlign::Begin; opts.verticalAlign = PlatformAlign::Middle;
-        const char *labels[TABS] = {"Stats", "Scan", "Ping", "Trace"};
+        const char *labels[TABS] = {"Stats", "Scan", "Ping", "Trace", "Charts"};
         TabStrip::draw(target, opts, dark, light, width, labels, TABS, tab, tools.busy() ? "Tools running" : "");
         if (tab == STATS) stats(target, opts, width);
+        else if (tab == CHARTS) charts.draw(dc, target, opts, dark, light, width, listBottom, true);
         else
         {
             const char *label = tab == SCAN ? "Subnet:" : "Host IPv4:";

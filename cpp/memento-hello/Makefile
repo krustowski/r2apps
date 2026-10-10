@@ -113,7 +113,7 @@ WINDOWS := $(wildcard windows/*.cpp)
 
 OBJS += $(WEB_OBJS)
 
-.PHONY: check build install clean webtest nettest notifytest browser jug
+.PHONY: check build install clean webtest nettest notifytest browser jug c8
 
 # Compile-only check — no linking, so neither archive has to exist yet.
 # Without -MMD: with no -o to follow, it writes main.d and the rest into the
@@ -125,7 +125,7 @@ check:
 	@echo "All sources compile OK"
 	@$(MAKE) -C ../r2web check
 
-build: $(BDIR) $(CRT0_OBJ) $(OBJS) $(BEARSSL_LIB) $(H264BSD_LIB) $(LIBRARY) $(COMPAT) browser jug
+build: $(BDIR) $(CRT0_OBJ) $(OBJS) $(BEARSSL_LIB) $(H264BSD_LIB) $(LIBRARY) $(COMPAT) browser jug c8
 	g++ $(LDFLAGS) $(CRT0_OBJ) $(OBJS) $(BEARSSL_LIB) $(H264BSD_LIB) $(LIBRARY) $(COMPAT) $(LIBCR2) -lgcc -o $(NAME).elf
 	llvm-objcopy -O binary $(NAME).elf $(NAME).bin
 	@python3 ../r2web/check_image.py $(NAME).elf
@@ -144,6 +144,9 @@ browser:
 
 jug:
 	@$(MAKE) -C ../jug build
+
+c8:
+	@$(MAKE) -C ../../c/c8 build
 
 $(CRT0_OBJ): $(CRT0_SRC) | $(BDIR)
 	nasm -f elf64 -DR2_STACK_BYTES=$(STACK_BYTES) $< -o $@

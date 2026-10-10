@@ -13,7 +13,7 @@ CFLAGS   := -O2 -g -Wall $(BEARSSL_DEFS) $(BEARSSL_INC)
 CXXFLAGS := -O2 -g -Wall -Wextra -Wno-unused-parameter -std=c++17 -DWEB_HOST \
             -fno-exceptions -fno-rtti $(BEARSSL_INC)
 
-WEB_SRCS := $(WEB)/wbase.cpp $(WEB)/url.cpp $(WEB)/http.cpp $(WEB)/css.cpp $(WEB)/doc.cpp $(WEB)/loader.cpp \
+WEB_SRCS := $(WEB)/wbase.cpp $(WEB)/url.cpp $(WEB)/http.cpp $(WEB)/css.cpp $(WEB)/doc.cpp $(WEB)/pixels.cpp $(WEB)/loader.cpp \
             $(WEB)/image.cpp $(WEB)/png.cpp $(WEB)/mp4.cpp
 STB      := $(abspath $(WEB)/../../third_party/stb)
 #  h264bsd, for MP4s (web/mp4.cpp, web/h264.c), on the host's C library.

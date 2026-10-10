@@ -45,6 +45,15 @@ int cssLuma(uint8_t i)
     return (kPalette[i & 15][0] * 30 + kPalette[i & 15][1] * 59 + kPalette[i & 15][2] * 11) / 100;
 }
 
+uint32_t cssDarkRgb(uint32_t rgb)
+{
+    int r=(rgb>>16)&255,g=(rgb>>8)&255,b=rgb&255;
+    int low=r<g?r:g; if(b<low)low=b;
+    int high=r>g?r:g; if(b>high)high=b;
+    int shift=255-low-high;
+    return 0xFF000000u | (uint32_t(r+shift)<<16) | (uint32_t(g+shift)<<8) | uint32_t(b+shift);
+}
+
 static bool isWs(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'; }
 
 static bool isIdent(char c)
@@ -121,6 +130,11 @@ enum Prop : uint8_t
     P_MT,
     P_MB,
     P_INDENT,
+    P_WIDTH, P_HEIGHT, P_MINW, P_MINH, P_MAXW, P_MAXH,
+    P_M0, P_M1, P_M2, P_M3, P_P0, P_P1, P_P2, P_P3,
+    P_B0, P_B1, P_B2, P_B3, P_BCOLOR, P_SIZING,
+    P_GAP0, P_GAP1, P_BASIS, P_GROW, P_SHRINK,
+    P_DIRECTION, P_WRAP, P_JUSTIFY, P_ITEMS, P_SELF, P_RADIUS, P_FONTSIZE,
 };
 
 struct Named
@@ -186,9 +200,9 @@ static bool number(const char *s, size_t n, size_t &i, long &milli)
     return true;
 }
 
-//  A colour, as palette index + 1.  0: transparent.  -1: not a colour we can
+//  A colour, retained as opaque ARGB for pixel painting.  0: transparent.  -1: not a colour we can
 //  know (a variable, currentColor, a keyword that defers to something else).
-static int parseColor(const char *s, size_t n)
+static int64_t parseColor(const char *s, size_t n)
 {
     size_t i = skipWs(s, n, 0);
     if (i >= n)
@@ -221,7 +235,7 @@ static int parseColor(const char *s, size_t n)
             return -1;
         if (a < 64)
             return 0;
-        return 1 + cssNearest((uint8_t)r, (uint8_t)g, (uint8_t)b);
+        return 0xFF000000u | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
     }
     if (istarts(s + i, "rgb"))
     {
@@ -256,7 +270,7 @@ static int parseColor(const char *s, size_t n)
         long c[3];
         for (int q = 0; q < 3; q++)
             c[q] = v[q] / 1000 < 0 ? 0 : (v[q] / 1000 > 255 ? 255 : v[q] / 1000);
-        return 1 + cssNearest((uint8_t)c[0], (uint8_t)c[1], (uint8_t)c[2]);
+        return 0xFF000000u | (uint32_t(c[0]) << 16) | (uint32_t(c[1]) << 8) | uint32_t(c[2]);
     }
     size_t e = i;
     while (e < n && isIdent(s[e]))
@@ -267,7 +281,7 @@ static int parseColor(const char *s, size_t n)
         return 0;
     for (const Named &c : kColors)
         if (ieq(word, c.name))
-            return 1 + cssNearest((uint8_t)(c.rgb >> 16), (uint8_t)(c.rgb >> 8), (uint8_t)c.rgb);
+            return 0xFF000000u | c.rgb;
     return -1;
 }
 
@@ -297,6 +311,22 @@ static bool parseLength(const char *s, size_t n, size_t &i, long &px)
     return true;
 }
 
+// Box lengths are kept separately from the cell-layout approximations.
+static bool boxLength(const char *s, size_t n, int16_t &out)
+{
+    size_t i=skipWs(s,n,0);
+    if (i+4==n && ieqn(s+i,"auto",4)) { out=BoxStyle::Auto; return true; }
+    size_t j=i; long m;
+    if (!number(s,n,j,m)) return false;
+    if (j<n && s[j]=='%' && j+1==n && m>=0) {
+        out=(int16_t)(-10000-(m/1000>10000?10000:m/1000)); return true;
+    }
+    long px; i=0;
+    if (!parseLength(s,n,i,px) || skipWs(s,n,i)!=n) return false;
+    out=(int16_t)(px < -8192 ? -8192 : px > 8192 ? 8192 : px);
+    return true;
+}
+
 static int16_t pxToLines(long px) { return (int16_t)(px < 6 ? 0 : (px < 24 ? 1 : 2)); }
 static int16_t pxToCells(long px) { return (int16_t)(px <= 0 ? 0 : (px / 10 > 8 ? 8 : px / 10)); }
 
@@ -306,12 +336,12 @@ static bool has(const char *v, size_t n, const char *word) { return ifind(v, n, 
 static void declaration(const char *name, size_t nl, const char *v, size_t n, bool important, Buf &out)
 {
     auto push = [&](uint8_t prop, int value) {
-        uint8_t d[4];
+        uint8_t d[8] = {};
         d[0] = prop;
         d[1] = important ? 1 : 0;
-        d[2] = (uint8_t)(value & 0xFF);
-        d[3] = (uint8_t)((value >> 8) & 0xFF);
-        out.append(d, 4);
+        uint32_t bits = (uint32_t)value;
+        for (int k = 0; k < 4; ++k) d[4+k] = (uint8_t)(bits >> (8*k));
+        out.append(d, sizeof(d));
     };
     char p[24];
     scopyn(p, name, nl, sizeof(p));
@@ -319,10 +349,99 @@ static void declaration(const char *name, size_t nl, const char *v, size_t n, bo
         has(v, n, "revert"))
         return;
 
+    // These declarations feed the pixel cascade; the legacy cases below
+    // also retain their cell values so switching layout requires no reparse.
+    const char *lengthNames[]={"width","height","min-width","min-height","max-width","max-height","flex-basis"};
+    const uint8_t lengthProps[]={P_WIDTH,P_HEIGHT,P_MINW,P_MINH,P_MAXW,P_MAXH,P_BASIS};
+    for (int k=0;k<7;++k) if (ieq(p,lengthNames[k])) {
+        int16_t l; if (boxLength(v,n,l)) push(lengthProps[k],l); return;
+    }
+    if (ieq(p,"font-size")) {
+        int16_t size; if (boxLength(v,n,size) && size>0) push(P_FONTSIZE,size); return;
+    }
+    if (ieq(p,"border-radius")) {
+        int16_t r; if (boxLength(v,n,r) && r >= 0) push(P_RADIUS,r); return;
+    }
+    if (ieq(p,"box-sizing")) { push(P_SIZING,has(v,n,"border-box")?1:0); return; }
+    if (ieq(p,"flex-direction")) { if (has(v,n,"column")) push(P_DIRECTION,1); else if (has(v,n,"row")) push(P_DIRECTION,0); return; }
+    if (ieq(p,"flex-wrap")) { push(P_WRAP,has(v,n,"nowrap")?0:1); return; }
+    if (ieq(p,"justify-content")) {
+        push(P_JUSTIFY,has(v,n,"space-between")?3:has(v,n,"space-around")?4:has(v,n,"space-evenly")?5:
+                       has(v,n,"center")?1:has(v,n,"end")?2:0); return;
+    }
+    if (ieq(p,"align-items") || ieq(p,"align-self")) {
+        push(ieq(p,"align-self")?P_SELF:P_ITEMS,has(v,n,"auto")?-1:has(v,n,"stretch")?3:has(v,n,"center")?1:has(v,n,"end")?2:0); return;
+    }
+    if (ieq(p,"gap") || ieq(p,"row-gap") || ieq(p,"column-gap")) {
+        int16_t val[2]; int k=0;
+        for (size_t i=0;i<n && k<2;) {
+            i=skipWs(v,n,i); size_t e=i; while(e<n&&!isWs(v[e]))++e;
+            if (e==i || !boxLength(v+i,e-i,val[k]) || val[k]<0) break;
+            ++k; i=e;
+        }
+        if (k) { if (!ieq(p,"column-gap")) push(P_GAP0,val[0]);
+                 if (!ieq(p,"row-gap")) push(P_GAP1,val[k==2?1:0]); } return;
+    }
+    if (ieq(p,"flex-grow") || ieq(p,"flex-shrink") || ieq(p,"flex")) {
+        if (ieq(p,"flex") && n-skipWs(v,n,0)==4 && has(v,n,"none")) { push(P_GROW,0); push(P_SHRINK,0); push(P_BASIS,BoxStyle::Auto); return; }
+        if (ieq(p,"flex") && n-skipWs(v,n,0)==4 && has(v,n,"auto")) { push(P_GROW,100); push(P_SHRINK,100); push(P_BASIS,BoxStyle::Auto); return; }
+        size_t i=skipWs(v,n,0); long m;
+        if (number(v,n,i,m) && m>=0) {
+            push(ieq(p,"flex-shrink")?P_SHRINK:P_GROW,(int16_t)(m>1000000?1000:m/10));
+            if (ieq(p,"flex")) {
+                push(P_SHRINK,100); push(P_BASIS,0);
+                i=skipWs(v,n,i);
+                size_t saved=i;
+                if (number(v,n,i,m) && (i==n || isWs(v[i]))) {
+                    push(P_SHRINK,(int16_t)(m<0?0:m>1000000?1000:m/10)); i=skipWs(v,n,i);
+                } else i=saved;
+                int16_t l; if (i<n && boxLength(v+i,n-i,l)) push(P_BASIS,l);
+            }
+        } return;
+    }
+    if (istarts(p,"margin") || istarts(p,"padding") || istarts(p,"border")) {
+        bool margin=istarts(p,"margin"), padding=istarts(p,"padding");
+        uint8_t base=margin?P_M0:padding?P_P0:P_B0;
+        int side=has(p,strlen(p),"top")?0:has(p,strlen(p),"right")?1:has(p,strlen(p),"bottom")?2:
+                 has(p,strlen(p),"left")||has(p,strlen(p),"inline-start")?3:-1;
+        bool color=has(p,strlen(p),"color"), style=has(p,strlen(p),"style");
+        int16_t vals[4]={}; int k=0;
+        if (!margin && !padding && (color || (!style && !has(p,strlen(p),"width")))) {
+            for(size_t i=0;i<n;) {
+                i=skipWs(v,n,i); size_t e=i; int depth=0;
+                while(e<n && (depth || !isWs(v[e]))) { if(v[e]=='(')++depth; if(v[e]==')')--depth; ++e; }
+                if(e==i)break;
+                int64_t c=parseColor(v+i,e-i); if(c>=0)push(P_BCOLOR,(int32_t)c);
+                i=e;
+            }
+        }
+        if (!color && !style) {
+            for(size_t i=0;i<n && k<4;) {
+                i=skipWs(v,n,i); size_t e=i; while(e<n&&!isWs(v[e]))++e;
+                if(e==i)break;
+                int16_t l; if(boxLength(v+i,e-i,l) && (margin || l>=0)) vals[k++]=l;
+                else if(margin||padding) { k=0; break; }
+                i=e;
+            }
+            if(!margin&&!padding && !k && has(v,n,"solid")) {vals[0]=3;k=1;}
+        }
+        if(!margin&&!padding && (has(v,n,"none")||has(v,n,"hidden"))) {vals[0]=0;k=1;}
+        if(k) {
+            if(side>=0)push(base+side,vals[0]);
+            else {push(base,vals[0]);push(base+1,vals[k>1?1:0]);push(base+2,vals[k>2?2:0]);push(base+3,vals[k>3?3:k>1?1:0]);}
+        }
+        // Margin/padding also reach the original text-mode parser below.
+        if (!margin && !padding) return;
+    }
+
     if (ieq(p, "display"))
     {
         if (has(v, n, "none"))
             push(P_DISPLAY, CssStyle::D_NONE);
+        else if (has(v, n, "flex"))
+            push(P_DISPLAY, CssStyle::D_FLEX);
+        else if (has(v, n, "inline-block"))
+            push(P_DISPLAY, CssStyle::D_INLINE_BLOCK);
         else if (has(v, n, "inline"))
             push(P_DISPLAY, CssStyle::D_INLINE);
         else if (has(v, n, "block") || has(v, n, "flex") || has(v, n, "grid") || has(v, n, "list-item") ||
@@ -333,9 +452,9 @@ static void declaration(const char *name, size_t nl, const char *v, size_t n, bo
         push(P_VISIBILITY, has(v, n, "hidden") || has(v, n, "collapse") ? 1 : 0);
     else if (ieq(p, "color"))
     {
-        int c = parseColor(v, n);
+        int64_t c = parseColor(v, n);
         if (c > 0)
-            push(P_COLOR, c);
+            push(P_COLOR, (int32_t)c);
     }
     else if (ieq(p, "background-color") || ieq(p, "background"))
     {
@@ -355,10 +474,10 @@ static void declaration(const char *name, size_t nl, const char *v, size_t n, bo
             }
             if (e > i)
             {
-                int c = parseColor(v + i, e - i);
+                int64_t c = parseColor(v + i, e - i);
                 if (c >= 0)
                 {
-                    push(P_BG, c);
+                    push(P_BG, (int32_t)c);
                     break;
                 }
             }
@@ -511,13 +630,41 @@ void cssParseDeclarations(const char *s, size_t n, Buf &out)
 void cssApply(const void *decls, size_t count, bool important, CssStyle &st)
 {
     const uint8_t *d = (const uint8_t *)decls;
-    for (size_t k = 0; k < count; k++, d += 4)
+    for (size_t k = 0; k < count; k++, d += 8)
     {
         if ((d[1] != 0) != important)
             continue;
-        int v = (int16_t)(d[2] | (d[3] << 8));
+        int32_t v = (int32_t)(uint32_t(d[4]) | (uint32_t(d[5]) << 8) |
+                              (uint32_t(d[6]) << 16) | (uint32_t(d[7]) << 24));
+        uint32_t rgb = (uint32_t)v;
+        uint8_t ega = 0;
+        if (rgb && (d[0] == P_COLOR || d[0] == P_BG || d[0] == P_BCOLOR))
+            ega = 1 + cssNearest(rgb >> 16, rgb >> 8, rgb);
+        if (d[0]>=P_M0 && d[0]<=P_M3) { st.box.margin[d[0]-P_M0]=(int16_t)v; continue; }
+        if (d[0]>=P_P0 && d[0]<=P_P3) { st.box.padding[d[0]-P_P0]=(int16_t)v; continue; }
+        if (d[0]>=P_B0 && d[0]<=P_B3) { st.box.border[d[0]-P_B0]=(int16_t)v; continue; }
         switch (d[0])
         {
+        case P_WIDTH: st.box.width=(int16_t)v; break;
+        case P_HEIGHT: st.box.height=(int16_t)v; break;
+        case P_MINW: st.box.minWidth=(int16_t)v; break;
+        case P_MINH: st.box.minHeight=(int16_t)v; break;
+        case P_MAXW: st.box.maxWidth=(int16_t)v; break;
+        case P_MAXH: st.box.maxHeight=(int16_t)v; break;
+        case P_BASIS: st.box.basis=(int16_t)v; break;
+        case P_GROW: st.box.grow=(int16_t)v; break;
+        case P_SHRINK: st.box.shrink=(int16_t)v; break;
+        case P_GAP0: st.box.gap[0]=(int16_t)v; break;
+        case P_GAP1: st.box.gap[1]=(int16_t)v; break;
+        case P_BCOLOR: st.box.borderColor=ega; st.box.borderRgb=rgb; break;
+        case P_RADIUS: st.box.radius=(int16_t)v; break;
+        case P_FONTSIZE: st.fontSize=(int16_t)v; break;
+        case P_SIZING: st.box.sizing=(uint8_t)v; break;
+        case P_DIRECTION: st.box.direction=(uint8_t)v; break;
+        case P_WRAP: st.box.wrap=(uint8_t)v; break;
+        case P_JUSTIFY: st.box.justify=(uint8_t)v; break;
+        case P_ITEMS: st.box.align=(uint8_t)v; break;
+        case P_SELF: st.box.self=(int8_t)v; break;
         case P_DISPLAY:
             st.display = (int8_t)v;
             break;
@@ -525,10 +672,10 @@ void cssApply(const void *decls, size_t count, bool important, CssStyle &st)
             st.hidden = (int8_t)v;
             break;
         case P_COLOR:
-            st.fg = (uint8_t)v;
+            st.fg = ega; st.fgRgb = rgb;
             break;
         case P_BG:
-            st.bg = (uint8_t)v;
+            st.bg = ega; st.bgRgb = rgb;
             break;
         case P_WEIGHT:
             st.bold = (int8_t)v;

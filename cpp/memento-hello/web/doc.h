@@ -1,20 +1,18 @@
 #pragma once
 
 #include "wbase.h"
+#include "css.h"
 
 namespace web {
 
 //
 //  A page, as this browser understands one.
 //
-//  The HTML is parsed once into a flat stream of items --- runs of text with a
-//  style, and the block boundaries between them --- and that stream is laid
-//  out into lines for a given width, as often as the width changes.  While it
-//  parses, the parser keeps the stack of open elements, so that a subset of
-//  CSS (css.h) can decide what is shown and how: the tags give each element
-//  its defaults, through a small built-in style sheet, and the page's own
-//  style sheets and style attributes override them.  Everything is laid out
-//  in character cells, because the only font on the machine is fixed-width.
+//  HTML is parsed into styled text items and a retained element tree. The
+//  original Layout flows items into character cells; PixelLayout flows the
+//  tree into block, inline and flex boxes using measured font pixels. Both
+//  produce lines/runs and share links, images, forms and their live state.
+//  The CSS cascade retains independent cell approximations and box lengths.
 //
 //  Text is stored already converted to the font's code page (CP437), so the
 //  renderer copies bytes and never decodes anything.
@@ -33,6 +31,7 @@ enum Style : uint8_t
     ST_FAINT = 16, // list markers, image placeholders
     ST_BIG = 32,   // set on runs of a big line by the layout
     ST_UNDER = 64, // text-decoration: underline
+    ST_BUTTON_EDGE = 128, // synthesized brackets, shown only in text layout
 };
 
 struct Item
@@ -54,10 +53,12 @@ struct Item
     uint8_t align;   // BLOCK: 0 left, 1 centre, 2 right
     uint8_t fg, bg;  // TEXT: palette index + 1, 0 for the default
     uint8_t pad;
+    uint32_t fgRgb = 0, bgRgb = 0;
     uint16_t img;    // IMG: index into the image table + 1
     int32_t link;    // TEXT, IMG: index into the link table, or -1
     uint32_t off;    // TEXT: the text; BLOCK: the list marker, if any; IMG: items of alt text
     uint32_t len;
+    uint32_t box; // owning element in the retained box tree
 };
 
 //  One line of the laid-out page.  Big lines are headings drawn at twice the
@@ -76,7 +77,8 @@ struct Line
     uint16_t imgX;  // where the picture starts, in pixels from the left
     uint16_t imgW, imgH; // the size it is drawn at, in pixels
 
-    int height() const { return img ? rows : big ? 2 : 1; }
+    int32_t pixelHeight = 0; // pixel layout: row and run.x are pixels
+    int height() const { return pixelHeight ? pixelHeight : img ? rows : big ? 2 : 1; }
 };
 
 //  An <img>.  Its size is 0 until the window has the picture and says how
@@ -95,7 +97,23 @@ struct Run
     uint8_t style;
     uint8_t fg, bg;
     uint8_t pad;
+    uint32_t fgRgb = 0, bgRgb = 0;
     int32_t link;
+    int32_t x = 0; // absolute pixel x, used by pixel layout
+};
+
+// A retained element, independent of the text layout. Index 0 is the page.
+struct Box
+{
+    uint32_t parent = 0, firstChild = 0, lastChild = 0, next = 0, endBox = 0;
+    uint32_t firstItem = 0, endItem = 0, uid = 0, id = 0, tag = 0;
+    uint32_t firstLine = 0, endLine = 0;
+    CssStyle style;
+    bool block = false, big = false, atomic = false, anonymous = false, definiteHeight = false;
+    int32_t link = -1;
+    int x = 0, y = 0, w = 0, h = 0, contentW = 0, contentH = 0;
+    int clientW = 0, clientH = 0, scrollW = 0, scrollH = 0;
+    int margin[4] = {}, padding[4] = {}, border[4] = {};
 };
 
 //  A form control.  Strings are offsets into the document's string pool; the
@@ -167,6 +185,14 @@ public:
     void loadMessage(const char *html) { loadHtml((const uint8_t *)html, strlen(html), "utf-8"); }
 
     void layout(int cols);
+    void layoutPixels(int width, int cellWidth, int lineHeight, int viewportHeight = 0);
+    bool pixelLayout() const { return pixels_; }
+    size_t boxCount() const { return boxes_.len / sizeof(Box); }
+    const Box &box(size_t i) const { return ((const Box *)boxes_.data)[i]; }
+    const Box *boxForNode(uint32_t uid) const;
+    const Box *boxForId(const char *id) const;
+    int pixelLinkAt(int x, int y) const;
+    bool pixelLinkPoint(int link, int &x, int &y) const;
 
     int layoutCols() const { return cols_; }
     int rows() const { return rows_; }
@@ -202,6 +228,7 @@ public:
     int imageCount() const { return (int)(images_.len / sizeof(Image)); }
     const char *imageSrc(int i) const { return str(((const Image *)images_.data)[i].src); }
     void setImageSize(int i, int w, int h);
+    void imageSize(int i, int &w, int &h) const { const Image &im=((const Image *)images_.data)[i];w=im.w;h=im.h; }
     void setCellPixels(int cellW, int rowH);
 
     //  The <link rel=stylesheet> hrefs the page named, in order.
@@ -235,6 +262,8 @@ public:
     bool formData(int form, int submitter, Buf &out) const;
 
 private:
+    Buf boxes_{true};
+    bool pixels_ = false;
     Buf text_{true};
     Buf items_{true};
     Buf links_{true};
@@ -258,6 +287,7 @@ private:
 
     friend class HtmlParser;
     friend class Layout;
+    friend class PixelLayout;
 };
 
 //  Unicode code point to the font's byte; 0 drops the character.  Used by the

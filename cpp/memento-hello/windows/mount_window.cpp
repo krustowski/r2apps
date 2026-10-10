@@ -154,6 +154,7 @@ private:
     enum MenuCmd
     {
         M_RUN_CUBE,
+        M_RUN_C8,
         M_RUN_THEM,
         M_RUN_SHELL,
         M_WALLPAPER,
@@ -619,8 +620,7 @@ private:
         return (x[0] == 'e' && x[1] == 'x' && x[2] == 'e') || (x[0] == 'c' && x[1] == 'o' && x[2] == 'm');
     }
 
-    // Only the cube implements this hosted protocol; other ELF files keep
-    // their existing View action.
+    // Recognise the cube by name; other ELF files keep their View action.
     static bool isCube(const VfsDirEntry_T &e)
     {
         static const char name[] = "CUBE.ELF";
@@ -628,6 +628,22 @@ private:
         for (unsigned i = 0; i < sizeof(name) - 1; i++)
             if (upper((char)e.name[i]) != name[i]) return false;
         return true;
+    }
+
+    static bool isC8Rom(const VfsDirEntry_T &e)
+    {
+        unsigned n = e.name_len;
+        return !e.is_dir && n >= 4 && e.name[n-4] == '.' &&
+               upper((char)e.name[n-3]) == 'C' && upper((char)e.name[n-2]) == 'H' &&
+               e.name[n-1] == '8';
+    }
+
+    void runC8(const char *path)
+    {
+        if (!openC8Window(path)) {
+            copyStr(note, sizeof(note), g_launchError[0] ? g_launchError : "C8: could not open its window.");
+            wnd->Repaint();
+        }
     }
 
     void runCube(const char *path)
@@ -716,6 +732,8 @@ private:
                 addItem(M_OPEN, "Open", "Enter", 'O');
             else
             {
+                if (isC8Rom(e))
+                    addItem(M_RUN_C8, "Run in C8", "Enter", 'R');
                 if (isCube(e))
                     addItem(M_RUN_CUBE, "Run cube in window", "Enter", 'R');
                 if (isProgram(e))
@@ -764,6 +782,10 @@ private:
         int ei = (!p.atMounts && p.sel > 0) ? p.order[p.sel - 1] : -1;
         switch (c)
         {
+        case M_RUN_C8:
+            if (ei >= 0 && ei < p.nEntries)
+                runC8(entryPath(p, ei));
+            break;
         case M_RUN_CUBE:
             if (ei >= 0 && ei < p.nEntries)
                 runCube(entryPath(p, ei));
@@ -902,6 +924,11 @@ private:
         {
             goInto(p, ei);
             wnd->Repaint();
+            return;
+        }
+        if (isC8Rom(p.entries[ei]))
+        {
+            runC8(entryPath(p, ei));
             return;
         }
         if (isCube(p.entries[ei]))

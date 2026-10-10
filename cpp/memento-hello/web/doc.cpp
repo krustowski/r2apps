@@ -226,8 +226,9 @@ public:
     HtmlParser(Document &d, Encoding enc, bool css);
     ~HtmlParser();
 
-    bool ok() const { return stack_ && css_; }
+    bool ok() const { return stack_ && css_ && d_.boxCount(); }
     void addSheet(const uint8_t *s, size_t n) { css_->addSheet((const char *)s, n, Css::AUTHOR); }
+    void collectSheets(const uint8_t *s, size_t n);
     void parseHtml(const uint8_t *s, size_t n);
     void parseText(const uint8_t *s, size_t n);
 
@@ -235,6 +236,7 @@ private:
     Document &d_;
     Encoding enc_;
     bool cssOn_;
+    bool sheetPass_ = false;
     Css *css_ = nullptr;
 
     // ── The open elements ───────────────────────────────────────────────────
@@ -252,7 +254,9 @@ private:
         char tag[12];
         CssElement sel;
         CssStyle cs;
+        uint32_t box = 0;
         uint8_t bgEff; // the background text inside it is drawn on
+        uint32_t bgRgbEff;
         uint8_t flags;
         int8_t indentDelta;
         int8_t savedCtrl;
@@ -291,6 +295,7 @@ private:
     int heading_ = 0;
     int faint_ = 0;
     int32_t link_ = -1;
+    bool buttonEdge_ = false;
     bool ctrl_ = false; // link_ is a control
     int form_ = -1;
     bool forcePre_ = false;
@@ -322,6 +327,7 @@ private:
 
     bool itemOpen_ = false;
     Item cur_ = {};
+    uint32_t closingBox_ = ~0u;
     bool lastSpace_ = true;
 
     // ── The tag being read ──────────────────────────────────────────────────
@@ -348,7 +354,7 @@ private:
     uint8_t style() const
     {
         const CssStyle &cs = top().cs;
-        uint8_t st = 0;
+        uint8_t st = buttonEdge_ ? ST_BUTTON_EDGE : 0;
         if (cs.bold == 1)
             st |= ST_BOLD;
         if (cs.italic == 1)
@@ -364,7 +370,21 @@ private:
 
     void pushItem(const Item &it)
     {
-        if (!d_.items_.append(&it, sizeof(it)))
+        Item owned = it; owned.box = closingBox_!=~0u?closingBox_:top().box;
+        if(owned.box>=d_.boxCount())owned.box=0;
+        // Retain text nodes too: flex gives non-whitespace text an anonymous
+        // item, while ordinary inline flow shares its parent's line cursor.
+        if(it.kind==Item::TEXT && it.len) {
+            Box b;b.parent=owned.box;b.anonymous=true;b.big=d_.box(b.parent).big;
+            b.style.inheritFrom(top().cs);b.link=it.link;
+            b.firstItem=itemCount();b.endItem=b.firstItem+1;
+            owned.box=(uint32_t)d_.boxCount();b.endBox=owned.box+1;
+            if(!d_.boxes_.append(&b,sizeof(b))){d_.oom_=true;return;}
+            Box &pb=((Box *)d_.boxes_.data)[b.parent];
+            if(pb.lastChild)((Box *)d_.boxes_.data)[pb.lastChild].next=owned.box;else pb.firstChild=owned.box;
+            pb.lastChild=owned.box;
+        }
+        if (!d_.items_.append(&owned, sizeof(owned)))
             d_.oom_ = true;
     }
 
@@ -379,7 +399,9 @@ private:
     {
         uint8_t st = style();
         uint8_t fg = top().cs.fg, bg = top().bgEff;
-        if (itemOpen_ && (cur_.style != st || cur_.link != link_ || cur_.fg != fg || cur_.bg != bg))
+        uint32_t fgRgb = top().cs.fgRgb, bgRgb = top().bgRgbEff;
+        if (itemOpen_ && (cur_.style != st || cur_.link != link_ || cur_.fg != fg || cur_.bg != bg ||
+                          cur_.fgRgb != fgRgb || cur_.bgRgb != bgRgb))
             flush();
         if (!itemOpen_)
         {
@@ -388,6 +410,7 @@ private:
             cur_.style = st;
             cur_.fg = fg;
             cur_.bg = bg;
+            cur_.fgRgb = fgRgb; cur_.bgRgb = bgRgb;
             cur_.link = link_;
             cur_.off = (uint32_t)d_.text_.len;
             itemOpen_ = true;
@@ -405,6 +428,11 @@ private:
         while (*s)
             appendByte((uint8_t)*s++);
         lastSpace_ = false;
+    }
+
+    void buttonEdge(const char *s)
+    {
+        flush(); buttonEdge_ = true; appendAscii(s); flush(); buttonEdge_ = false;
     }
 
     void appendFaint(const char *s)
@@ -532,8 +560,12 @@ HtmlParser::HtmlParser(Document &d, Encoding enc, bool css) : d_(d), enc_(enc), 
 {
     stack_ = (Elem *)big_alloc(sizeof(Elem) * MAX_DEPTH);
     css_ = new Css();
-    if (css_)
+    if (css_) {
         css_->addSheet(kUaSheet, sizeof(kUaSheet) - 1, Css::UA);
+    }
+    d_.addString("",0);
+    Box root; root.block=true;
+    if (!d_.boxes_.append(&root,sizeof(root))) d_.oom_=true;
 }
 
 HtmlParser::~HtmlParser()
@@ -930,8 +962,10 @@ void HtmlParser::pop(bool semantics, bool implicit)
     }
     if (!depth_)
         return;
+    flush();
     Elem e = stack_[depth_ - 1];
     depth_--;
+    closingBox_=e.box; // synthesized labels remain inside the closing element
     indent_ -= e.indentDelta;
 
     static const char *const kFormatting[] = {"a",     "b",      "big",    "code", "em", "font", "i",
@@ -961,7 +995,7 @@ void HtmlParser::pop(bool semantics, bool implicit)
     marginOverride_ = -1;
 
     if (e.flags & F_BUTTON)
-        appendAscii("]");
+        buttonEdge("]");
     if ((e.flags & F_HREF) && !implicit && link_ >= 0)
         emptyLink(e, link_);
     if (e.flags & F_LINK)
@@ -973,6 +1007,12 @@ void HtmlParser::pop(bool semantics, bool implicit)
         form_ = -1;
     if (e.flags & F_BLOCKIFY)
         softBlock(0);
+    flush();
+    closingBox_=~0u;
+    if (e.box && e.box<d_.boxCount()) {
+        Box &b = ((Box *)d_.boxes_.data)[e.box];
+        b.endItem = itemCount(); b.endBox = (uint32_t)d_.boxCount();
+    }
 }
 
 //  A link that closes without having put anything on the page: the "card"
@@ -1033,8 +1073,16 @@ void HtmlParser::reconstruct()
     nActive_ = 0;
     for (int k = 0; k < n && depth_ < MAX_DEPTH && !overflow_; k++)
     {
+        flush();
         Elem &e = stack_[depth_++];
         e = active_[k].e;
+        Box b; b.parent=depth_>1?stack_[depth_-2].box:0; b.style=e.cs;
+        b.firstItem=itemCount(); b.big=d_.box(b.parent).big;
+        e.box=(uint32_t)d_.boxCount();
+        if (!d_.boxes_.append(&b,sizeof(b))) {d_.oom_=true;return;}
+        Box &pb=((Box *)d_.boxes_.data)[b.parent];
+        if(pb.lastChild)((Box *)d_.boxes_.data)[pb.lastChild].next=e.box;else pb.firstChild=e.box;
+        pb.lastChild=e.box;
         e.flags &= F_LINK | F_HREF;
         e.indentDelta = 0;
         e.savedLink = link_;
@@ -1042,6 +1090,7 @@ void HtmlParser::reconstruct()
         if (active_[k].link >= 0)
         {
             link_ = active_[k].link;
+            ((Box *)d_.boxes_.data)[e.box].link=link_;
             ctrl_ = false;
         }
     }
@@ -1066,6 +1115,12 @@ void HtmlParser::closeUntil(const char *const *targets, const char *const *stops
 
 void HtmlParser::startTag(const char *name, bool selfClosing, const uint8_t *s, size_t n, size_t &i)
 {
+    if(sheetPass_ && !is(name,"style")) {
+        if(is(name,"script") || is(name,"textarea") || is(name,"title") || is(name,"xmp") || is(name,"plaintext"))
+            i=skipRaw(s,n,i,name,false);
+        else if(isAny(name,kSkipped))i=skipElement(s,n,i,name);
+        return;
+    }
     (void)selfClosing; // "<div/>" is an open <div> in HTML
     if (is(name, "title"))
     {
@@ -1077,7 +1132,7 @@ void HtmlParser::startTag(const char *name, bool selfClosing, const uint8_t *s, 
         size_t cs, ce;
         const char *media = attr("media");
         i = skipRaw(s, n, i, "style", false, &cs, &ce);
-        if (cssOn_ && (!media || !ifind(media, strlen(media), "print")))
+        if (cssOn_ && sheetPass_ && (!media || !ifind(media, strlen(media), "print")))
             css_->addSheet((const char *)s + cs, ce - cs, Css::AUTHOR);
         return;
     }
@@ -1135,6 +1190,7 @@ void HtmlParser::startTag(const char *name, bool selfClosing, const uint8_t *s, 
     else if (nActive_ && !isAny(name, kBlockish))
         reconstruct(); // an inline element goes inside the reopened ones
 
+    flush();
     //  The cascade, with the element in place at the top of the stack.
     Elem scratch;
     bool tracked = depth_ < MAX_DEPTH;
@@ -1142,6 +1198,18 @@ void HtmlParser::startTag(const char *name, bool selfClosing, const uint8_t *s, 
     describe(name, e);
     const Elem &parent = top();
     e.cs.inheritFrom(parent.cs);
+    // Pixel UA defaults do not change the legacy row/cell cascade.
+    if (is(name,"button") || (is(name,"input") && attr("type") &&
+        (ieq(attr("type"),"submit") || ieq(attr("type"),"reset") || ieq(attr("type"),"button")))) {
+        for (int k=0;k<4;++k) { e.cs.box.padding[k]=(k&1)?8:3; e.cs.box.border[k]=1; }
+        e.cs.box.borderRgb=0xFF707070; e.cs.box.radius=4;
+    }
+    if(is(name,"body"))for(int k=0;k<4;++k)e.cs.box.margin[k]=8;
+    if(is(name,"p"))e.cs.box.margin[0]=e.cs.box.margin[2]=16;
+    if(is(name,"h1")||is(name,"h2")) {e.cs.box.margin[0]=e.cs.box.margin[2]=12;e.cs.fontSize=32;}
+    if(is(name,"ul")||is(name,"ol")){e.cs.box.padding[3]=24;e.cs.box.margin[0]=e.cs.box.margin[2]=8;}
+    if(is(name,"blockquote")){e.cs.box.margin[0]=e.cs.box.margin[2]=8;e.cs.box.margin[1]=e.cs.box.margin[3]=24;}
+    if(is(name,"hr"))e.cs.box.margin[0]=e.cs.box.margin[2]=8;
     const CssElement *chain[MAX_DEPTH + 1];
     for (int k = 0; k < depth_; k++)
         chain[k] = &stack_[k].sel;
@@ -1149,11 +1217,11 @@ void HtmlParser::startTag(const char *name, bool selfClosing, const uint8_t *s, 
     css_->compute(chain, depth_ + 1, cssOn_ ? attr("style") : nullptr, e.cs);
     bool bodyish = is(name, "body") || is(name, "html");
     e.bgEff = e.cs.bg && !bodyish ? e.cs.bg : parent.bgEff;
+    e.bgRgbEff = e.cs.bgRgb ? e.cs.bgRgb : parent.bgRgbEff;
 
     //  What the page says is not to be shown.
-    const char *aria = attr("aria-hidden");
-    if (!bodyish && (e.cs.display == CssStyle::D_NONE || e.cs.hidden == 1 ||
-                     (aria && ieq(aria, "true") && !is(name, "svg"))))
+    // aria-hidden removes accessibility narration, not painted content.
+    if (!bodyish && (e.cs.display == CssStyle::D_NONE || e.cs.hidden == 1))
     {
         if (!isAny(name, kVoid))
             i = skipElement(s, n, i, name);
@@ -1162,6 +1230,35 @@ void HtmlParser::startTag(const char *name, bool selfClosing, const uint8_t *s, 
 
     bool voidTag = isAny(name, kVoid);
     bool blockish = isAny(name, kBlockish);
+    if (tracked) {
+        Box b; b.parent = parent.box; b.style = e.cs; b.tag=e.sel.tag;
+        b.firstItem = itemCount();
+        b.block = e.cs.display == CssStyle::D_BLOCK || e.cs.display == CssStyle::D_FLEX ||
+                  (blockish && e.cs.display != CssStyle::D_INLINE && e.cs.display != CssStyle::D_INLINE_BLOCK);
+        b.big = e.cs.fontSize ? e.cs.fontSize>=24 : d_.box(b.parent).big;
+        b.atomic = (voidTag && !is(name,"br")) || is(name, "button") || is(name, "select") || is(name, "textarea") ||
+                   e.cs.display == CssStyle::D_INLINE_BLOCK;
+        if(is(name,"input") && attr("type") && ieq(attr("type"),"hidden"))b.style.display=CssStyle::D_NONE;
+        const char *id = attr("id"), *uid = attr("data-r2-node");
+        b.id = d_.addString(id ? id : "", id ? strlen(id) : 0);
+        if (uid) for (; *uid >= '0' && *uid <= '9'; ++uid) { if (b.uid > 100000000) break; b.uid = b.uid * 10 + *uid - '0'; }
+        const char *dim = attr("width");
+        if ((is(name,"img") || is(name,"input")) && dim && b.style.box.width == BoxStyle::Auto) {
+            int v=0; for (; *dim >= '0' && *dim <= '9'; ++dim) v = v < 8192 ? v*10+*dim-'0' : 8192;
+            b.style.box.width = (int16_t)(v > 8192 ? 8192 : v);
+        }
+        dim = attr("height");
+        if (is(name,"img") && dim && b.style.box.height == BoxStyle::Auto) {
+            int v=0; for (; *dim >= '0' && *dim <= '9'; ++dim) v = v < 8192 ? v*10+*dim-'0' : 8192;
+            b.style.box.height = (int16_t)(v > 8192 ? 8192 : v);
+        }
+        e.box = (uint32_t)d_.boxCount();
+        if (!d_.boxes_.append(&b,sizeof(b))) { d_.oom_=true; return; }
+        Box &pb = ((Box *)d_.boxes_.data)[b.parent];
+        if (pb.lastChild) ((Box *)d_.boxes_.data)[pb.lastChild].next=e.box;
+        else pb.firstChild=e.box;
+        pb.lastChild=e.box;
+    }
     e.savedLink = link_;
     e.savedCtrl = ctrl_ ? 1 : 0;
     e.firstItem = itemCount();
@@ -1181,7 +1278,7 @@ void HtmlParser::startTag(const char *name, bool selfClosing, const uint8_t *s, 
         e.indentDelta = (int8_t)(e.cs.indent - base);
         indent_ += e.indentDelta;
     }
-    if (e.cs.display == CssStyle::D_BLOCK && !blockish && tracked)
+    if ((e.cs.display == CssStyle::D_BLOCK || e.cs.display == CssStyle::D_FLEX) && !blockish && tracked)
     {
         e.flags |= F_BLOCKIFY;
         softBlock(0);
@@ -1192,6 +1289,16 @@ void HtmlParser::startTag(const char *name, bool selfClosing, const uint8_t *s, 
     suppress_ = (e.flags & F_INLINE) != 0;
     marginOverride_ = e.cs.marginTop;
     bool consumed = open(name, s, n, i);
+    if (e.box) {
+        flush();
+        Box &b=((Box *)d_.boxes_.data)[e.box];b.link=link_;
+        if (b.atomic) {
+            for (uint32_t k=b.firstItem;k<itemCount();++k) {
+                const Item &it=((Item *)d_.items_.data)[k];
+                if (it.link>=0) { b.link=it.link; break; }
+            }
+        }
+    }
     suppress_ = false;
     marginOverride_ = -1;
 
@@ -1203,6 +1310,7 @@ void HtmlParser::startTag(const char *name, bool selfClosing, const uint8_t *s, 
 
 void HtmlParser::endTag(const char *name)
 {
+    if(sheetPass_)return;
     for (int k = depth_ - 1; k >= 0; k--)
     {
         if (is(stack_[k].tag, name))
@@ -1299,9 +1407,9 @@ void HtmlParser::button(int ci, const char *label)
     link_ = lnk;
     ctrl_ = true;
     d_.control(ci).textOff = (uint32_t)d_.text_.len;
-    appendAscii("[");
+    buttonEdge("[");
     appendUtf8(label);
-    appendAscii("]");
+    buttonEdge("]");
     flush();
     link_ = savedLink;
     ctrl_ = savedCtrl;
@@ -1750,7 +1858,7 @@ bool HtmlParser::open(const char *name, const uint8_t *s, size_t n, size_t &i)
         link_ = controlLink(ci);
         ctrl_ = true;
         d_.control(ci).textOff = (uint32_t)d_.text_.len;
-        appendAscii("[");
+        buttonEdge("[");
         return false;
     }
     if (is(name, "select"))
@@ -1884,6 +1992,18 @@ void HtmlParser::close(const char *name)
     }
 }
 
+// Style blocks apply to the whole document, including elements preceding
+// them. Tokenize first so style markup inside strings, comments and raw text
+// is never mistaken for a sheet. The second pass performs the actual cascade.
+void HtmlParser::collectSheets(const uint8_t *s,size_t n)
+{
+    sheetPass_=true;
+    for(size_t i=0;i<n && !d_.oom_;) {
+        if(s[i]=='<')i=parseTag(s,n,i);else ++i;
+    }
+    sheetPass_=false;
+}
+
 void HtmlParser::parseHtml(const uint8_t *s, size_t n)
 {
     //  A byte order mark says UTF-8 whatever anything else says.
@@ -1919,6 +2039,8 @@ void HtmlParser::parseHtml(const uint8_t *s, size_t n)
     while (depth_)
         pop(true);
     flush();
+    ((Box *)d_.boxes_.data)[0].endItem=itemCount();
+    ((Box *)d_.boxes_.data)[0].endBox=(uint32_t)d_.boxCount();
 }
 
 void HtmlParser::parseText(const uint8_t *s, size_t n)
@@ -1931,6 +2053,9 @@ void HtmlParser::parseText(const uint8_t *s, size_t n)
     while (i < n && !d_.oom_)
         textChar(decodeAt(s, n, i, enc_));
     flush();
+    ((Box *)d_.boxes_.data)[0].endItem=itemCount();
+    ((Box *)d_.boxes_.data)[0].endBox=(uint32_t)d_.boxCount();
+    ((Box *)d_.boxes_.data)[0].style.pre=1;
 }
 
 // ─── Document ────────────────────────────────────────────────────────────────
@@ -1942,6 +2067,8 @@ void Document::clear()
 {
     for (int c = 0; c < controlCount(); c++)
         big_free(control(c).edit);
+    boxes_.release();
+    pixels_ = false;
     text_.release();
     items_.release();
     links_.release();
@@ -2053,6 +2180,7 @@ void Document::loadHtml(const uint8_t *src, size_t n, const char *charset, const
     if (css)
         for (int k = 0; k < nSheets; k++)
             p->addSheet(sheets[k].data, sheets[k].len);
+    if(css)p->collectSheets(src,n);
     p->parseHtml(src, n);
     delete p;
     //  Parsing is over: what the buffers reserved for growing is heap the
@@ -2778,6 +2906,7 @@ void Document::layout(int cols)
         cols_ = 0;
         return;
     }
+    pixels_ = false;
     Layout l(*this, cols);
     l.run();
     cols_ = cols;
@@ -2809,6 +2938,7 @@ void Document::setCellPixels(int cellW, int rowH)
 
 size_t Document::lineAtRow(int row) const
 {
+    if (pixels_) return 0; // flex rows and overflowing boxes can overlap
     size_t lo = 0, hi = lineCount();
     while (lo < hi)
     {
@@ -2824,6 +2954,7 @@ size_t Document::lineAtRow(int row) const
 
 int Document::linkRow(int i) const
 {
+    if (pixels_) { int x,y; if (pixelLinkPoint(i,x,y)) return y; }
     for (size_t li = 0; li < lineCount(); li++)
     {
         const Line &l = line(li);

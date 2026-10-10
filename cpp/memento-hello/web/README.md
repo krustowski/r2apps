@@ -15,7 +15,9 @@ r2web/browser.cpp    toolbar, page, status line, keys, history
    │   │   └── http      request line, response parser (chunked, lengths, 100)
    │   └────── tls.c     BearSSL's non-blocking engine; roots from cacerts.bin
    └────────── NetIf     net_r2.cpp on r2, sockets in tests/host_fetch.cpp
-doc                  HTML → items → lines and runs, in character cells; forms
+doc                  HTML → retained boxes and text items; forms
+pixels               block/inline/flex boxes → pixel lines and geometry
+                     r2web defaults to pixels; :layout text keeps the cell layout
 css                  the CSS subset: selectors, cascade, @media
 url                  what the user typed, and links resolved (RFC 3986)
 image                PNG/JPEG/GIF/BMP → scaled, dithered palette indices;
@@ -185,8 +187,10 @@ control's state.
 - The date comes from the RTC, read as UTC (QEMU's default).  A clock before
   2024 counts as unset and every certificate is refused, saying why.
 - BearSSL is built with `-mgeneral-regs-only` and without its SSE/AES-NI
-  code: this kernel does not promise to keep vector registers across a
-  context switch.  `bearssl.mk` lists what is left out.
+  code. The current kernel preserves x87/SSE state during task switches;
+  the C++ browser and QuickJS require that fix even though BearSSL avoids
+  those registers. Updating the browser ELF alone on an older kernel is
+  insufficient. `bearssl.mk` lists what is left out.
 
 **Entropy is the weak point.**  The engine is seeded with RDRAND where the CPU
 has it --- QEMU's default CPU does not; `-cpu host` with KVM usually does ---
@@ -216,6 +220,12 @@ not something to trust against an attacker who can model the machine's timing.
   ARP goes to both, ping to one).  A frame for the stack that is not asking
   just now waits for it there, so the Video window and an IRC session run side by side.
   r2web and telegram.elf use separate processes and distinct bound ports.
+- Page resources and JavaScript requests share the resolver. Different hosts
+  wait for the current wire query instead of cancelling it. Completed answers
+  and brief failures are cached for their callers, including when another
+  caller notices completion first. UDP/ARP retries have a separate phase
+  deadline, so an unreachable gateway cannot keep DNS busy forever; the TCP
+  fallback releases its connection on completion or timeout.
 - TCP: one segment in flight when sending; three duplicate ACKs at once on
   a gap; retransmission with backoff.
 - Receiving: the window offered is sixteen full segments (`WEB_RX_SEGMENTS`,
@@ -275,12 +285,17 @@ switches pages; Enter starts/stops a tool, Delete clears its address field,
 and Up/Down, PgUp/PgDn and Home/End scroll results. Tools continue across tab
 switches; closing the window stops every tool and releases its bound port.
 
-Stats refreshes the kernel TCP port registry every second. PID and process
-name columns await a kernel API; Memento can identify the uses of its own
-ports. RX/TX throughput and totals count Ethernet frames handled by Memento
-(including its in-process stacks and probes). Hosted applications and the
-separate Ethernet driver are outside these counters; the current status
-syscall exposes no machine-wide byte counters.
+Stats refreshes the kernel TCP port registry every second. These are local
+bindings, including client ports used to receive replies, rather than a list
+of remote services. Syscall `0x46` supplies each port's full process PID and
+16-byte name, as well as the global Ethernet driver's PID, in one snapshot.
+Memento also identifies the uses of its own ports. RX/TX throughput and totals
+come from syscall `0x45`: physical NIC traffic for every process, including
+Ethernet headers and padding but excluding the FCS and loopback. RX counts
+frames consumed from the card once, even when delivery was retried or dropped;
+TX counts successful submissions, not confirmations from the peer. Rates use
+the kernel sample timestamp. On older kernels the tab shows Memento's own
+traffic and the legacy port numbers, with unavailable owner columns.
 
 Scan accepts IPv4 CIDR ranges through /22, including /31 and /32, retries
 unanswered local addresses three times by ARP, then tries ICMP where available.

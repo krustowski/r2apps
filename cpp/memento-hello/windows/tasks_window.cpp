@@ -35,7 +35,7 @@ public:
     {
         reinterpret_cast<TasksWindow *>(instance)->onEvent_(data);
     }
-    void SetWindow(PlatformWindow *w) { wnd = w; }
+    void SetWindow(PlatformWindow *w) { wnd = w; wnd->SetImmediateMode(true); }
 
 private:
     PlatformWindow *wnd = nullptr;
@@ -59,6 +59,9 @@ private:
     int confirmPid = -1; // waiting for Y to kill this one
     char status[64] = {}; // the line under the table
     bool memTab = false;     // showing Memory rather than the tasks
+    bool chartTab = false;
+    MetricsCharts charts;
+    unsigned long repaintRead = 0;
     r2::optional<r2::MemInfo> mem; // what the last read of it returned
     unsigned long memRead = 0;
 
@@ -224,26 +227,27 @@ private:
         out[at] = 0;
     }
 
-    void setTab(bool memory)
+    void setTab(int tab)
     {
-        memTab = memory;
+        memTab = tab == 1;
+        chartTab = tab == 2;
         typed[0] = 0;
         confirmPid = -1;
         status[0] = 0;
         memRead = 0;
-        // The Memory tab repaints itself once a second: the idle loop turns
-        // only while it is showing.
-        wnd->SetImmediateMode(memory);
+        // All tabs now refresh once a second, including the task list.
+        wnd->SetImmediateMode(true);
         wnd->Repaint();
     }
 
     void onIdle()
     {
-        if (!memTab)
-            return;
         unsigned long now = (unsigned long)r2::ticks();
-        if (now - memRead >= 1000)
+        if (now / 1000 != repaintRead / 1000)
+        {
+            repaintRead = now;
             wnd->Repaint();
+        }
         else
             r2::sleep(10);
     }
@@ -355,6 +359,11 @@ private:
 
     void onEvent_(struct PlatformWindowInterfaceInputEvent *data)
     {
+        if (data->type == PlatformWindowInputEventType::OnClose)
+        {
+            wnd->SetImmediateMode(false);
+            return;
+        }
         if (data->type == PlatformWindowInputEventType::OnImmediateModeIdleLoop)
         {
             onIdle();
@@ -367,6 +376,7 @@ private:
         }
         if (data->type == PlatformWindowInputEventType::OnMouseWheel)
         {
+            if (chartTab) return;
             // The list under the wheel scrolls; the bar stays on its task,
             // in view or not. The paint keeps either list in range.
             int d = data->Data.OnMouseWheel.up ? -3 : 3;
@@ -383,11 +393,10 @@ private:
                 return;
             Coord mx = data->Data.OnMouseClick.mouseX;
             Coord my = data->Data.OnMouseClick.mouseY;
-            int tab = TabStrip::at(F_COORD(mx), F_COORD(my), 2); // 0 Tasks, 1 Memory
+            int tab = TabStrip::at(F_COORD(mx), F_COORD(my), 3); // Tasks, Memory, Charts
             if (tab >= 0)
             {
-                if ((tab == 1) != memTab)
-                    setTab(tab == 1);
+                setTab(tab);
                 return;
             }
             if (my >= backY && my < backY + BACK_H && mx >= backX && mx < backX + BACK_W)
@@ -395,6 +404,7 @@ private:
                 wnd->Close();
                 return;
             }
+            if (chartTab) { if (charts.click(F_COORD(mx), F_COORD(my))) wnd->Repaint(); return; }
             if (memTab)
                 return;
             if (my >= backY && my < backY + BACK_H && mx >= killX && mx < killX + KILL_W)
@@ -424,23 +434,33 @@ private:
             return;
 
         char c = key->isChar ? (char)key->theChar : 0;
-        // Tab flips between the two; T and Left, M and Right pick one. Not
+        // Tab/Left/Right cycle; T, M and C select a tab. Not
         // while a PID is being typed or a kill waits for its Y.
         if (confirmPid < 0 && !typed[0])
         {
             int want = -1;
-            if (key->isTab)
-                want = memTab ? 0 : 1;
-            else if (c == 't' || c == 'T' || key->isArrowLeft)
+            int current = chartTab ? 2 : memTab ? 1 : 0;
+            if (key->isTab || key->isArrowRight)
+                want = (current + 1) % 3;
+            else if (key->isArrowLeft)
+                want = (current + 2) % 3;
+            else if (c == 't' || c == 'T')
                 want = 0;
-            else if (c == 'm' || c == 'M' || key->isArrowRight)
+            else if (c == 'm' || c == 'M')
                 want = 1;
+            else if (c == 'c' || c == 'C')
+                want = 2;
             if (want >= 0)
             {
-                if ((want == 1) != memTab)
-                    setTab(want == 1);
+                setTab(want);
                 return;
             }
+        }
+        if (chartTab)
+        {
+            if (key->isEscape || key->isEnter) wnd->Close();
+            else if (charts.key(c)) wnd->Repaint();
+            return;
         }
         if (memTab)
         {
@@ -581,7 +601,8 @@ private:
         // lock. The vector comes from the arena and the entries have the
         // kernel's own layout, so nothing here has to know the stride.
         unsigned long now = (unsigned long)r2::ticks();
-        if (!haveTasks || now - lastRead >= 500)
+        sampleMementoMetrics(now);
+        if (!chartTab && (!haveTasks || now - lastRead >= 500))
         {
             r2::vector<r2::TaskInfo> fresh = r2::tasks();
             if (!fresh.empty() || !haveTasks)
@@ -608,7 +629,9 @@ private:
 
         // The page first: the strip's corner note on Memory needs the
         // reading it takes.
-        if (memTab)
+        if (chartTab)
+            charts.draw(dc, target, opts, dark, light, W, statusTop(H) + ROW_H, false);
+        else if (memTab)
             drawMemory(target, opts, W, H);
         else
             drawTasks(target, opts, W, H, n);
@@ -618,7 +641,7 @@ private:
         backX = (W - BACK_W) / 2;
         backY = backTop(H);
         target->FillRect(2, backY - 3, W - 4, 1, dark, false);
-        bool backFocused = !memTab && (sel == nLive);
+        bool backFocused = !memTab && !chartTab && (sel == nLive);
         opts.horizontalAlign = PlatformAlign::Middle;
         opts.verticalAlign = PlatformAlign::Middle;
 
@@ -638,7 +661,7 @@ private:
 
         // Kill, at the left: the task on the bar.
         killX = MARGIN;
-        if (!memTab)
+        if (!memTab && !chartTab)
             button(target, opts, killX, backY, "Kill");
     }
 
@@ -655,10 +678,12 @@ private:
     // page holds.
     void drawTabs(PlatformBitmap *target, PlatformDrawTextOptions &opts, int W, int n)
     {
-        static const char *const labels[2] = {"Tasks", "Memory"};
+        static const char *const labels[3] = {"Tasks", "Memory", "Charts"};
         char note[48];
         note[0] = 0;
-        if (memTab)
+        if (chartTab)
+            append(note, sizeof note, "Live / 1 s");
+        else if (memTab)
         {
             if (mem)
             {
@@ -677,7 +702,7 @@ private:
             appendU(note, sizeof note, user);
             append(note, sizeof note, " user");
         }
-        TabStrip::draw(target, opts, dark, light, W, labels, 2, memTab ? 1 : 0, note);
+        TabStrip::draw(target, opts, dark, light, W, labels, 3, chartTab ? 2 : memTab ? 1 : 0, note);
     }
 
     // A thumb along the right edge for a list of `total` rows of which `shown`

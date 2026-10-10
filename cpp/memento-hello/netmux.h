@@ -21,8 +21,8 @@
 //
 // Every frame this process sends goes out through netmux_send() as well, so
 // that what comes in and what goes out can be counted in one place: Memento's
-// own traffic, for the Network window.  The kernel counts the machine's
-// (NETDRV_COUNTERS) but no syscall reports it yet.
+// own traffic. The Network window reads system NIC totals through syscall
+// 0x45 and uses these local counters as a fallback on older kernels.
 //
 #pragma once
 
@@ -70,9 +70,9 @@ extern "C" NetmuxStats netmux_stats();
 extern "C" bool netmux_send(const uint8_t *frame, uint32_t len);
 
 //  The TCP ports this process has bound (syscall 0x37), and what for: "web",
-//  "scan", "chat".  The kernel's registry knows each port's owner but
-//  syscall 0x38 reports the numbers alone, so the Network window can name
-//  only Memento's own.  netmux_port_use() is null for a port not noted here.
+//  "scan", "chat". Syscall 0x46 reports every port's PID and process name;
+//  these notes add Memento's in-process use. netmux_port_use() is null for
+//  a port not noted here.
 extern "C" void netmux_port_bound(uint16_t port, const char *use);
 extern "C" void netmux_port_released(uint16_t port);
 extern "C" const char *netmux_port_use(uint16_t port);

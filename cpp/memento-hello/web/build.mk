@@ -10,7 +10,7 @@ WEB_CFLAGS := -std=gnu99 -m64 -Os -ffreestanding -nostdlib -nostdinc \
               -fcf-protection=none -mno-red-zone -mgeneral-regs-only \
               -ffunction-sections -fdata-sections -w \
               $(BEARSSL_DEFS) $(BEARSSL_INC) -I$(STB)
-WEB_CXX_SRCS := $(WEB)/wbase.cpp $(WEB)/url.cpp $(WEB)/http.cpp $(WEB)/css.cpp $(WEB)/doc.cpp \
+WEB_CXX_SRCS := $(WEB)/wbase.cpp $(WEB)/url.cpp $(WEB)/http.cpp $(WEB)/css.cpp $(WEB)/doc.cpp $(WEB)/pixels.cpp \
                 $(WEB)/loader.cpp $(WEB)/net_r2.cpp $(WEB)/web_r2.cpp $(WEB)/image.cpp $(WEB)/png.cpp \
                 $(WEB)/mp4.cpp
 WEB_C_SRCS   := $(WEB)/tls.c $(WEB)/sysrng_stub.c $(WEB)/stb_image.c $(WEB)/h264.c

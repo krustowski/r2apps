@@ -191,6 +191,8 @@ struct DnsEntry
 {
     char host[Url::HOST_CAP];
     uint8_t ip[4];
+    const char *error;
+    uint64_t expires;
 };
 
 class Stack : public NetIf
@@ -268,7 +270,7 @@ private:
     } dnsPhase_ = DNS_IDLE;
     char dnsHost_[Url::HOST_CAP] = {};
     uint16_t dnsId_ = 0;
-    uint64_t dnsSentAt_ = 0;
+    uint64_t dnsSentAt_ = 0, dnsPhaseAt_ = 0;
     uint8_t dnsAnswer_[4] = {};
     int dnsConn_ = -1;
     uint8_t dnsQuery_[300];
@@ -828,27 +830,19 @@ void Stack::dnsStep(uint64_t now)
     switch (dnsPhase_)
     {
     case DNS_UDP1:
-        //  The query may not have left at all: the gateway's MAC was not
-        //  known yet, and an ARP request went instead.  Try again soon rather
-        //  than waiting out the answer timeout for nothing.
-        if (!dnsSent_ && now - dnsSentAt_ >= ARP_RETRY_MS)
-        {
-            dnsSendUdp(dns_);
-            return;
-        }
-        if (now - dnsSentAt_ > 1500)
+        // An ARP retry updates dnsSentAt_, but must not extend the deadline:
+        // otherwise an unresolved gateway wedges the shared resolver forever.
+        if (now - dnsPhaseAt_ > 1500)
         {
             dnsPhase_ = DNS_UDP2;
+            dnsPhaseAt_ = now;
             dnsSendUdp(dns2_);
         }
+        else if (!dnsSent_ && now - dnsSentAt_ >= ARP_RETRY_MS)
+            dnsSendUdp(dns_);
         return;
     case DNS_UDP2:
-        if (!dnsSent_ && now - dnsSentAt_ >= ARP_RETRY_MS)
-        {
-            dnsSendUdp(dns2_);
-            return;
-        }
-        if (now - dnsSentAt_ > 1500)
+        if (now - dnsPhaseAt_ > 1500)
         {
             //  No answer over UDP: most likely another process holds the
             //  driver registration and has the replies.  TCP comes to us.
@@ -867,6 +861,8 @@ void Stack::dnsStep(uint64_t now)
             send(dnsConn_, dnsQuery_, dnsQueryLen_);
             dnsPhase_ = DNS_TCP;
         }
+        else if (!dnsSent_ && now - dnsSentAt_ >= ARP_RETRY_MS)
+            dnsSendUdp(dns2_);
         return;
     case DNS_TCP:
     {
@@ -910,53 +906,49 @@ int Stack::resolve(const char *host, uint8_t ip[4])
         ip[3] = 1;
         return 1;
     }
+    uint64_t now = now_ms();
+    // The browser loader and script loaders share this resolver. Publish a
+    // completed answer before considering the caller's host: another caller
+    // can notice completion first, or the original caller can be cancelled.
+    // Keep failures briefly too, so they reach every waiter for that host.
+    if (dnsPhase_ == DNS_DONE || dnsPhase_ == DNS_FAILED)
+    {
+        DnsEntry &e = cache_[cacheNext_];
+        cacheNext_ = (cacheNext_ + 1) % 8;
+        scopy(e.host, dnsHost_, sizeof(e.host));
+        memcpy(e.ip, dnsAnswer_, 4);
+        e.error = dnsPhase_ == DNS_FAILED ? (dnsErr_ ? dnsErr_ : "lookup failed") : nullptr;
+        e.expires = now + (e.error ? 3000 : 60000);
+        dnsPhase_ = DNS_IDLE;
+    }
     for (const DnsEntry &e : cache_)
-        if (e.host[0] && !strcmp(e.host, host))
+        if (e.host[0] && now < e.expires && !strcmp(e.host, host))
         {
+            if (e.error)
+            {
+                setError(e.error);
+                return -1;
+            }
             memcpy(ip, e.ip, 4);
             return 1;
         }
 
-    if (strcmp(dnsHost_, host) || dnsPhase_ == DNS_IDLE)
-    {
-        //  A new name.  Whatever was being looked up before is abandoned.
-        if (dnsConn_ >= 0)
-        {
-            close(dnsConn_);
-            dnsConn_ = -1;
-        }
-        scopy(dnsHost_, host, sizeof(dnsHost_));
-        if (!dnsBuild(host))
-        {
-            setError("not a valid host name");
-            dnsPhase_ = DNS_IDLE;
-            return -1;
-        }
-        dnsErr_ = nullptr;
-        dnsPhase_ = DNS_UDP1;
-        dnsSendUdp(dns_);
+    // One wire query at a time. A different host waits rather than replacing
+    // its transaction ID and closing its DNS/TCP connection on every tick.
+    // poll() advances even an abandoned query to its bounded timeout.
+    if (dnsPhase_ != DNS_IDLE)
         return 0;
-    }
-
-    switch (dnsPhase_)
+    scopy(dnsHost_, host, sizeof(dnsHost_));
+    if (!dnsBuild(host))
     {
-    case DNS_DONE:
-    {
-        memcpy(ip, dnsAnswer_, 4);
-        DnsEntry &e = cache_[cacheNext_];
-        cacheNext_ = (cacheNext_ + 1) % 8;
-        scopy(e.host, host, sizeof(e.host));
-        memcpy(e.ip, dnsAnswer_, 4);
-        dnsPhase_ = DNS_IDLE;
-        return 1;
-    }
-    case DNS_FAILED:
-        setError(dnsErr_ ? dnsErr_ : "lookup failed");
-        dnsPhase_ = DNS_IDLE;
+        setError("not a valid host name");
         return -1;
-    default:
-        return 0;
     }
+    dnsErr_ = nullptr;
+    dnsPhase_ = DNS_UDP1;
+    dnsPhaseAt_ = now;
+    dnsSendUdp(dns_);
+    return 0;
 }
 
 // ─── TCP ─────────────────────────────────────────────────────────────────────

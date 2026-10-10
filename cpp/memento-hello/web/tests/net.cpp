@@ -10,7 +10,7 @@
 
 namespace {
 int process = 1;
-bool driver = false, refuseRelease = false;
+bool driver = false, refuseRelease = false, gatewayKnown = true;
 uint64_t clockMs = 1000;
 int failAllocation = 0;
 size_t liveAllocations = 0;
@@ -55,6 +55,115 @@ int established(web::Stack &stack)
     check(stack.status(h) == web::NetIf::OPEN, "SYN/ACK established connection");
     return h;
 }
+// Reply to the query as it was sent, even if another loader has since asked
+// for a different host. This models replies arriving between idle ticks.
+void dnsReply(const std::vector<uint8_t> &query, int rcode = 0)
+{
+    check(query.size() >= 54 && query[23] == 17, "DNS query sent over UDP");
+    size_t qlen = query.size() - 42;
+    std::vector<uint8_t> frame(42 + qlen + (rcode ? 0 : 16));
+    frame[6] = 0x02; web::put16(frame.data() + 12, 0x0800);
+    uint8_t *ip = frame.data() + 14, *udp = ip + 20, *dns = udp + 8;
+    ip[0] = 0x45; ip[9] = 17; web::put16(ip + 2, (uint16_t)(frame.size() - 14));
+    std::memcpy(ip + 12, query.data() + 30, 4);
+    std::memcpy(ip + 16, query.data() + 26, 4);
+    web::put16(udp, 53); web::put16(udp + 2, web::get16(query.data() + 34));
+    web::put16(udp + 4, (uint16_t)(frame.size() - 34));
+    std::memcpy(dns, query.data() + 42, qlen);
+    web::put16(dns + 2, (uint16_t)(0x8180 | rcode));
+    web::put16(dns + 6, rcode ? 0 : 1);
+    if (!rcode) {
+        uint8_t *a = dns + qlen;
+        web::put16(a, 0xc00c); web::put16(a + 2, 1); web::put16(a + 4, 1);
+        web::put32(a + 6, 60); web::put16(a + 10, 4);
+        std::memcpy(a + 12, remote, 4);
+    }
+    incoming[process].push_back(frame);
+}
+void unresolvedGateway()
+{
+    select(6, 50100);
+    gatewayKnown = false;
+    web::Stack stack;
+    uint8_t ip[4];
+    check(stack.resolve("missing-arp.test", ip) == 0, "lookup waits for gateway ARP");
+    // Retrying a UDP send must not keep resetting the phase deadline. An
+    // unreachable gateway must leave the shared resolver available again.
+    for (int i = 0; i < 210; ++i) { clockMs += 50; stack.poll(); }
+    check(stack.resolve("missing-arp.test", ip) == -1, "missing ARP cannot wedge the resolver forever");
+    check(bindings.size() == 10 && liveAllocations == 0, "unreachable gateway releases DNS socket");
+    gatewayKnown = true;
+}
+void concurrentDns()
+{
+    select(5, 50000);
+    web::Stack stack;
+    uint8_t ip[4];
+    check(stack.resolve("r2.n0p.cz", ip) == 0, "page lookup starts");
+    auto first = lastSent;
+    for (int i = 0; i < 20; ++i) {
+        check(stack.resolve("umami.vxn.dev", ip) == 0, "analytics waits for page lookup");
+        check(stack.resolve("fonts.googleapis.com", ip) == 0, "stylesheet waits for page lookup");
+    }
+    dnsReply(first); stack.poll();
+    // A different caller notices completion first: preserve the original
+    // answer for its owner rather than throwing it away.
+    check(stack.resolve("umami.vxn.dev", ip) == 0, "next lookup starts after page answer");
+    auto second = lastSent;
+    check(stack.resolve("r2.n0p.cz", ip) == 1 && !std::memcmp(ip, remote, 4), "concurrent lookups preserve page answer");
+    dnsReply(second, 3); stack.poll();
+    check(stack.resolve("fonts.googleapis.com", ip) == 0, "failure permits next lookup");
+    auto third = lastSent;
+    check(stack.resolve("umami.vxn.dev", ip) == -1, "negative answer reaches original caller");
+    dnsReply(third); stack.poll();
+    check(stack.resolve("fonts.googleapis.com", ip) == 1, "stylesheet lookup finishes");
+
+    // Navigation cancels the caller, while the shared DNS/TCP query is
+    // already underway. It must time out and release its socket, then allow
+    // a new host to resolve even if the old caller never polls again.
+    check(stack.resolve("abandoned.test", ip) == 0, "abandoned lookup starts");
+    clockMs += 1601; stack.poll(); clockMs += 1601; stack.poll();
+    check(liveAllocations == 2, "DNS fallback owns TCP buffers");
+    check(stack.resolve("next-page.test", ip) == 0, "navigation waits without cancelling DNS TCP");
+    clockMs += 6001; stack.poll();
+    check(stack.resolve("next-page.test", ip) == 0, "navigation starts after abandoned lookup timeout");
+    auto next = lastSent;
+    dnsReply(next); stack.poll();
+    check(stack.resolve("next-page.test", ip) == 1, "navigation recovers after failed DNS TCP");
+    check(bindings.size() == 10 && liveAllocations == 0, "DNS timeout releases ports and buffers");
+
+    check(stack.resolve("tcp-dns.test", ip) == 0, "TCP lookup starts over UDP");
+    auto query = lastSent;
+    clockMs += 1601; stack.poll(); clockMs += 1601; stack.poll();
+    check(stack.resolve("waiting.test", ip) == 0, "another host preserves DNS TCP handshake");
+    reply(web::F_SYN | web::F_ACK, 100, web::get32(lastSent.data() + 38) + 1);
+    stack.poll();
+    check(lastSent.size() > 54, "DNS query sent over established TCP");
+    uint32_t ack = web::get32(lastSent.data() + 38) + (uint32_t)lastSent.size() - 54;
+    dnsReply(query);
+    auto answer = incoming[process].back(); incoming[process].pop_back();
+    reply(web::F_ACK | web::F_PSH, 101, ack);
+    auto &tcp = incoming[process].back();
+    size_t len = answer.size() - 42;
+    tcp.resize(56 + len);
+    web::put16(tcp.data() + 16, (uint16_t)(tcp.size() - 14));
+    web::put16(tcp.data() + 54, (uint16_t)len);
+    std::memcpy(tcp.data() + 56, answer.data() + 42, len);
+    stack.poll();
+    check(stack.resolve("waiting.test", ip) == 0, "next host starts after DNS TCP answer");
+    auto waiting = lastSent;
+    check(stack.resolve("tcp-dns.test", ip) == 1, "DNS TCP answer preserved for original caller");
+    dnsReply(waiting); stack.poll();
+    check(stack.resolve("waiting.test", ip) == 1, "host waiting for DNS TCP finishes");
+    clockMs += 3001; stack.poll();
+    check(bindings.size() == 10 && liveAllocations == 0, "DNS TCP completion eventually releases port");
+
+    // Negative caching coordinates waiters without poisoning future retries.
+    check(stack.resolve("umami.vxn.dev", ip) == 0, "expired negative answer can be retried");
+    auto retry = lastSent;
+    dnsReply(retry); stack.poll();
+    check(stack.resolve("umami.vxn.dev", ip) == 1, "failed host can recover without restarting browser");
+}
 }
 
 namespace r2 {
@@ -83,7 +192,7 @@ std::optional<Status> status()
 std::optional<Config> config()
 {
     return Config{{{10, 3, 4, 2}}, {{255, 255, 255, 0}}, {{10, 3, 4, 1}}, {{1, 1, 1, 1}},
-                  {{0x52, 0x54, 0, 0x12, 0x34, 0x56}}, {{0x52, 0x54, 0, 0x12, 0x34, 0x57}}, true};
+                  {{0x52, 0x54, 0, 0x12, 0x34, 0x56}}, {{0x52, 0x54, 0, 0x12, 0x34, 0x57}}, gatewayKnown};
 }
 bool bind_port(uint16_t port)
 {
@@ -226,9 +335,12 @@ int main()
     local.close(h); clockMs += 3001; local.poll();
     check(bindings.size() == 10 && liveAllocations == 0, "loopback connection released");
 
+    concurrentDns();
+    unresolvedGateway();
+
     driver = true;
     web::Stack driverStack;
     h = driverStack.connect(remote, 443); check(h >= 0, "global driver connection"); driverStack.close(h);
     check(bindings.size() == 10 && liveAllocations == 0, "global driver does not bind ports");
-    std::puts("Network port lifecycle tests passed.");
+    std::puts("Network tests passed (ports, concurrent DNS, TCP fallback, timeouts and recovery).");
 }

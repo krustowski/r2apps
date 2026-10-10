@@ -88,6 +88,7 @@ protected:
     //  A child may attach window-specific information to its attention
     //  request. The normal focus-dependent highlight is handled here.
     virtual void onAttention(uint32_t) {}
+    virtual void prepareKey(r2web::Command &, PlatformKey *) {}
 private:
     const char *program_, *title_;
     bool pictures_, notifications_;
@@ -282,6 +283,7 @@ private:
 #define ENCODE_FLAG(name,bit) if (k->name) c.flags|=1u<<bit;
             R2WEB_KEY_FLAGS(ENCODE_FLAG)
 #undef ENCODE_FLAG
+            prepareKey(c, k);
             if (k->isChar && (k->theChar=='v' || k->theChar=='V') && (k->isLeftControl || k->isRightControl)) {
                 uint32_t n=0;
                 if (pictures_ && clipboardPictureFile(c.text,sizeof(c.text),n)) { c.x=r2web::PasteImage; c.y=(int32_t)n; }

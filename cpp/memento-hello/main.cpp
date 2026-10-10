@@ -224,6 +224,9 @@ static bool openThemWindow(const char *path);
 // The floating-point cube in its own window (c/cube).
 static bool openCubeWindow(const char *path);
 
+// CHIP-8 ROMs in a hosted raylib window (c/c8).
+static bool openC8Window(const char *path);
+
 //  The userland shell (r2sh) in a window of its own; with <script>, it runs
 //  that .BSH file first (windows/shell_window.cpp).  When it cannot be
 //  opened, g_launchError says why.
@@ -331,6 +334,7 @@ static bool openInEditor(const char *path)
 #include "windows/hello_window.cpp"
 #include "windows/wallpaper.cpp"
 #include "windows/login_window.cpp"
+#include "windows/metrics_charts.cpp"
 #include "windows/tasks_window.cpp"
 #include "windows/net_window.cpp"
 #include "windows/mount_window.cpp"
@@ -344,6 +348,7 @@ static bool openInEditor(const char *path)
 #include "windows/hosted_window.cpp"
 #include "windows/browser_window.cpp"
 #include "windows/jug_window.cpp"
+#include "windows/c8_window.cpp"
 #include "windows/editor_window.cpp"
 #include "windows/shell_window.cpp"
 #include "windows/snake_window.cpp"
@@ -490,6 +495,7 @@ static void onLockKey() { (void)lockSession(); }
 // commits the request only after all that cleanup has completed.
 static void desktopIdle()
 {
+    sampleMementoMetrics(r2::ticks());
     ThemWindow::ReapClosed();
     CubeWindow::ReapClosed();
     // Why a program would not start (or a window is open already): in a box
@@ -589,6 +595,31 @@ static bool openCubeWindow(const char *path)
         return false;
     }
     cube->SetWindow(window);
+    window->SetVisible(true);
+    return true;
+}
+
+static void deleteC8(void *p) { delete (C8Window *)p; }
+static bool openC8Window(const char *path)
+{
+    if (!g_root) return false;
+    g_launchError[0] = 0;
+    if (!path || !*path || strlen(path) >= r2web::TextCapacity) {
+        strcpy(g_launchError, "C8: ROM path is too long."); return false;
+    }
+    C8Window *app = new C8Window(path);
+    if (!app) { strcpy(g_launchError, "C8: no memory for its window."); return false; }
+    if (app->failed()) {
+        web::scopy(g_launchError, app->why(), sizeof(g_launchError));
+        delete app; return false;
+    }
+    PlatformWindow *window = g_root->CreateWindow(
+        "C8", C8Window::W, C8Window::H, C8Window::onEvent, app, &g_appOpts, deleteC8, app);
+    if (!window) {
+        delete app;
+        strcpy(g_launchError, "C8: no room for another window."); return false;
+    }
+    app->SetWindow(window);
     window->SetVisible(true);
     return true;
 }
