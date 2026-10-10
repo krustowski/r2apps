@@ -23,7 +23,12 @@ type Response struct {
 func Read(r io.Reader) (Response, error) { return ReadLimit(r, MaxBody) }
 
 // ReadLimit is Read with a body of at most limit bytes rather than MaxBody.
-func ReadLimit(r io.Reader, limit int) (Response, error) {
+func ReadLimit(r io.Reader, limit int) (Response, error) { return ReadAlloc(r, limit, nil) }
+
+// ReadAlloc is ReadLimit with the body of a response that says its length
+// put where alloc says, when alloc gives room (len n) rather than nil: a
+// large body can live outside the Go heap.
+func ReadAlloc(r io.Reader, limit int, alloc func(n int) []byte) (Response, error) {
 	var out Response
 	b := bufio.NewReaderSize(r, 2048)
 	line, err := b.ReadSlice('\n')
@@ -133,7 +138,12 @@ func ReadLimit(r io.Reader, limit int) (Response, error) {
 		if n > uint64(limit) {
 			return out, ErrTooLarge
 		}
-		out.Body = make([]byte, int(n))
+		if alloc != nil {
+			out.Body = alloc(int(n))
+		}
+		if out.Body == nil {
+			out.Body = make([]byte, int(n))
+		}
 		_, err = io.ReadFull(b, out.Body)
 		return out, err
 	}

@@ -1,6 +1,7 @@
 package hosted
 
 import (
+	"strings"
 	"testing"
 	"unsafe"
 )
@@ -107,5 +108,29 @@ func TestLiveness(t *testing.T) {
 	c2.Close()
 	if b2.Exited != 1 {
 		t.Fatal("exit not acknowledged")
+	}
+}
+
+// A panic's words, printed a piece at a time, become the window's message.
+func TestRuntimeOutput(t *testing.T) {
+	b, px := newBlock(4, 4)
+	c, _ := Connect(b, px, 0x31474554, 0)
+	c.Fail("Memento heartbeat timed out.")
+	c.RuntimeOutput([]byte("panic: runtime error: "))
+	c.RuntimeOutput([]byte("out of memory\n\n"))
+	got := string(b.Error[:])
+	if i := strings.IndexByte(got, 0); i >= 0 {
+		got = got[:i]
+	}
+	if got != "panic: runtime error: out of memory " {
+		t.Fatalf("message %q", got)
+	}
+	long := make([]byte, 300)
+	for i := range long {
+		long[i] = 'x'
+	}
+	c.RuntimeOutput(long)
+	if b.Error[len(b.Error)-1] != 0 {
+		t.Fatal("message not terminated")
 	}
 }

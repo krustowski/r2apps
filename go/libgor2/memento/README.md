@@ -179,6 +179,9 @@ host.Close() // the last access: Memento may free the block
 `Copy` puts text on Memento's clipboard, `Attention` turns the window's title
 and taskbar button red until it is looked at, `Open` asks for a Web window,
 and `Fail` leaves a message the window shows after the program has ended.
+`RuntimeOutput`, given to `libgor2.SetConsoleSink`, makes a panic's own words
+that message, without allocating.  An ended program's window offers Enter to
+start it again in place.
 `PortBase` is the first of the 32 TCP ports Memento sets aside for the
 window's slot.  A window built with `pictures` set hands the program a PNG of
 the clipboard's picture on a Ctrl+V (`PasteImage`).

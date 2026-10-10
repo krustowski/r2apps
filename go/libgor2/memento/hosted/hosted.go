@@ -98,6 +98,8 @@ type Client struct {
 	hostBeat uint32
 	hostSeen uint64
 	reason   ExitReason
+
+	runtimeSaid bool // RuntimeOutput has begun the message
 }
 
 // Attach checks the block at the address Memento passed (args[2]) and
@@ -241,6 +243,38 @@ func (c *Client) Attention() { atomic.StoreUint32(&c.b.AttentionPending, 1) }
 
 // Fail leaves a message the window shows once the program has ended.
 func (c *Client) Fail(msg string) { putText(c.b.Error[:], msg) }
+
+// RuntimeOutput keeps the runtime's own words --- a panic's --- as the
+// message the window shows once the program has ended.  It does not
+// allocate, so it works with the Go heap exhausted: give it to
+// libgor2.SetConsoleSink.
+func (c *Client) RuntimeOutput(output []byte) {
+	if c.b == nil {
+		return
+	}
+	e := &c.b.Error
+	n := 0
+	if c.runtimeSaid {
+		for n < len(e) && e[n] != 0 {
+			n++
+		}
+	}
+	c.runtimeSaid = true
+	for _, ch := range output {
+		if n >= len(e)-1 {
+			break
+		}
+		if ch < ' ' || ch > '~' {
+			ch = ' '
+		}
+		if ch == ' ' && (n == 0 || e[n-1] == ' ') {
+			continue
+		}
+		e[n] = ch
+		n++
+	}
+	e[n] = 0
+}
 
 // Close is the last access to the block: Memento may free it after this.
 func (c *Client) Close() {

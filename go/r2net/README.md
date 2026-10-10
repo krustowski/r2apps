@@ -126,8 +126,10 @@ the segments behind a gap arrive and produce those duplicates themselves, so
 
 ## What TCP here is and is not
 
-It is a client: a three-way handshake, cumulative
-acknowledgements, **one outstanding segment at a time**, exponential backoff
+It is a client: a three-way handshake (an answer to the SYN that acknowledges
+something else --- the server's TIME_WAIT from an earlier connection on the
+same ports, on a real network --- is reset, so the SYN sent again goes
+through), cumulative acknowledgements, **one outstanding segment at a time**, exponential backoff
 over five retries, and a close that waits 300 ms for the peer's half before
 giving up. The receiver buffers up to sixteen disjoint out-of-order segments
 within its 16 KiB receive capacity and drains them when a gap fills. It repeats

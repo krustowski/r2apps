@@ -580,12 +580,21 @@ func (c *Conn) onSegment(flags byte, seq, ack uint32, data []byte) {
 
 	switch c.state {
 	case stateSynSent:
-		if flags&flagSYN == 0 || flags&flagACK == 0 {
+		if flags&flagACK != 0 && ack != c.snd {
+			// RFC 793, SYN-SENT: an acknowledgement of something this
+			// connection never sent belongs to an older one on the same
+			// four-tuple.  On a real network that is the server's
+			// TIME_WAIT answering the SYN with the last ACK it gave, since
+			// a program reuses the same few local ports.  A reset clears
+			// it there and the SYN, sent again, goes through; ignored, the
+			// connection timed out.  (QEMU's user network keeps no
+			// TIME_WAIT, which is why it never showed there.)
+			c.s.sendReset(c.remote, c.lport, c.rport, seq, ack, flags, len(data))
+
 			return
 		}
 
-		if ack != c.snd {
-			// Not an answer to the SYN we sent.
+		if flags&flagSYN == 0 || flags&flagACK == 0 {
 			return
 		}
 
