@@ -16,8 +16,12 @@ namespace web {
 //  The request for u.  With a body it is a POST of a urlencoded form, without
 //  one a GET.  False when there was no memory for it.
 //  `contentType` is the POST body's; urlencoded form data when null.
+//  `method` replaces GET/POST (a script's fetch: PUT, DELETE, HEAD, ...),
+//  sending the body when there is one; `extraHeaders` are "Name: value\r\n"
+//  lines added as they are (an Accept among them replaces the default one).
 bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool post, Buf &out,
-                      const char *contentType = nullptr);
+                      const char *contentType = nullptr, const char *method = nullptr,
+                      const char *extraHeaders = nullptr);
 
 class HttpResponse
 {
@@ -45,8 +49,15 @@ public:
     char error[64] = {};
 
     Buf body{true};
+    //  The head as it came, status line and "Name: value\r\n" lines, once
+    //  headersDone: what a script's fetch reports as the headers.
+    Buf rawHead;
 
     void reset();
+
+    //  A body read as it arrives (a script's stream): the first n bytes are
+    //  taken away.  The length the server announced still counts them.
+    void consume(size_t n);
 
     //  Everything that arrives from the server goes through here.
     void feed(const uint8_t *data, size_t n);
@@ -63,6 +74,7 @@ public:
 private:
     Buf head_;
     long contentLength_ = -1;
+    size_t consumed_ = 0; // body bytes taken by consume()
     bool chunked_ = false;
 
     enum ChunkState

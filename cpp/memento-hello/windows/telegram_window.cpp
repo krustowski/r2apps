@@ -4,5 +4,5 @@
 class TelegramWindow : public HostedWindow {
 public:
     static const int W = 300, H = 170;
-    TelegramWindow() : HostedWindow("telegram.elf", "Telegram", tghost::Magic, 0, nullptr, true) {}
+    TelegramWindow() : HostedWindow("telegram.elf", "Telegram", tghost::Magic, 0, nullptr, true, true) {}
 };

@@ -113,7 +113,7 @@ WINDOWS := $(wildcard windows/*.cpp)
 
 OBJS += $(WEB_OBJS)
 
-.PHONY: check build install clean webtest nettest browser jug
+.PHONY: check build install clean webtest nettest notifytest browser jug
 
 # Compile-only check — no linking, so neither archive has to exist yet.
 # Without -MMD: with no -o to follow, it writes main.d and the rest into the
@@ -184,6 +184,13 @@ $(BDIR)/R2_UIRootImpl.o:        	$(R2)/R2_UIRootImpl.cpp       			| $(BDIR) ; g+
 # Deterministic tests of the network tools, mux and port lifetime.
 nettest:
 	@$(MAKE) -C web/tests network_check
+
+# Clock bubble expiry, burst ordering and the hosted notification ABI.
+notifytest: $(BDIR)/notifications_test
+	$(BDIR)/notifications_test
+
+$(BDIR)/notifications_test: tests/notifications.cpp ../r2web/host.h $(R2)/R2_NotificationStack.h | $(BDIR)
+	g++ -std=c++17 -Wall -Wextra -Werror -I$(MEMENTO)/src $< -o $@
 
 # Host-side tests of the engine: make -C web/tests check
 webtest:

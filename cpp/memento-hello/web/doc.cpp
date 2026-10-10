@@ -1989,6 +1989,39 @@ static void sniffCharset(const uint8_t *src, size_t n, char *out, size_t cap)
     out[k] = 0;
 }
 
+bool pageToUtf8(const uint8_t *src, size_t n, const char *charset, Buf &out)
+{
+    char cs[24] = {};
+    if (charset && charset[0])
+        scopy(cs, charset, sizeof(cs));
+    else
+        sniffCharset(src, n, cs, sizeof(cs));
+    Encoding enc = encodingFor(cs);
+    out.clear();
+    if (!out.reserve(n + n / 4 + 16))
+        return false;
+    for (size_t i = 0; i < n;)
+    {
+        uint32_t cp = decodeAt(src, n, i, enc);
+        uint8_t u[4];
+        size_t k;
+        if (cp < 0x80)
+            u[0] = (uint8_t)cp, k = 1;
+        else if (cp < 0x800)
+            u[0] = (uint8_t)(0xC0 | (cp >> 6)), u[1] = (uint8_t)(0x80 | (cp & 0x3F)), k = 2;
+        else if (cp < 0x10000)
+            u[0] = (uint8_t)(0xE0 | (cp >> 12)), u[1] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)),
+            u[2] = (uint8_t)(0x80 | (cp & 0x3F)), k = 3;
+        else
+            u[0] = (uint8_t)(0xF0 | (cp >> 18)), u[1] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F)),
+            u[2] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)), u[3] = (uint8_t)(0x80 | (cp & 0x3F)), k = 4;
+        out.append(u, k);
+    }
+    return !out.failed;
+}
+
+uint32_t characterReference(const uint8_t *s, size_t n, size_t &i) { return decodeEntity(s, n, i); }
+
 void Document::loadHtml(const uint8_t *src, size_t n, const char *charset, const StyleSheetText *sheets,
                         int nSheets, bool css)
 {

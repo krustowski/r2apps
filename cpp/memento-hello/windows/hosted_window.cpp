@@ -52,8 +52,8 @@ public:
     //  pictures: a Ctrl+V with a picture on the clipboard hands the program
     //  a PNG of it (r2web::PasteImage) rather than the clipboard's text.
     HostedWindow(const char *program, const char *title, uint32_t magic, uint32_t portBase, const char *url = nullptr,
-                 bool pictures = false)
-        : program_(program), title_(title), pictures_(pictures), magic_(magic)
+                 bool pictures = false, bool notifications = false)
+        : program_(program), title_(title), pictures_(pictures), notifications_(notifications), magic_(magic)
     {
         hostedKeepAlive();
         for (int i=0; i<8; ++i) if (!g_hostedSlots[i].block) { slot=i; break; }
@@ -69,7 +69,7 @@ public:
         web::scopy(url_,url && *url ? url : "about:home",sizeof(url_));
         if (!launch()) { r2::heap::kernel_deallocate(block); block=nullptr; }
     }
-    ~HostedWindow()
+    virtual ~HostedWindow()
     {
         if (!block) return;
         r2web::store(&block->quit,1);
@@ -84,9 +84,13 @@ public:
     const char *why() const { return error; }
     void SetWindow(PlatformWindow *w) { wnd=w; wnd->SetImmediateMode(true); }
     static void onEvent(void *p,PlatformWindowInterfaceInputEvent *e) { ((HostedWindow *)p)->event(e); }
+protected:
+    //  A child may attach window-specific information to its attention
+    //  request. The normal focus-dependent highlight is handled here.
+    virtual void onAttention(uint32_t) {}
 private:
     const char *program_, *title_;
-    bool pictures_;
+    bool pictures_, notifications_;
     uint32_t magic_, portBase_=0, width_=0, height_=0; // the block's largest frame
     char url_[r2web::TextCapacity]={};
     PlatformWindow *wnd=nullptr;
@@ -109,7 +113,11 @@ private:
         block->capacity=w*h; block->maxWidth=w; block->maxHeight=h;
         block->colours=MementoR2Impl::R2_Palette::Count();
         block->portBase=portBase_; block->front=r2web::None; block->hostBeat=1;
-        web::scopy(block->initialUrl,url_,sizeof(block->initialUrl));
+        if (notifications_) {
+            auto *q = new (block->initialUrl) r2web::NotificationQueue{};
+            r2web::store(&q->magic,r2web::NotificationMagic);
+        }
+        else web::scopy(block->initialUrl,url_,sizeof(block->initialUrl));
         char args[64]; web::scopy(args,program_,sizeof(args));
         web::scat(args," --host 0x",sizeof(args));
         size_t at=strlen(args);
@@ -183,9 +191,16 @@ private:
             char url[r2web::TextCapacity]; web::scopy(url,block->openUrl,sizeof(url));
             r2web::store(&block->openPending,0); openBrowserWindow(url);
         }
-        // Ignored while the window has the focus: it is being looked at.
-        if (r2web::load(&block->attentionPending)) {
-            r2web::store(&block->attentionPending,0); wnd->SetAttention(true);
+        // The highlight is ignored while focused; a window-specific
+        // notification can still be shown over the taskbar clock.
+        uint32_t attention=__atomic_exchange_n(&block->attentionPending,0,__ATOMIC_ACQ_REL);
+        if (attention) {
+            wnd->SetAttention(true); onAttention(attention);
+        }
+        if (notifications_) {
+            char text[r2web::NotificationTextCapacity];
+            for (uint32_t i=0; i<r2web::NotificationSlots && r2web::takeNotification(block,text); ++i)
+                MementoR2Impl::R2_Notify(text,6000);
         }
         if (r2web::load(&block->frame)!=shown) wnd->Repaint();
         uint64_t now=r2::ticks();

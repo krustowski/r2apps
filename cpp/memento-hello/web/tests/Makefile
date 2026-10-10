@@ -64,10 +64,14 @@ $(BDIR)/stb_image.o: $(WEB)/stb_image.c $(STB)/stb_image.h
 $(BDIR)/mkcacerts: $(WEB)/tools/mkcacerts.c $(BDIR)/libbearssl.a
 	gcc $(CFLAGS) $< $(BDIR)/libbearssl.a -o $@
 
-check: unit net_unit network_unit
+image_viewer_unit: image_viewer.cpp ../../windows/image_viewer_window.cpp $(WEB)/wbase.cpp $(WEB)/image.cpp $(WEB)/png.cpp $(WEB)/image.h $(WEB)/wbase.h $(WEB)/png.h $(BDIR)/stb_image.o
+	g++ $(CXXFLAGS) image_viewer.cpp $(WEB)/wbase.cpp $(WEB)/image.cpp $(WEB)/png.cpp $(BDIR)/stb_image.o -o $@
+
+check: unit net_unit network_unit image_viewer_unit
 	./unit
 	./net_unit
 	./network_unit
+	./image_viewer_unit
 
 # The production r2 stack with a host implementation of its kernel calls.
 net_unit: net.cpp $(WEB)/net_r2.cpp $(WEB)/net_r2.h $(WEB)/loader.h $(WEB)/http.h $(WEB)/url.h $(WEB)/wbase.h $(WEB)/wbase.cpp $(WEB)/url.cpp $(WEB)/../netmux.h $(wildcard include/r2/*.hpp)
@@ -81,4 +85,4 @@ network_check: net_unit network_unit
 	./network_unit
 
 clean:
-	rm -rf $(BDIR) host_fetch unit net_unit network_unit
+	rm -rf $(BDIR) host_fetch unit net_unit network_unit image_viewer_unit

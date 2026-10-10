@@ -3,3 +3,4 @@ host_fetch
 unit
 /net_unit
 /network_unit
+/image_viewer_unit

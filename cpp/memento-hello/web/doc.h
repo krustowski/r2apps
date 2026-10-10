@@ -134,6 +134,13 @@ struct Control
     bool isButton() const { return type == SUBMIT || type == RESET || type == BUTTON || type == IMAGE; }
 };
 
+//  For a script engine's own HTML parser (r2web): a page's bytes as UTF-8,
+//  read in `charset` (sniffed from the page when empty) the way loadHtml
+//  reads them; and the character reference at s[i] (the '&'), which moves i
+//  past it, or 0 when there is none.
+bool pageToUtf8(const uint8_t *src, size_t n, const char *charset, Buf &out);
+uint32_t characterReference(const uint8_t *s, size_t n, size_t &i);
+
 //  A style sheet fetched separately, handed to loadHtml.
 struct StyleSheetText
 {

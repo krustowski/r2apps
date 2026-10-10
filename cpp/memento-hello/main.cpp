@@ -221,6 +221,9 @@ static bool openEditorWindow(const char *path);
 //  (windows/them_window.cpp).  False when the window could not be made.
 static bool openThemWindow(const char *path);
 
+// The floating-point cube in its own window (c/cube).
+static bool openCubeWindow(const char *path);
+
 //  The userland shell (r2sh) in a window of its own; with <script>, it runs
 //  that .BSH file first (windows/shell_window.cpp).  When it cannot be
 //  opened, g_launchError says why.
@@ -332,6 +335,7 @@ static bool openInEditor(const char *path)
 #include "windows/net_window.cpp"
 #include "windows/mount_window.cpp"
 #include "windows/file_viewer_window.cpp"
+#include "windows/image_viewer_window.cpp"
 #include "windows/chat_window.cpp"
 #include "windows/calculator_window.cpp"
 #include "windows/clock_window.cpp"
@@ -347,6 +351,7 @@ static bool openInEditor(const char *path)
 #include "windows/telegram_window.cpp"
 #include "windows/video_window.cpp"
 #include "windows/them_window.cpp"
+#include "windows/cube_window.cpp"
 #include "windows/spotify_window.cpp"
 #include "windows/desktop_window.cpp"
 
@@ -486,6 +491,7 @@ static void onLockKey() { (void)lockSession(); }
 static void desktopIdle()
 {
     ThemWindow::ReapClosed();
+    CubeWindow::ReapClosed();
     // Why a program would not start (or a window is open already): in a box
     // over the taskbar's clock, where it is seen whatever covers the desktop.
     // Here rather than where it is set, since some callers read it back.
@@ -567,7 +573,28 @@ static bool openThemWindow(const char *path)
     return true;
 }
 
+static void deleteCube(void *p) { delete (CubeWindow *)p; }
+static bool openCubeWindow(const char *path)
+{
+    if (!g_root) return false;
+    g_launchError[0] = 0;
+    CubeWindow *cube = new CubeWindow(path);
+    if (!cube) { strcpy(g_launchError, "Cube: no memory for its window."); return false; }
+    PlatformWindow *window = g_root->CreateWindow(
+        "Cube", CubeWindow::W, CubeWindow::H, CubeWindow::onEvent, cube, &g_appOpts, deleteCube, cube);
+    if (!window)
+    {
+        delete cube;
+        strcpy(g_launchError, "Cube: no room for another window.");
+        return false;
+    }
+    cube->SetWindow(window);
+    window->SetVisible(true);
+    return true;
+}
+
 static void deleteViewer(void *p) { delete (FileViewerWindow *)p; }
+static void deleteImageViewer(void *p) { delete (ImageViewerWindow *)p; }
 
 //  The userland shell in a window of its own (windows/shell_window.cpp).
 //  When it cannot be opened, g_launchError says why.
@@ -811,13 +838,32 @@ static void openApp(int kind)
 
 //
 //  The file browser asks for a viewer on the file it is sitting on. It opens
-//  as a window of its own, over the browser.
+//  as a window of its own, over the browser. Pictures use the image preview;
+//  other files use the text viewer. All Files View/Enter paths come here.
 //
 static void openFileViewer(const char *path, unsigned int size)
 {
     if (!g_root)
         return;
+    if (ImageViewerWindow::accepts(path))
+    {
+        ImageViewerWindow *w = new ImageViewerWindow(path);
+        if (!w)
+            return;
+        PlatformWindow *wnd = g_root->CreateWindow("Image", ImageViewerWindow::W, ImageViewerWindow::H,
+                                                  ImageViewerWindow::onEvent, w, &g_appOpts, deleteImageViewer, w);
+        if (!wnd)
+        {
+            delete w;
+            return;
+        }
+        w->SetWindow(wnd);
+        wnd->SetVisible(true);
+        return;
+    }
     FileViewerWindow *w = new FileViewerWindow(path, size);
+    if (!w)
+        return;
     PlatformWindow *wnd = g_root->CreateWindow("File", 290, 150, FileViewerWindow::onEvent, w, &g_appOpts, deleteViewer, w);
     if (!wnd)
     {

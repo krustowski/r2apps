@@ -9,7 +9,6 @@ namespace web {
 static const uint64_t RESOLVE_MS = 15000;
 static const uint64_t CONNECT_MS = 15000;
 static const uint64_t HANDSHAKE_MS = 30000;
-static const uint64_t IDLE_MS = 30000;
 
 static const int MAX_REDIRECTS = 8;
 
@@ -66,9 +65,14 @@ void Loader::cancel()
     fail("Stopped");
 }
 
-void Loader::start(const Url &u, bool insecure, const uint8_t *postBody, size_t postLen, const char *contentType)
+void Loader::start(const Url &u, bool insecure, const uint8_t *postBody, size_t postLen, const char *contentType,
+                   const char *method, const char *headers)
 {
     post_ = postBody != nullptr;
+    scopy(method_, method ? method : "", sizeof(method_));
+    headers_.clear();
+    if (headers)
+        headers_.appendStr(headers);
     scopy(contentType_, contentType ? contentType : "", sizeof(contentType_));
     postBody_.clear();
     if (post_ && postLen)
@@ -90,7 +94,8 @@ void Loader::begin()
     resp_.reset();
     received_ = 0;
     reqSent_ = 0;
-    if (!httpBuildRequest(url_, postBody_.data, postBody_.len, post_, request_, contentType_[0] ? contentType_ : nullptr))
+    if (!httpBuildRequest(url_, postBody_.data, postBody_.len, post_, request_, contentType_[0] ? contentType_ : nullptr,
+                          method_[0] ? method_ : nullptr, headers_.len ? headers_.cstr() : nullptr))
     {
         fail("The address is too long");
         return;
@@ -163,6 +168,8 @@ void Loader::finishResponse()
         {
             post_ = false;
             postBody_.clear();
+            if (strcmp(method_, "HEAD"))
+                method_[0] = 0;
         }
         begin();
         return;
@@ -439,7 +446,7 @@ void Loader::step()
         now = now_ms();
         if (phase_ == HANDSHAKE && now - phaseStart_ > HANDSHAKE_MS)
             fail("Secure connection failed", "the handshake timed out");
-        else if (now - lastActivity_ > IDLE_MS)
+        else if (now - lastActivity_ > idleMs_)
             fail("The server stopped answering");
         else if (phase_ == RESPONSE && received_)
         {

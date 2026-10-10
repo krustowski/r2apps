@@ -18,8 +18,11 @@
 //          script, in a Shell window), Set as wallpaper (a .PNG), View, Edit,
 //          Copy, Move, Delete, and so on
 //
+// Enter on CUBE.ELF opens the floating-point animation in its own window.
 // Enter on an .EXE or .COM runs it in theM, the DOS emulator, in a window of
 // its own (windows/them_window.cpp); on anything else it opens the viewer.
+// View (F3 or the menu) previews PNG/JPEG/GIF/BMP in an Image window, and
+// opens other files in the text viewer. Enter/click uses the same preview.
 //
 // Only the floppy and the RAM disk can be written; the CD, the archive and the
 // root are read-only, so from them Copy is the one operation there is.
@@ -150,6 +153,7 @@ private:
     // ── The context menu ────────────────────────────────────────────────────
     enum MenuCmd
     {
+        M_RUN_CUBE,
         M_RUN_THEM,
         M_RUN_SHELL,
         M_WALLPAPER,
@@ -615,6 +619,26 @@ private:
         return (x[0] == 'e' && x[1] == 'x' && x[2] == 'e') || (x[0] == 'c' && x[1] == 'o' && x[2] == 'm');
     }
 
+    // Only the cube implements this hosted protocol; other ELF files keep
+    // their existing View action.
+    static bool isCube(const VfsDirEntry_T &e)
+    {
+        static const char name[] = "CUBE.ELF";
+        if (e.is_dir || e.name_len != sizeof(name) - 1) return false;
+        for (unsigned i = 0; i < sizeof(name) - 1; i++)
+            if (upper((char)e.name[i]) != name[i]) return false;
+        return true;
+    }
+
+    void runCube(const char *path)
+    {
+        if (!openCubeWindow(path))
+        {
+            copyStr(note, sizeof(note), g_launchError[0] ? g_launchError : "Cube: could not open its window.");
+            wnd->Repaint();
+        }
+    }
+
     // A script for the shell (bsh): .BSH.
     static bool isScript(const VfsDirEntry_T &e)
     {
@@ -692,6 +716,8 @@ private:
                 addItem(M_OPEN, "Open", "Enter", 'O');
             else
             {
+                if (isCube(e))
+                    addItem(M_RUN_CUBE, "Run cube in window", "Enter", 'R');
                 if (isProgram(e))
                     addItem(M_RUN_THEM, "Run in theM", "Enter", 'R');
                 if (isScript(e))
@@ -738,6 +764,10 @@ private:
         int ei = (!p.atMounts && p.sel > 0) ? p.order[p.sel - 1] : -1;
         switch (c)
         {
+        case M_RUN_CUBE:
+            if (ei >= 0 && ei < p.nEntries)
+                runCube(entryPath(p, ei));
+            break;
         case M_RUN_THEM:
             if (ei >= 0 && ei < p.nEntries)
                 runInThem(entryPath(p, ei));
@@ -872,6 +902,11 @@ private:
         {
             goInto(p, ei);
             wnd->Repaint();
+            return;
+        }
+        if (isCube(p.entries[ei]))
+        {
+            runCube(entryPath(p, ei));
             return;
         }
         if (isProgram(p.entries[ei]))

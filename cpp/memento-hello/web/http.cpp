@@ -2,12 +2,21 @@
 
 namespace web {
 
-bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool post, Buf &req, const char *contentType)
+bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool post, Buf &req, const char *contentType,
+                      const char *method, const char *extraHeaders)
 {
     char out[Url::PATH_CAP + Url::HOST_CAP + 512];
     size_t cap = sizeof(out);
     out[0] = 0;
-    scat(out, post ? "POST " : "GET ", cap);
+    if (method && method[0])
+    {
+        //  Any method sends what body there is; a GET or HEAD has none.
+        post = bodyLen > 0 || post;
+        scat(out, method, cap);
+        scat(out, " ", cap);
+    }
+    else
+        scat(out, post ? "POST " : "GET ", cap);
     scat(out, u.path, cap);
     scat(out, " HTTP/1.1\r\nHost: ", cap);
     scat(out, u.host, cap);
@@ -23,14 +32,21 @@ bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool po
         scat(out, "\r\nContent-Length: ", cap);
         scatInt(out, (long)bodyLen, cap);
     }
+    bool ownAccept = false;
+    for (const char *h = extraHeaders; h && *h;)
+    {
+        if (istarts(h, "accept:"))
+            ownAccept = true;
+        const char *nl = strchr(h, '\n');
+        h = nl ? nl + 1 : "";
+    }
+    scat(out, "\r\nUser-Agent: r2web/0.1 (rou2exOS; Memento)\r\n", cap);
+    if (!ownAccept)
+        scat(out, "Accept: text/html,text/plain;q=0.9,*/*;q=0.1\r\n", cap);
     scat(out,
-         "\r\n"
-         "User-Agent: r2web/0.1 (rou2exOS; Memento)\r\n"
-         "Accept: text/html,text/plain;q=0.9,*/*;q=0.1\r\n"
          "Accept-Language: en,cs;q=0.8\r\n"
          "Accept-Encoding: identity\r\n"
-         "Connection: close\r\n"
-         "\r\n",
+         "Connection: close\r\n",
          cap);
     size_t n = strlen(out);
     //  A request that filled the buffer was cut somewhere, and a cut request
@@ -39,6 +55,9 @@ bool httpBuildRequest(const Url &u, const uint8_t *body, size_t bodyLen, bool po
         return false;
     req.clear();
     req.append(out, n);
+    if (extraHeaders)
+        req.appendStr(extraHeaders);
+    req.append("\r\n", 2);
     if (post && bodyLen)
         req.append(body, bodyLen);
     return !req.failed;
@@ -52,7 +71,9 @@ void HttpResponse::reset()
     error[0] = 0;
     body.release();
     head_.release();
+    rawHead.release();
     contentLength_ = -1;
+    consumed_ = 0;
     chunked_ = false;
     chunkState_ = CH_SIZE;
     chunkLeft_ = 0;
@@ -236,6 +257,8 @@ void HttpResponse::feed(const uint8_t *data, size_t n)
                 head_.data[l - 2] == '\r' && head_.data[l - 1] == '\n')
             {
                 head_.len -= 2; // keep the last header's CRLF, drop the blank line
+                rawHead.clear();
+                rawHead.append(head_.data, head_.len);
                 parseHead();
                 if (failed)
                     return;
@@ -259,11 +282,11 @@ void HttpResponse::feed(const uint8_t *data, size_t n)
     {
         if (contentLength_ >= 0)
         {
-            size_t want = (size_t)contentLength_ - body.len;
+            size_t want = (size_t)contentLength_ - (body.len + consumed_);
             if (n > want)
                 n = want;
             takeBody(data, n);
-            if (body.len >= (size_t)contentLength_)
+            if (body.len + consumed_ >= (size_t)contentLength_)
                 done = true;
         }
         else
@@ -365,9 +388,20 @@ void HttpResponse::onEof()
     }
     //  A body with no length ends here.  One with a length, or a chunked one,
     //  that ends here was cut short --- show what came, but say so.
-    if (chunked_ || (contentLength_ >= 0 && body.len < (size_t)contentLength_))
+    if (chunked_ || (contentLength_ >= 0 && body.len + consumed_ < (size_t)contentLength_))
         truncated = true;
     done = true;
+}
+
+void HttpResponse::consume(size_t n)
+{
+    if (n > body.len)
+        n = body.len;
+    if (!n)
+        return;
+    memmove(body.data, body.data + n, body.len - n);
+    body.len -= n;
+    consumed_ += n;
 }
 
 } // namespace web

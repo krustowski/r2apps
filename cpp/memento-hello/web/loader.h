@@ -75,9 +75,13 @@ public:
     //  `contentType` is the body's; form data when null (multipart for an
     //  upload).
     void start(const Url &u, bool insecure, const uint8_t *postBody = nullptr, size_t postLen = 0,
-               const char *contentType = nullptr);
+               const char *contentType = nullptr, const char *method = nullptr, const char *headers = nullptr);
     void step();
     void cancel();
+
+    //  How long the server may stay silent before the load fails (30 s); a
+    //  script's event stream waits longer between events.
+    void setIdleTimeout(uint64_t ms) { idleMs_ = ms; }
 
     Phase phase() const { return phase_; }
     bool busy() const { return phase_ != IDLE && phase_ != DONE && phase_ != FAILED; }
@@ -121,6 +125,9 @@ private:
     bool post_ = false;
     Buf postBody_{true};
     char contentType_[96] = {};
+    char method_[12] = {};
+    Buf headers_;
+    uint64_t idleMs_ = 30000;
 
     HttpResponse resp_;
     size_t received_ = 0;

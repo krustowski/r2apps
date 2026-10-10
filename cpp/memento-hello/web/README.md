@@ -42,8 +42,9 @@ Headings (h1 and h2 at twice the size), paragraphs, lists (bullets, circles,
 numbers), block quotes, definition lists, `<pre>`, tables read row by row,
 links (underlined, walkable with Tab), bold (the font has none: the glyphs are
 drawn twice, one pixel apart), colours, horizontal rules, pictures, and
-forms.  `<script>` is skipped by this renderer; r2web runs classic scripts separately
-through MuJS and a small DOM adapter before laying out their output. `<svg>`
+forms.  `<script>` is skipped by this renderer; r2web runs scripts separately
+(QuickJS through libjsr2, with a DOM of its own) and lays out the HTML that DOM
+serialises. `<svg>`
 and friends are skipped. See [r2web's JavaScript API](../../r2web/README.md#javascript).
 
 Text is decoded from UTF-8, windows-1252/ISO-8859-1, windows-1250 and
@@ -84,6 +85,16 @@ An address that answers with `image/*` shows that picture alone, and
 `file:` addresses (or a bare `/mnt/...` path) open pictures, `.htm` pages and
 text from the disks; a page's relative pictures and links are then files
 beside it.
+
+Memento's Files window also uses this decoder directly: View (F3 or the
+context menu), Enter, or clicking the selected PNG/JPEG/GIF/BMP opens an
+Image window. Extensions are case insensitive. Each preview keeps its own
+pixels, fits the whole picture to the window without enlarging it, and
+adapts to resizing or maximizing. Transparency is shown over black; GIFs
+show their first frame. Back, Enter, or Escape closes the preview. The
+compressed file is limited to 32 MiB, with the decoder's six-million-pixel
+limit still applying; unreadable or damaged images show an error in the
+preview.
 
 ## Uploads
 
