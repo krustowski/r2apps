@@ -36,13 +36,14 @@ const (
 
 	// Photos: those still to fetch, and the decoded ones, each kept for the
 	// message it belongs to.
-	maxWanted   = 8
-	maxPhotos   = 8
-	photoMaxH   = 200             // pixels
-	gifBudget   = 2 * 1024 * 1024 // the frames of one GIF, at most
-	gifMaxBytes = 3 * 1024 * 1024 // a bigger file is shown by Telegram's still
-	maxAnimated = 3               // GIFs that move at once
-	maxGifRefs  = 16              // GIFs of recent messages, for Copy GIF
+	maxWanted     = 8
+	maxPhotos     = 8
+	photoMaxH     = 200             // pixels
+	gifBudget     = 2 * 1024 * 1024 // the frames of one GIF, at most
+	gifMaxBytes   = 3 * 1024 * 1024 // a bigger file is shown by Telegram's still
+	maxScreenshot = 8 * 1024 * 1024
+	maxAnimated   = 3  // GIFs that move at once
+	maxGifRefs    = 16 // GIFs of recent messages, for Copy GIF
 )
 
 // Geometry, in pixels: Memento draws a window at 2 pixels a unit, and its
@@ -178,6 +179,7 @@ type App struct {
 	copyText  func(string) bool // onto Memento's clipboard
 	attention func()
 	closeWin  func()
+	log       func(string) // a line for the diagnostic log
 	colours   int
 
 	dirty bool // to be painted again
@@ -204,7 +206,7 @@ type App struct {
 	// A screenshot pasted in (PNG), waiting for Enter; and one on its way.
 	attachment         []byte
 	attachW, attachH   int
-	photoBody          []byte
+	photoBody          [][]byte
 	photoQueued        bool
 	photoChat          int
 	photoCaption       string
@@ -238,7 +240,7 @@ type App struct {
 }
 
 func newApp() *App {
-	a := &App{api: "https://api.telegram.org", setup: true, cur: -1, menuSeq: -1, replyChat: -1, replySeq: -1,
+	a := &App{log: func(string) {}, api: "https://api.telegram.org", setup: true, cur: -1, menuSeq: -1, replyChat: -1, replySeq: -1,
 		mp4Seq: -1, width: 600, height: 340, msgW: 400, visibleRows: 1, dirty: true,
 		lines: make([]line, 0, textCap)}
 	for i := range a.photos {
@@ -1037,6 +1039,7 @@ func (a *App) photoArrived(data []byte) {
 		} else {
 			a.say("Photo: " + err.Error())
 		}
+		a.log(a.status)
 	}
 	a.attach(slot, w.seq)
 }
@@ -1059,6 +1062,7 @@ func (a *App) mp4Arrived(data []byte) {
 	}
 	if err := a.mp4.Start(data, a.pictureMaxW(), photoMaxH, a.colours, 0xFFFFFF, gifBudget); err != nil {
 		a.say("GIF: " + err.Error())
+		a.log(a.status)
 		return
 	}
 	a.mp4Seq = a.wanted[0].seq
@@ -1124,11 +1128,17 @@ func (a *App) keepAnimations(keep int) {
 
 // ── Requests ───────────────────────────────────────────────────────────────
 
-func (a *App) begin(r request, method, query string, body []byte, contentType string) {
+func (a *App) begin(r request, method, query string, body [][]byte, contentType string) {
 	a.request = r
 	a.submit(job{kind: r, api: a.api, path: "/bot" + a.token + "/" + method + query, body: body,
 		contentType: contentType})
 }
+
+func form(s string) [][]byte { return [][]byte{[]byte(s)} }
+
+// What each request is called in the log: never its path, which has the
+// token in it.
+var requestNames = [...]string{"", "getMe", "getUpdates", "send", "getFile", "file", "sendPhoto", "react"}
 
 // startNext is whatever is to go out next, else the long poll.
 func (a *App) startNext() {
@@ -1167,7 +1177,7 @@ func (a *App) startNext() {
 		if gif {
 			method = "sendAnimation"
 		}
-		a.begin(rqSend, method, "", []byte(body.String()), "")
+		a.begin(rqSend, method, "", form(body.String()), "")
 		return
 	}
 	if len(a.reactOut) > 0 {
@@ -1178,7 +1188,7 @@ func (a *App) startNext() {
 		}
 		body := "chat_id=" + a.chats[r.chat].id + "&message_id=" + strconv.FormatInt(r.msgID, 10) +
 			"&reaction=" + formEncode(json)
-		a.begin(rqReact, "setMessageReaction", "", []byte(body), "")
+		a.begin(rqReact, "setMessageReaction", "", form(body), "")
 		return
 	}
 	if a.photoQueued {
@@ -1265,8 +1275,22 @@ func (a *App) idle() {
 
 // finished takes the answer to the request in flight.
 func (a *App) finished(r result) {
+	defer r.free()
 	was := a.request
 	a.request = rqNone
+	line := requestNames[r.kind] + " " + strconv.FormatUint(r.took, 10) + " ms"
+	if r.fresh {
+		line += " (new connection)"
+	}
+	if r.err != nil {
+		line += ": " + r.err.Error()
+	} else {
+		line += ": HTTP " + strconv.Itoa(r.status) + ", " + strconv.Itoa(len(r.body)) + " bytes"
+	}
+	// A long poll that brought nothing would push everything else out.
+	if !(r.kind == rqPoll && r.err == nil && r.status == 200 && len(r.body) < 64 && !r.fresh) {
+		a.log(line)
+	}
 	if a.stale {
 		a.stale = false
 		return
@@ -1560,11 +1584,15 @@ func (a *App) paste(clip clipboard) {
 }
 
 // attachScreenshot attaches the clipboard's picture, a PNG of n bytes
-// Memento wrote at path, to go out with the next Enter.
+// Memento wrote at path, to go out with the next Enter.  What lies past n
+// in the file is an older, longer file's.
 func (a *App) attachScreenshot(path string, n int) {
-	png, err := a.readFile(path, 4*1024*1024)
-	if err == nil && n > 0 && n <= len(png) {
-		png = png[:n] // what is past it is an older, longer file's
+	if n <= 0 || n > maxScreenshot {
+		n = maxScreenshot
+	}
+	png, err := a.readFile(path, n)
+	if err != nil {
+		a.log("screenshot " + path + ": " + err.Error())
 	}
 	if err != nil || len(png) < 24 || string(png[1:4]) != "PNG" {
 		a.say("The screenshot could not be read.")

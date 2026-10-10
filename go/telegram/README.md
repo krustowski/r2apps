@@ -82,15 +82,22 @@ attention.  telegram.elf draws at Memento's 2 pixels a unit with Memento's own
 `make gen`), in the 16 EGA colours, which mean the same on the VGA and on the
 graphics kernel's 256-colour framebuffer.
 
-**The network.**  One request at a time, each on a connection of its own:
-`getMe` once, then `getUpdates?timeout=20`, a long poll the server holds until
-something arrives.  What is typed or picked (`sendMessage`, `sendAnimation`,
+**The network.**  One request at a time: `getMe` once, then
+`getUpdates?timeout=20`, a long poll the server holds until something
+arrives.  What is typed or picked (`sendMessage`, `sendAnimation`,
 `sendPhoto`, `setMessageReaction`) stops a poll in progress; its updates come
-again, since the offset only moves past what has been read.  The worker owns
-the r2net stack (r2net is driven from one goroutine) and the client's
-goroutine runs while it waits.  It takes four TCP ports from the 32 Memento
-sets aside for the window's slot (`48000 + slot*32`), so it runs alongside the
-Web and Spotify windows.
+again, since the offset only moves past what has been read.  One connection
+is kept from one request to the next (HTTP/1.1 keep-alive), so the TLS
+handshake --- seconds on a slow machine, and the step most likely to fail ---
+happens once rather than with every request; a poll stopped half way takes its
+connection with it, and a kept connection the server has closed is replaced
+(a GET goes again; a POST only when nothing at all came back).  The worker owns
+the r2net stack (r2net is driven from one goroutine) and the client's goroutine
+runs while it waits.  It takes four TCP ports from the 32 Memento sets aside for
+the window's slot (`48000 + slot*32`), so it runs alongside the Web and Spotify
+windows, and opens its stack again after a connection that could not be made:
+a stack opened before `eth` had published the address and DNS server would
+otherwise never learn them.
 
 **Pictures.**  A photo is fetched at the size nearest 320 pixels wide and
 dithered into the screen's colours (`media`, which is Memento's
@@ -106,15 +113,27 @@ Telegram window asks for pictures, so a Ctrl+V in it writes a PNG of the
 clipboard to `/mnt/tmp/CLIP.PNG` and tells telegram.elf where and how long it
 is (`r2web::PasteImage`), which sends it with `sendPhoto`.
 
+## When something goes wrong
+
+A request that fails says why on the status line and is tried again after
+five seconds.  `/mnt/tmp/TELEGRAM.LOG` (Memento's Files window, F3) keeps the
+last requests --- what each took, whether it needed a new connection, how it
+ended --- with the Go heap at the time, and a crash's last words; requests are
+logged by method only, never by path, which holds the token.
+
+Should telegram.elf end anyway, its window says why (a panic's message, or
+where it crashed) and Enter starts it again in the same window.
+
 ## Files
 
 | File | |
 | ---- | --- |
 | `main.go` | r2: attach to the window, the loop, the worker. |
+| `diag_r2.go` | The diagnostic log and the crash capture. |
 | `app.go` | The client: token, chats, messages, menu, keys, which request is next. |
 | `paint.go`, `canvas.go` | Drawing the window. |
 | `json.go`, `text.go` | The Bot API's JSON read straight into code page 437, with code marks; layout. |
-| `api.go`, `net.go`, `net_r2.go` | What goes out, HTTP over a connection, the network worker. |
+| `api.go`, `net.go`, `net_r2.go` | What goes out, HTTP over a kept connection, the network worker. |
 | `media/` | Pictures, GIFs and MP4s; `native/media.c` is the C bridge to stb_image and h264bsd. |
 | `font.go`, `charmap.go`, `tools/gen.go` | Memento's font and Unicode map, generated. |
 | `host.h` | The magic Memento's window uses. |

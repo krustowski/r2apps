@@ -26,6 +26,11 @@ var (
 	ErrNoFrames   = errors.New("no pictures in it")
 )
 
+// Alloc is n bytes outside the Go heap (the kernel's user heap on r2), nil
+// when there is no room for them; Free gives them back.
+func Alloc(n int) []byte { return alloc(n) }
+func Free(b []byte)      { release(b) }
+
 // Picture is W x H palette indices, row by row.
 type Picture struct {
 	W, H int

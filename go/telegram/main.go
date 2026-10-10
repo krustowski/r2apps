@@ -20,6 +20,7 @@ func main() {
 		fmt.Println("telegram.elf is started by Memento's Telegram window.")
 		return
 	}
+	startLog(host)
 	w := newWorker(host.PortBase())
 	go w.run()
 
@@ -35,6 +36,7 @@ func main() {
 	a.copyText = host.Copy
 	a.attention = host.Attention
 	a.closeWin = func() { quit = true }
+	a.log = logLine
 	if mw, mh := host.MaxSize(); mw < a.width || mh < a.height {
 		a.width, a.height = min(mw, a.width), min(mh, a.height)
 	}
@@ -66,16 +68,31 @@ func main() {
 	host.Close()
 }
 
+// readFile reads at most limit bytes of a file, a piece at a time: the
+// room for a big one is only taken as it turns out to be big.
 func readFile(path string, limit int) ([]byte, error) {
-	buf := make([]byte, limit+1)
-	n, err := r2.ReadFileAt(path, buf, 0)
-	if err != nil {
-		return nil, err
+	const piece = 64 * 1024
+	var out []byte
+	for len(out) < limit {
+		n := min(limit-len(out), piece)
+		if cap(out)-len(out) < n {
+			grown := make([]byte, len(out), min(limit, max(2*cap(out), len(out)+n)))
+			copy(grown, out)
+			out = grown
+		}
+		got, err := r2.ReadFileAt(path, out[len(out):len(out)+n], uint64(len(out)))
+		if err != nil {
+			if len(out) == 0 {
+				return nil, err
+			}
+			break
+		}
+		out = out[:len(out)+got]
+		if got < n {
+			break
+		}
 	}
-	if n > limit {
-		return nil, fmt.Errorf("%s is too big", path)
-	}
-	return buf[:n], nil
+	return out, nil
 }
 
 // systemUser is who is at the keyboard, as the kernel has it: the login

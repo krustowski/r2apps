@@ -8,8 +8,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	r2 "github.com/krustowski/rou2exOS-apps/go/libgor2"
 	"github.com/krustowski/rou2exOS-apps/go/r2net"
 	"github.com/krustowski/rou2exOS-apps/go/r2tls"
+	"github.com/krustowski/rou2exOS-apps/go/telegram/media"
 )
 
 // worker owns the network stack: r2net drives it from one goroutine, this
@@ -23,10 +25,13 @@ type worker struct {
 	portBase uint16
 	stack    *r2net.Stack
 	tls      *r2tls.Client
+	c        client
 }
 
 func newWorker(portBase uint16) *worker {
-	return &worker{jobs: make(chan job, 1), results: make(chan result, 1), done: make(chan struct{}), portBase: portBase}
+	w := &worker{jobs: make(chan job, 1), results: make(chan result, 1), done: make(chan struct{}), portBase: portBase}
+	w.c = client{dial: w.dial, now: r2.Ticks, alloc: media.Alloc, free: media.Free}
+	return w
 }
 
 // check runs inside every wait of the stack and the TLS engine.
@@ -47,6 +52,7 @@ func (w *worker) cancel() { atomic.StoreUint32(&w.stop, 1) }
 
 func (w *worker) run() {
 	defer func() {
+		w.c.drop()
 		if w.stack != nil {
 			w.stack.Close()
 		}
@@ -55,10 +61,20 @@ func (w *worker) run() {
 		select {
 		case j := <-w.jobs:
 			atomic.StoreUint32(&w.stop, 0)
-			r := exchange(w.dial, j)
+			r := w.c.do(j)
+			// A connection that could not be made may be the stack's fault:
+			// opened before the Ethernet driver had published its address
+			// and DNS server, it never learns them.  The next request opens
+			// it again, unless this process is the driver itself.
+			if r.err != nil && r.fresh && !errors.Is(r.err, errStopped) && w.stack != nil && !w.stack.CanICMP() {
+				w.c.drop()
+				w.stack.Close()
+				w.stack, w.tls = nil, nil
+			}
 			select {
 			case w.results <- r:
 			case <-w.done:
+				r.free()
 				return
 			}
 		case <-w.done:

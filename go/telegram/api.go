@@ -108,8 +108,8 @@ func codeEntities(in string) (string, string) {
 }
 
 // photoBody is sendPhoto's body: the chat, the caption and the PNG, as
-// multipart/form-data.
-func photoBody(chatID, caption string, reply int64, png []byte) []byte {
+// multipart/form-data, in parts so that the PNG is not copied.
+func photoBody(chatID, caption string, reply int64, png []byte) [][]byte {
 	var b strings.Builder
 	part := func(name, extra string) {
 		b.WriteString("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + name + "\"" + extra + "\r\n\r\n")
@@ -125,8 +125,5 @@ func photoBody(chatID, caption string, reply int64, png []byte) []byte {
 		b.WriteString(`{"message_id":` + strconv.FormatInt(reply, 10) + `,"allow_sending_without_reply":true}` + "\r\n")
 	}
 	part("photo", "; filename=\"screenshot.png\"\r\nContent-Type: image/png")
-	out := make([]byte, 0, b.Len()+len(png)+len(boundary)+8)
-	out = append(out, b.String()...)
-	out = append(out, png...)
-	return append(out, "\r\n--"+boundary+"--\r\n"...)
+	return [][]byte{[]byte(b.String()), png, []byte("\r\n--" + boundary + "--\r\n")}
 }

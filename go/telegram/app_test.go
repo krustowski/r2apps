@@ -38,7 +38,7 @@ func newFake(t *testing.T) (*App, *fake) {
 		if !ok {
 			return nil, errors.New("no such file")
 		}
-		return b, nil
+		return b[:min(len(b), limit)], nil
 	}
 	a.writeFile = func(path string, data []byte) error { f.files[path] = append([]byte(nil), data...); return nil }
 	a.user = func() string { return "krusty" }
@@ -67,6 +67,15 @@ func method(j job) string {
 		p = p[:i]
 	}
 	return p
+}
+
+// jbody is a job's body, its parts together.
+func jbody(j job) string {
+	var b strings.Builder
+	for _, p := range j.body {
+		b.Write(p)
+	}
+	return b.String()
 }
 
 func keyChar(c byte) *hosted.Key { return &hosted.Key{Down: true, IsChar: true, Char: c} }
@@ -179,10 +188,10 @@ func TestSendInterruptsThePoll(t *testing.T) {
 		t.Fatalf("the stopped poll said %q", a.status)
 	}
 	j := f.next(a)
-	form, _ := url.ParseQuery(string(j.body))
+	form, _ := url.ParseQuery(jbody(j))
 	if method(j) != "sendMessage" || form.Get("chat_id") != "5" || form.Get("text") != "see x and y" ||
 		form.Get("entities") != `[{"type":"code","offset":4,"length":1},{"type":"pre","offset":10,"length":1}]` {
-		t.Fatalf("sent %s %q", method(j), j.body)
+		t.Fatalf("sent %s %q", method(j), jbody(j))
 	}
 	a.finished(ok(`{"message_id":8,"from":{"id":1,"is_bot":true,"first_name":"R2","username":"r2bot"},` +
 		`"chat":{"id":5,"first_name":"Alice"},"text":"see x and y"}`))
@@ -213,9 +222,9 @@ func TestMenuReactAndReply(t *testing.T) {
 		t.Fatal("no reaction queued")
 	}
 	j := f.next(a)
-	form, _ := url.ParseQuery(string(j.body))
+	form, _ := url.ParseQuery(jbody(j))
 	if method(j) != "setMessageReaction" || form.Get("message_id") != "7" || form.Get("reaction") != `[{"type":"emoji","emoji":"🔥"}]` {
-		t.Fatalf("reaction %q", j.body)
+		t.Fatalf("reaction %q", jbody(j))
 	}
 	a.finished(ok("true"))
 	if a.msgAt(0).myReact != 3 || reactLine(a.msgAt(0)) != "   me: fire" {
@@ -244,8 +253,8 @@ func TestMenuReactAndReply(t *testing.T) {
 	typeText(a, "yes")
 	a.key(&hosted.Key{Down: true, Enter: true}, clipboard{})
 	j = f.next(a)
-	if form, _ := url.ParseQuery(string(j.body)); form.Get("reply_parameters") != `{"message_id":7,"allow_sending_without_reply":true}` {
-		t.Fatalf("reply %q", j.body)
+	if form, _ := url.ParseQuery(jbody(j)); form.Get("reply_parameters") != `{"message_id":7,"allow_sending_without_reply":true}` {
+		t.Fatalf("reply %q", jbody(j))
 	}
 }
 
@@ -276,9 +285,9 @@ func TestCopyPaste(t *testing.T) {
 	a.key(&hosted.Key{Down: true, Enter: true}, clipboard{})
 	for i := 0; i < 2; i++ { // the pictures wanted go after what is typed
 		if j := f.next(a); method(j) == "sendAnimation" {
-			form, _ := url.ParseQuery(string(j.body))
+			form, _ := url.ParseQuery(jbody(j))
 			if form.Get("animation") != "GIFID" || form.Get("caption") != "again" {
-				t.Fatalf("GIF sent as %q", j.body)
+				t.Fatalf("GIF sent as %q", jbody(j))
 			}
 			return
 		}
@@ -300,9 +309,9 @@ func TestScreenshot(t *testing.T) {
 	a.key(&hosted.Key{Down: true, Enter: true}, clipboard{})
 	j := f.next(a)
 	if method(j) != "sendPhoto" || !strings.HasPrefix(j.contentType, "multipart/form-data; boundary=") ||
-		!strings.Contains(string(j.body), "name=\"caption\"\r\n\r\nlook\r\n") || !strings.Contains(string(j.body), string(pngData)) ||
-		strings.Contains(string(j.body), "stale") {
-		t.Fatalf("photo body %q", j.body)
+		!strings.Contains(jbody(j), "name=\"caption\"\r\n\r\nlook\r\n") || !strings.Contains(jbody(j), string(pngData)) ||
+		strings.Contains(jbody(j), "stale") {
+		t.Fatalf("photo body %q", jbody(j))
 	}
 }
 
