@@ -1,71 +1,131 @@
 #pragma once
 #include "../memento-hello/web/doc.h"
-#include "../third_party/mujs/mujs.h"
+#include "../memento-hello/web/loader.h"
+#include "jsr2.h"
 
 namespace web {
-// A deliberately small browser API around an ES5 interpreter. Rendering CSS
-// or pictures again never executes the page's scripts again.
-class ScriptPage {
+
+//
+//  A page's scripts: libjsr2's engine (QuickJS, the event loop, the Web
+//  APIs) with r2web's DOM, js/dom.js, built from the page.
+//
+//  The DOM is the page from the moment its scripts start: the browser lays
+//  out what render() hands it, HTML in which every link and control carries
+//  onclick="r2:N", and passes what the user does to node N back here
+//  (click, input, state, submitFrom).  Pages without scripts or inline
+//  handlers never start an engine.
+//
+//  Between the user's actions the page runs on its own: tick() from the
+//  browser's idle loop runs its timers, animation frames and network
+//  (fetch, XMLHttpRequest, EventSource, and the scripts it adds itself), on
+//  connections of its own (ScriptNet in script.cpp) next to the browser's.
+//
+class ScriptNet;
+
+class ScriptPage
+{
 public:
-    static constexpr size_t HeapLimit = 2*1024*1024, PageLimit = 768*1024;
-    static constexpr int MaxScripts = 16;
-    ScriptPage() = default;
-    ~ScriptPage() { clear(); }
+    static constexpr size_t HeapLimit = 12u << 20;
+    static constexpr size_t PageLimit = 768 * 1024;
+    static constexpr int MaxScripts = 64;
+
+    ScriptPage();
+    ~ScriptPage();
     ScriptPage(const ScriptPage &) = delete;
     ScriptPage &operator=(const ScriptPage &) = delete;
+
     void clear();
-    bool start(Buf &html, Document &doc, const char *url);
-    int count() const { return nScripts; }
-    const char *source(int i) { return code.cstr()+scripts[i].source; }
-    const char *src(int i) const { return scripts[i].url; }
-    bool eval(const char *source, const char *thisId = nullptr);
-    bool click(const char *handler, const char *id);
-    bool changed() const { return dirty; }
-    void rendered() { dirty = false; }
-    const char *error() const { return diagnostic; }
-    const char *navigation() const { return nextUrl; }
-    void clearNavigation() { nextUrl[0] = 0; }
-    size_t heapBytes() const { return used; }
-    void poll();
+    //  The DOM from the page (its bytes, in `charset` or sniffed); false when
+    //  it has no scripts or handlers, or the engine could not start.
+    bool start(const Buf &html, const char *charset, const char *url);
+    bool active() const;
+
+    //  The page's own scripts, in document order.
+    int count() const { return nScripts_; }
+    const char *src(int i) const { return scripts_[i].url; }
+    const char *source(int i) { return code_.cstr() + scripts_[i].source; }
+    bool isModule(int i) const { return scripts_[i].module; }
+    //  Runs script i with this text (its own, or what its src gave).
+    bool run(int i, const char *code, size_t len);
+    //  Every script of the page ran: DOMContentLoaded, then load.
+    void parsed();
+    //  A javascript: address.
+    bool eval(const char *source);
+
+    //  What the user did to rendered node N, from an "r2:N" handler.
+    static int nodeOf(const char *handler);
+    bool click(int node);              // true: the browser goes on with the default
+    void input(int node, const char *text);
+    void controlChanged(int node);
+    bool state(int node, bool checked, int selected);
+    bool submitFrom(int node);         // Enter in a text field; true: the browser submits
+    bool key(const char *keyName);     // true when the page took the key
+    void focus(int node);
+
+    //  The loop.
+    void tick();
+    bool busy() const;
+    //  Frames are run at the browser's paint rate (see browser.cpp).
+    bool wantsFrame() const;
+    void frame(double ms);
+
+    //  The page as HTML when it changed since the last render (or always,
+    //  when forced); its title goes to *title.
+    bool changed() const;
+    bool render(Buf &html, char *title, size_t titleCap, bool force = false);
+
+    //  What the page asked of the browser.  Each is taken once.
+    const char *error() const;
+    const char *navigation() const { return nextUrl_; }
+    bool navigationReplaces() const { return nextReplace_; }
+    void clearNavigation() { nextUrl_[0] = 0; }
+    bool takeStatus(char *out, size_t cap);
+    bool takeUrl(char *out, size_t cap);     // pushState / hash changes
+    bool takeOpen(char *out, size_t cap);    // window.open
+    int takeHistory();                       // history.go(n) past this page: n, or 0
+    struct Submit
+    {
+        char action[1200];
+        bool post;
+        Buf data;
+    };
+    bool takeSubmit(Submit &s);
+
+    //  For layout queries: the window in cells, a cell in pixels.
+    void setViewport(int cols, int rows, int cellW, int cellH, bool dark);
+    size_t heapBytes() const;
+
 private:
-    struct Script { uint32_t source; char url[1200]; } scripts[MaxScripts]{};
-    struct Allocation { Allocation *prev, *next; size_t size; };
-    struct Node { ScriptPage *page; char id[128]; };
-    struct Element { size_t start, tagEnd, innerEnd, end; char tag[24]; bool empty; };
-    js_State *J = nullptr;
-    Buf *html = nullptr;
-    Document *document = nullptr;
-    Buf code{true}, scratch{true};
-    Allocation *allocations = nullptr;
-    size_t used = 0;
-    int nScripts = 0;
-    bool dirty = false, running = false;
-    uint32_t budget = 0;
-    uint64_t deadline = 0;
-    jmp_buf abortPoint;
-    char diagnostic[128]{}, nextUrl[1200]{}, pageUrl[1200]{};
-    void destroyVM();
-    bool createVM();
-    void bind();
-    bool find(const char *id, Element &e) const;
-    bool replace(size_t first, size_t last, const char *s, size_t len);
-    void content(const Element &e, bool text);
-    bool attribute(const Element &e, const char *name, Buf &out) const;
-    bool setAttribute(const Element &e, const char *name, const char *value);
-    void node(const char *id);
-    void fail(const char *message);
-    static void *allocate(void *, void *, int);
-    static ScriptPage *self(js_State *J) { return (ScriptPage *)js_getcontext(J); }
-    static int getNode(js_State *, void *, const char *);
-    static int putNode(js_State *, void *, const char *);
-    static void freeNode(js_State *, void *);
-    static void getById(js_State *);
-    static void write(js_State *);
-    static void log(js_State *);
-    static void getTitle(js_State *);
-    static void putTitle(js_State *);
-    static void getHref(js_State *);
-    static void putHref(js_State *);
-    static void report(js_State *, const char *);
+    friend struct ScriptNatives;
+    struct Script
+    {
+        uint32_t source;
+        char url[1200];
+        bool module;
+    };
+    struct Fetch; // a script the page added, being fetched
+
+    jsr2::Engine engine_;
+    ScriptNet *net_ = nullptr;
+    JSValue bridge_ = JS_UNDEFINED;
+    Script scripts_[MaxScripts];
+    int nScripts_ = 0;
+    Buf code_{true};
+    Fetch *fetches_ = nullptr;
+    int nFetches_ = 0;
+    bool dirty_ = false;
+    char nextUrl_[1200] = {}, newUrl_[1200] = {}, openUrl_[1200] = {}, status_[160] = {};
+    bool nextReplace_ = false, haveSubmit_ = false;
+    int history_ = 0;
+    Submit submit_;
+    int vp_[5] = {80, 25, 8, 16, 0};
+    char pageUrl_[1200] = {};
+
+    bool callBridge(const char *fn, int argc, JSValueConst *argv, JSValue *result = nullptr);
+    void pollFetches();
 };
+
+//  The last 4 KiB of what page scripts logged (about:console).
+const char *scriptConsole(size_t *len);
+
 } // namespace web

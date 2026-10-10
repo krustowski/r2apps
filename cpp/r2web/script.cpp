@@ -1,412 +1,1058 @@
+//
+//  script.cpp --- ScriptPage: a page's engine, its DOM and its network.
+//  See script.h.
+//
+//  The DOM (js/dom.js, compiled into obj/gen/dom.c) is a function of two
+//  objects: the natives below as `b`, and libjsr2's helpers.  It returns the
+//  bridge whose methods this file calls (load, scripts, render, click ...).
+//
 #include "script.h"
+#include "htmlparse.h"
 #ifndef WEB_HOST
 #include "../memento-hello/web/net_r2.h"
 #endif
 
+extern "C" const uint8_t r2web_dom[];
+extern "C" const size_t r2web_dom_size;
+
 namespace web {
+
+//  ── The machine, for libjsr2 ────────────────────────────────────────────────
+
 namespace {
-ScriptPage *active = nullptr;
-struct Tag { size_t start, end; char name[24]; bool closing, empty; };
-bool nameChar(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ':' || c == '-' || c == '_'; }
-bool voidTag(const char *s) {
-    return !strcmp(s,"input") || !strcmp(s,"img") || !strcmp(s,"br") || !strcmp(s,"hr") || !strcmp(s,"meta") || !strcmp(s,"link") || !strcmp(s,"area") || !strcmp(s,"source") || !strcmp(s,"wbr") || !strcmp(s,"base") || !strcmp(s,"embed") || !strcmp(s,"param") || !strcmp(s,"col");
-}
-bool nextTag(const Buf &b, size_t &at, Tag &t)
+
+//  The last of what pages logged, for whoever wants to look (about:console).
+char g_console[4096];
+size_t g_consoleLen = 0;
+
+void logLine(int level, const char *text, size_t len)
 {
-    while (at < b.len) {
-        if (b.data[at++] != '<') continue;
-        t = {}; t.start = at-1;
-        if (at+3 <= b.len && !memcmp(b.data+at,"!--",3)) {
-            const char *end = ifind((const char *)b.data+at+3, b.len-at-3,"-->");
-            at = end ? size_t(end-(const char *)b.data)+3 : b.len; continue;
-        }
-        if (at < b.len && b.data[at] == '/') { t.closing = true; ++at; }
-        size_t first = at;
-        while (at < b.len && nameChar((char)b.data[at])) ++at;
-        if (first == at) continue;
-        scopyn(t.name,(const char *)b.data+first,at-first,sizeof(t.name));
-        for (char *p=t.name; *p; ++p) *p=lower(*p);
-        char quote=0;
-        while (at < b.len) {
-            char c=(char)b.data[at++];
-            if (quote) { if (c==quote) quote=0; }
-            else if (c=='\'' || c=='"') quote=c;
-            else if (c=='>') { t.end=at; t.empty=(at>1 && b.data[at-2]=='/') || voidTag(t.name); return true; }
-        }
+    static const char *const prefix[] = {"", "", "warn: ", "error: ", "debug: "};
+    const char *p = level >= 0 && level <= 4 ? prefix[level] : "";
+    size_t pl = strlen(p), need = pl + len + 1;
+    if (need > sizeof(g_console))
+        return;
+    if (g_consoleLen + need > sizeof(g_console))
+    {
+        size_t drop = g_consoleLen + need - sizeof(g_console);
+        memmove(g_console, g_console + drop, g_consoleLen - drop);
+        g_consoleLen -= drop;
     }
-    return false;
+    memcpy(g_console + g_consoleLen, p, pl);
+    g_consoleLen += pl;
+    memcpy(g_console + g_consoleLen, text, len);
+    g_consoleLen += len;
+    g_console[g_consoleLen++] = '\n';
 }
-// Locate attributes by token boundaries, respecting quotes and '=' in values.
-bool attrRange(const Buf &b,const Tag &t,const char *name,size_t &first,size_t &last,size_t &vs,size_t &ve)
-{
-    size_t p=t.start+1;
-    while (p<t.end && nameChar((char)b.data[p])) ++p;
-    while (p+1<t.end) {
-        while (p+1<t.end && isSpace((char)b.data[p])) ++p;
-        first=p;
-        while (p+1<t.end && nameChar((char)b.data[p])) ++p;
-        size_t nameEnd=p;
-        if (first==p) { ++p; continue; }
-        while (p+1<t.end && isSpace((char)b.data[p])) ++p;
-        vs=ve=p;
-        if (b.data[p]=='=') {
-            ++p; while (p+1<t.end && isSpace((char)b.data[p])) ++p;
-            char q=(b.data[p]=='\'' || b.data[p]=='"') ? (char)b.data[p++] : 0;
-            vs=p;
-            while (p+1<t.end && (q ? b.data[p]!=q : !isSpace((char)b.data[p]) && b.data[p]!='>')) ++p;
-            ve=p;
-            if (q && p<t.end && b.data[p]==q) ++p;
-        }
-        last=p;
-        if (strlen(name)==nameEnd-first && ieqn((const char *)b.data+first,name,nameEnd-first)) return true;
-    }
-    return false;
-}
-void decode(Buf &out,const char *s,size_t n)
-{
-    for (size_t i=0;i<n;++i) {
-        if (s[i]=='&') {
-            struct Entity { const char *name; char value; };
-            static const Entity entities[]={{"&amp;",'&'},{"&lt;",'<'},{"&gt;",'>'},{"&quot;",'"'},{"&apos;",'\''}};
-            bool found=false;
-            for (auto &e:entities) { size_t l=strlen(e.name); if (l<=n-i && !memcmp(s+i,e.name,l)) { out.push(e.value); i+=l-1; found=true; break; } }
-            if (found) continue;
-        }
-        out.push((uint8_t)s[i]);
-    }
-}
-void escape(Buf &out,const char *s) {
-    for (;*s;++s) {
-        if (*s=='&') out.appendStr("&amp;");
-        else if (*s=='<') out.appendStr("&lt;");
-        else if (*s=='>') out.appendStr("&gt;");
-        else if (*s=='"') out.appendStr("&quot;");
-        else out.push((uint8_t)*s);
-    }
-}
-size_t rawEnd(const Buf &b,const Tag &t,size_t &closing)
-{
-    char needle[28]="</"; scat(needle,t.name,sizeof(needle));
-    size_t p=t.end;
-    while (p<b.len) {
-        const char *s=ifind((const char *)b.data+p,b.len-p,needle);
-        if (!s) break;
-        p=size_t(s-(const char *)b.data);
-        size_t after=p; Tag end;
-        if (nextTag(b,after,end) && end.closing && !strcmp(end.name,t.name)) { closing=p; return after; }
-        ++p;
-    }
-    closing=b.len; return b.len;
-}
-}
-void ScriptPage::fail(const char *message) { scopy(diagnostic,message,sizeof(diagnostic)); }
-void *ScriptPage::allocate(void *ctx,void *ptr,int size)
-{
-    auto *p=(ScriptPage *)ctx;
-    auto *old=ptr ? ((Allocation *)ptr)-1 : nullptr;
-    if (size<=0) {
-        if (old) {
-            if (old->prev) old->prev->next=old->next; else p->allocations=old->next;
-            if (old->next) old->next->prev=old->prev;
-            p->used-=old->size+sizeof(Allocation); big_free(old);
-        }
-        return nullptr;
-    }
-    size_t previous=old ? old->size : 0;
-    size_t previousCost=old ? previous+sizeof(Allocation) : 0;
-    if (size_t(size)+sizeof(Allocation)>HeapLimit-(p->used-previousCost)) return nullptr;
-    auto *fresh=(Allocation *)big_alloc(sizeof(Allocation)+size);
-    if (!fresh) return nullptr;
-    fresh->size=size; fresh->prev=nullptr; fresh->next=p->allocations;
-    if (fresh->next) fresh->next->prev=fresh;
-    p->allocations=fresh; p->used+=size+sizeof(Allocation);
-    if (old) { memcpy(fresh+1,ptr,previous<size_t(size) ? previous:size_t(size)); allocate(ctx,ptr,0); }
-    return fresh+1;
-}
-void ScriptPage::destroyVM()
-{
-    running=false;
-    if (active==this) active=nullptr;
-    if (J) { js_freestate(J); J=nullptr; }
-    // Also reclaim parser temporaries abandoned by a fatal execution timeout.
-    while (allocations) { auto *next=allocations->next; big_free(allocations); allocations=next; }
-    used=0;
-}
-void ScriptPage::clear()
-{
-    destroyVM(); code.release(); scratch.release(); html=nullptr; document=nullptr;
-    nScripts=0; dirty=false; diagnostic[0]=nextUrl[0]=0;
-}
-void ScriptPage::poll()
-{
-    if (!running) return;
-    if (budget) --budget;
-    if (!budget || ((budget & 255)==0 && now_ms()>deadline)) {
-        fail("JavaScript stopped: execution limit exceeded.");
-        longjmp(abortPoint,1);
-    }
-}
-bool ScriptPage::find(const char *id,Element &e) const
-{
-    if (!html) return false;
-    size_t at=0; Tag t;
-    while (nextTag(*html,at,t)) {
-        if (t.closing) continue;
-        bool match=(id[0]=='@' && !strcmp(t.name,id+1));
-        if (id[0]!='@') {
-            size_t a,z,vs,ve;
-            match=attrRange(*html,t,"id",a,z,vs,ve) && ve-vs==strlen(id) && !memcmp(html->data+vs,id,ve-vs);
-        }
-        size_t rawClose=at;
-        bool raw=!strcmp(t.name,"script") || !strcmp(t.name,"style") || !strcmp(t.name,"textarea") || !strcmp(t.name,"title");
-        if (match) {
-            e={t.start,t.end,t.end,t.end,{},t.empty}; scopy(e.tag,t.name,sizeof(e.tag));
-            if (t.empty) return true;
-            if (raw) { e.end=rawEnd(*html,t,e.innerEnd); return true; }
-            size_t p=at; int depth=1; Tag close;
-            while (nextTag(*html,p,close)) {
-                if (!strcmp(close.name,t.name)) {
-                    if (close.closing) --depth; else if (!close.empty) ++depth;
-                    if (!depth) { e.innerEnd=close.start; e.end=close.end; return true; }
-                }
-                if (!close.closing && (!strcmp(close.name,"script") || !strcmp(close.name,"style"))) p=rawEnd(*html,close,rawClose);
-            }
-            e.innerEnd=e.end=html->len; return true;
-        }
-        if (raw) at=rawEnd(*html,t,rawClose);
-    }
-    if (!strcmp(id,"@body")) { e={0,0,html->len,html->len,{},false}; scopy(e.tag,"body",sizeof(e.tag)); return true; }
-    return false;
-}
-bool ScriptPage::attribute(const Element &e,const char *name,Buf &out) const
-{
-    out.clear(); if (!html || e.tagEnd==0) return false;
-    Tag t{}; t.start=e.start; t.end=e.tagEnd;
-    size_t a,z,vs,ve;
-    if (!attrRange(*html,t,name,a,z,vs,ve)) return false;
-    decode(out,(const char *)html->data+vs,ve-vs); return !out.failed;
-}
-bool ScriptPage::replace(size_t first,size_t last,const char *s,size_t len)
-{
-    if (!html || first>last || last>html->len || len>PageLimit || html->len-(last-first)>PageLimit-len) {
-        fail("JavaScript DOM output exceeds the page limit."); return false;
-    }
-    size_t fresh=html->len-(last-first)+len;
-    if (!html->reserve(fresh+1)) { fail("No memory for JavaScript DOM output."); return false; }
-    memmove(html->data+first+len,html->data+last,html->len-last);
-    if (len) memcpy(html->data+first,s,len);
-    html->len=fresh; html->data[fresh]=0; dirty=true; return true;
-}
-bool ScriptPage::setAttribute(const Element &e,const char *name,const char *value)
-{
-    Tag t{}; t.start=e.start; t.end=e.tagEnd;
-    size_t a,z,vs,ve;
-    bool exists=attrRange(*html,t,name,a,z,vs,ve);
-    if (!exists) { a=z=e.tagEnd-1; if (a && html->data[a-1]=='/') a=z=a-1; }
-    scratch.clear(); scratch.push(' '); scratch.appendStr(name); scratch.appendStr("=\""); escape(scratch,value); scratch.push('"');
-    return !scratch.failed && replace(a,z,scratch.cstr(),scratch.len);
-}
-void ScriptPage::content(const Element &e,bool text)
-{
-    scratch.clear();
-    if (!text) { scratch.append(html->data+e.tagEnd,e.innerEnd-e.tagEnd); return; }
-    size_t at=e.tagEnd,first=at; Tag t;
-    while (at<e.innerEnd && nextTag(*html,at,t) && t.start<e.innerEnd) {
-        decode(scratch,(const char *)html->data+first,t.start-first);
-        if (!t.closing && (!strcmp(t.name,"script") || !strcmp(t.name,"style"))) { size_t close; at=rawEnd(*html,t,close); }
-        first=at;
-    }
-    if (first<e.innerEnd) decode(scratch,(const char *)html->data+first,e.innerEnd-first);
-}
-void ScriptPage::freeNode(js_State *J,void *data) { allocate(self(J),data,0); }
-void ScriptPage::node(const char *id)
-{
-    auto *n=(Node *)allocate(this,nullptr,sizeof(Node));
-    if (!n) js_error(J,"JavaScript heap limit exceeded");
-    n->page=this; scopy(n->id,id,sizeof(n->id));
-    js_pushnull(J);
-    js_newuserdatax(J,"r2web.node",n,getNode,putNode,nullptr,freeNode);
-}
-int ScriptPage::getNode(js_State *J,void *data,const char *name)
-{
-    auto *n=(Node *)data; auto *p=n->page; Element e;
-    if (!strcmp(name,"id")) { js_pushstring(J,n->id[0]=='@' ? "":n->id); return 1; }
-    if (!p->find(n->id,e)) { js_pushundefined(J); return 1; }
-    if (!strcmp(name,"innerHTML") || !strcmp(name,"textContent") || !strcmp(name,"innerText")) {
-        p->content(e,strcmp(name,"innerHTML")!=0); js_pushstring(J,p->scratch.cstr()); return 1;
-    }
-    if (!strcmp(name,"value") || !strcmp(name,"className") || !strcmp(name,"href") || !strcmp(name,"src")) {
-        if (!strcmp(name,"value") && p->document)
-            for (int i=0;i<p->document->controlCount();++i) {
-                auto &c=p->document->control(i);
-                if (!strcmp(p->document->str(c.id),n->id) && c.isText()) { js_pushlstring(J,c.edit ? c.edit:"",c.editLen); return 1; }
-            }
-        p->attribute(e,!strcmp(name,"className") ? "class":name,p->scratch);
-        js_pushstring(J,p->scratch.cstr()); return 1;
-    }
-    return 0;
-}
-int ScriptPage::putNode(js_State *J,void *data,const char *name)
-{
-    auto *n=(Node *)data; auto *p=n->page; Element e;
-    if (!p->find(n->id,e)) return 0;
-    if (!strcmp(name,"innerHTML") || !strcmp(name,"textContent") || !strcmp(name,"innerText")) {
-        const char *value=js_tostring(J,-1);
-        if (e.empty) return 1;
-        if (!strcmp(name,"innerHTML")) p->replace(e.tagEnd,e.innerEnd,value,strlen(value));
-        else { p->scratch.clear(); escape(p->scratch,value); if (!p->scratch.failed) p->replace(e.tagEnd,e.innerEnd,p->scratch.cstr(),p->scratch.len); }
-        return 1;
-    }
-    if (!strcmp(name,"value") || !strcmp(name,"className") || !strcmp(name,"href") || !strcmp(name,"src")) {
-        const char *value=js_tostring(J,-1);
-        if (!strcmp(name,"value") && p->document)
-            for (int i=0;i<p->document->controlCount();++i) {
-                auto &c=p->document->control(i);
-                if (c.isText() && !strcmp(p->document->str(c.id),n->id)) {
-                    p->document->controlSetText(i,value);
-                }
-            }
-        p->setAttribute(e,!strcmp(name,"className") ? "class":name,value);
-        return 1;
-    }
-    return 0;
-}
-void ScriptPage::getById(js_State *J)
-{
-    auto *p=self(J); const char *id=js_tostring(J,1); Element e;
-    if (!*id || strlen(id)>=sizeof(Node::id) || !p->find(id,e)) js_pushnull(J);
-    else p->node(id);
-}
-void ScriptPage::write(js_State *J)
-{
-    auto *p=self(J); Element e;
-    if (!p->find("@body",e)) { js_pushundefined(J); return; }
-    for (int i=1;i<js_gettop(J);++i) {
-        const char *s=js_tostring(J,i);
-        size_t n=strlen(s);
-        if (!p->replace(e.innerEnd,e.innerEnd,s,n)) break;
-        e.innerEnd+=n;
-    }
-    js_pushundefined(J);
-}
-void ScriptPage::log(js_State *J)
-{
-    auto *p=self(J);
-    if (js_gettop(J)>1) p->fail(js_tostring(J,1));
-    js_pushundefined(J);
-}
-void ScriptPage::getTitle(js_State *J)
-{
-    auto *p=self(J); Element e;
-    if (p->find("@title",e)) { p->content(e,true); js_pushstring(J,p->scratch.cstr()); }
-    else js_pushstring(J,"");
-}
-void ScriptPage::putTitle(js_State *J)
-{
-    auto *p=self(J); const char *s=js_tostring(J,1); Element e;
-    bool found=p->find("@title",e);
-    p->scratch.clear();
-    if (!found) p->scratch.appendStr("<title>");
-    escape(p->scratch,s);
-    if (!found) p->scratch.appendStr("</title>");
-    if (!p->scratch.failed) p->replace(found ? e.tagEnd:0,found ? e.innerEnd:0,p->scratch.cstr(),p->scratch.len);
-    js_pushundefined(J);
-}
-void ScriptPage::getHref(js_State *J) { js_pushstring(J,self(J)->pageUrl); }
-void ScriptPage::putHref(js_State *J) { scopy(self(J)->nextUrl,js_tostring(J,1),sizeof(nextUrl)); js_pushundefined(J); }
-void ScriptPage::report(js_State *J,const char *message) { self(J)->fail(message); }
-void ScriptPage::bind()
-{
-    js_setcontext(J,this); js_setreport(J,report);
-    js_newobject(J);
-    js_newcfunction(J,getById,"getElementById",1); js_setproperty(J,-2,"getElementById");
-    js_newcfunction(J,write,"write",1); js_setproperty(J,-2,"write");
-    js_newcfunction(J,getTitle,"title",0); js_newcfunction(J,putTitle,"title",1); js_defaccessor(J,-3,"title",0);
-    node("@body"); js_setproperty(J,-2,"body");
-    js_setglobal(J,"document");
-    js_newobject(J);
-    js_newcfunction(J,getHref,"href",0); js_newcfunction(J,putHref,"href",1); js_defaccessor(J,-3,"href",0);
-    js_newcfunction(J,putHref,"assign",1); js_setproperty(J,-2,"assign");
-    js_setglobal(J,"location");
-    js_newobject(J); js_newcfunction(J,log,"log",1); js_setproperty(J,-2,"log"); js_setglobal(J,"console");
-    js_newcfunction(J,log,"alert",1); js_setglobal(J,"alert");
-    js_pushglobal(J); js_setglobal(J,"window");
-}
-bool ScriptPage::createVM()
-{
-    if (J) return true;
-    J=js_newstate(allocate,this,0);
-    if (!J) { fail("No memory for JavaScript."); destroyVM(); return false; }
-    if (js_try(J)) { fail("Cannot initialize JavaScript browser bindings."); js_pop(J,1); destroyVM(); return false; }
-    bind(); js_endtry(J); return true;
-}
-bool ScriptPage::start(Buf &body,Document &doc,const char *url)
-{
-    clear(); html=&body; document=&doc; scopy(pageUrl,url,sizeof(pageUrl));
-    size_t at=0; Tag t;
-    while (nextTag(body,at,t)) {
-        if (t.closing) continue;
-        if (!strcmp(t.name,"style") || !strcmp(t.name,"textarea") || !strcmp(t.name,"title")) { size_t close; at=rawEnd(body,t,close); continue; }
-        if (strcmp(t.name,"script")) continue;
-        size_t close; at=rawEnd(body,t,close);
-        Element e{t.start,t.end,close,at,{},false};
-        attribute(e,"type",scratch);
-        bool classic=!scratch.len || ieq(scratch.cstr(),"text/javascript") || ieq(scratch.cstr(),"application/javascript");
-        if (!classic) continue;
-        if (nScripts==MaxScripts) { fail("Only the first 16 page scripts are supported."); break; }
-        auto &s=scripts[nScripts++]; s={};
-        attribute(e,"src",scratch); scopy(s.url,scratch.cstr(),sizeof(s.url));
-        s.source=(uint32_t)code.len;
-        if (!s.url[0]) code.append(body.data+t.end,close-t.end);
-        code.push(0);
-    }
-    if (code.failed) { fail("No memory for page scripts."); nScripts=0; return false; }
-    return true;
-}
-bool ScriptPage::eval(const char *source,const char *thisId)
-{
-    if (!createVM()) return false;
-    budget=1000000; deadline=now_ms()+250; running=true; active=this;
-    if (setjmp(abortPoint)) { destroyVM(); return false; }
-    if (js_try(J)) {
-        fail(js_trystring(J,-1,"JavaScript error")); js_pop(J,1);
-        running=false; active=nullptr; return false;
-    }
-    int error=js_ploadstring(J,"page script",source);
-    if (!error) {
-        if (thisId) node(thisId); else js_pushglobal(J);
-        error=js_pcall(J,0);
-    }
-    if (error) fail(js_trystring(J,-1,"JavaScript error"));
-    js_pop(J,1); js_endtry(J); running=false; active=nullptr; return error==0;
-}
-bool ScriptPage::click(const char *handler,const char *id)
-{
-    if (!handler || !*handler) return false;
-    if (!createVM()) return true;
-    budget=1000000; deadline=now_ms()+250; running=true; active=this;
-    if (setjmp(abortPoint)) { destroyVM(); return true; }
-    if (js_try(J)) {
-        fail(js_trystring(J,-1,"JavaScript handler error")); js_pop(J,1);
-        running=false; active=nullptr; return true;
-    }
-    // Function compiles the handler as a body, so return and this work.
-    js_getglobal(J,"Function"); js_pushstring(J,handler);
-    int error=js_pconstruct(J,1);
-    if (!error) { node(id && *id ? id:"@body"); error=js_pcall(J,0); }
-    if (error) fail(js_trystring(J,-1,"JavaScript handler error"));
-    js_pop(J,1); js_endtry(J); running=false; active=nullptr;
-    return true;
-}
-} // namespace web
-extern "C" void web_js_poll(void) { if (web::active) web::active->poll(); }
-extern "C" double web_js_epoch_ms(void)
+
+//  r2's clock reads whole seconds: Date.now() is the RTC at the first call
+//  plus the ticks since.
+double epochMs()
 {
 #ifdef WEB_HOST
-    return 0; // Deterministic host tests; Date parsing still uses upstream code.
+    return 1.7e12 + (double)now_ms();
 #else
-    unsigned long days, seconds;
-    web::currentTime(&days,&seconds);
-    return days ? (double(days)-719528)*86400000.0+seconds*1000.0:0;
+    static double base = -1;
+    static uint64_t at = 0;
+    if (base < 0)
+    {
+        unsigned long days, seconds;
+        currentTime(&days, &seconds);
+        base = days ? ((double)days - 719528) * 86400000.0 + seconds * 1000.0 : 0;
+        at = now_ms();
+    }
+    return base ? base + (double)(now_ms() - at) : 0;
 #endif
 }
+
+void entropy(uint8_t *out, size_t n)
+{
+#ifdef WEB_HOST
+    static uint64_t x = 0x9E3779B97F4A7C15ull;
+    for (size_t i = 0; i < n; i++)
+    {
+        x ^= x << 13, x ^= x >> 7, x ^= x << 17;
+        out[i] = (uint8_t)x;
+    }
+#else
+    gatherEntropy(out, n);
+#endif
+}
+
+void ensurePlatform()
+{
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+    jsr2::setPlatform({big_alloc, big_free, now_ms, epochMs, entropy, logLine});
+}
+
+//  Does the page need an engine at all?  Scripts, inline handlers or
+//  javascript: links say so.
+bool needsScripts(const Buf &html)
+{
+    const char *s = (const char *)html.data;
+    size_t n = html.len;
+    if (!s)
+        return false;
+    if (ifind(s, n, "<script") || ifind(s, n, "javascript:"))
+        return true;
+    for (const char *p = s; (p = ifind(p, n - (size_t)(p - s), " on")); p += 3)
+    {
+        const char *q = p + 3;
+        while (q < s + n && ((*q >= 'a' && *q <= 'z') || (*q >= 'A' && *q <= 'Z')))
+            q++;
+        if (q > p + 4 && q < s + n && *q == '=')
+            return true;
+    }
+    return false;
+}
+
+//  Pages keep their localStorage, sessionStorage and cookies for as long as
+//  the browser runs, per origin.
+struct Stored
+{
+    char kind[8];
+    char origin[128];
+    Buf json;
+    uint64_t used;
+};
+Stored g_store[24];
+const size_t MAX_STORED = 64 * 1024;
+
+Stored *findStore(const char *kind, const char *origin, bool create)
+{
+    Stored *oldest = &g_store[0];
+    for (Stored &s : g_store)
+    {
+        if (!strcmp(s.kind, kind) && !strcmp(s.origin, origin))
+        {
+            s.used = now_ms();
+            return &s;
+        }
+        if (s.used < oldest->used)
+            oldest = &s;
+    }
+    if (!create)
+        return nullptr;
+    scopy(oldest->kind, kind, sizeof(oldest->kind));
+    scopy(oldest->origin, origin, sizeof(oldest->origin));
+    oldest->json.release();
+    oldest->used = now_ms();
+    return oldest;
+}
+
+} // namespace
+
+//  ── The network under fetch, XMLHttpRequest and EventSource ─────────────────
+//
+//  A few Loaders of its own, next to the browser's: the browser keeps eight
+//  TCP ports, and its page, pictures and style sheets take one at a time.
+//  Requests past the slots wait their turn.  Bodies are handed on as they
+//  arrive and taken out of the loader (HttpResponse::consume), so an event
+//  stream can run for as long as the page.
+
+#ifndef WEB_HOST
+class ScriptNet : public jsr2::Transport
+{
+public:
+    static const int Slots = 3;
+    static const int MaxRequests = 24;
+
+    ScriptNet()
+    {
+        for (int i = 0; i < Slots; i++)
+        {
+            loaders_[i] = new Loader(r2Net(), gatherEntropy, currentTime);
+            owner_[i] = -1;
+        }
+        for (Req &q : reqs_)
+            q.reset();
+    }
+    ~ScriptNet()
+    {
+        for (int i = 0; i < Slots; i++)
+            delete loaders_[i];
+    }
+
+    int open(const Request &r, const char **error) override
+    {
+        int h = -1;
+        for (int i = 0; i < MaxRequests && h < 0; i++)
+            if (!reqs_[i].used)
+                h = i;
+        if (h < 0)
+        {
+            *error = "too many requests at once";
+            return -1;
+        }
+        Req &q = reqs_[h];
+        q.reset();
+        if ((!istarts(r.url, "http://") && !istarts(r.url, "https://")) || !urlFromInput(r.url, q.url))
+        {
+            *error = "only http and https addresses can be fetched";
+            return -1;
+        }
+        q.used = true;
+        q.stream = r.stream;
+        scopy(q.method, r.method && r.method[0] ? r.method : "GET", sizeof(q.method));
+        for (char *p = q.method; *p; p++)
+            if (*p >= 'a' && *p <= 'z')
+                *p = (char)(*p - 32);
+        //  The content type goes where the loader puts it; the rest of the
+        //  page's headers go as they are, less what the loader writes itself.
+        for (const char *line = r.headers ? r.headers : ""; *line;)
+        {
+            const char *end = strchr(line, '\n');
+            size_t len = end ? (size_t)(end - line + 1) : strlen(line);
+            if (istarts(line, "content-type:"))
+            {
+                const char *v = line + 13;
+                while (*v == ' ')
+                    v++;
+                size_t vl = (size_t)(line + len - v);
+                while (vl && (v[vl - 1] == '\r' || v[vl - 1] == '\n'))
+                    vl--;
+                scopyn(q.contentType, v, vl, sizeof(q.contentType));
+            }
+            else if (!istarts(line, "host:") && !istarts(line, "content-length:") && !istarts(line, "connection:") &&
+                     !istarts(line, "user-agent:") && !istarts(line, "accept-encoding:"))
+                q.headers.append(line, len);
+            line += len;
+        }
+        if (strcmp(q.method, "GET") && strcmp(q.method, "HEAD"))
+        {
+            q.hasBody = true;
+            if (r.body && r.bodyLen)
+                q.body.append(r.body, r.bodyLen);
+        }
+        tryStart(h);
+        return h;
+    }
+
+    bool next(int h, Event &e) override
+    {
+        if (h < 0 || h >= MaxRequests || !reqs_[h].used)
+            return false;
+        Req &q = reqs_[h];
+        if (q.slot < 0 && !tryStart(h))
+            return false;
+        Loader &L = *loaders_[q.slot];
+        if (L.busy())
+            L.step();
+        HttpResponse &r = L.response();
+        if (!q.gotHeaders)
+        {
+            if (L.phase() == Loader::FAILED)
+                return failed(h, e, L.error());
+            //  A redirect's own head is not the answer: the loader follows it.
+            bool final = r.headersDone && !r.isRedirect();
+            if (!final && L.phase() != Loader::DONE)
+                return false;
+            q.gotHeaders = true;
+            //  The head less its status line: "Name: value\r\n" lines.
+            const char *head = r.rawHead.len ? r.rawHead.cstr() : "";
+            const char *nl = strchr(head, '\n');
+            q.text.clear();
+            q.text.appendStr(nl ? nl + 1 : "");
+            q.text.push(0);
+            urlFormat(L.url(), q.finalUrl, sizeof(q.finalUrl));
+            e.kind = Event::HEADERS;
+            e.status = r.status;
+            e.statusText = r.reason;
+            e.headers = (const char *)q.text.data;
+            e.url = q.finalUrl;
+            return true;
+        }
+        if (r.body.len)
+        {
+            q.text.clear();
+            q.text.append(r.body.data, r.body.len);
+            r.consume(r.body.len);
+            e.kind = Event::DATA;
+            e.data = q.text.data;
+            e.len = q.text.len;
+            return true;
+        }
+        if (L.phase() == Loader::DONE)
+        {
+            release(h);
+            e.kind = Event::END;
+            return true;
+        }
+        if (L.phase() == Loader::FAILED)
+            return failed(h, e, L.error());
+        return false;
+    }
+
+    void close(int h) override
+    {
+        if (h >= 0 && h < MaxRequests && reqs_[h].used)
+            release(h);
+    }
+
+private:
+    struct Req
+    {
+        bool used, stream, gotHeaders, hasBody;
+        int slot;
+        Url url;
+        char method[12], contentType[96], finalUrl[1200], error[160];
+        Buf headers;
+        Buf body{true};
+        Buf text{true}; // what the last event points at
+        void reset()
+        {
+            used = stream = gotHeaders = hasBody = false;
+            slot = -1;
+            url = Url();
+            method[0] = contentType[0] = finalUrl[0] = error[0] = 0;
+            headers.release();
+            body.release();
+            text.release();
+        }
+    };
+    Loader *loaders_[Slots];
+    int owner_[Slots];
+    Req reqs_[MaxRequests];
+
+    bool tryStart(int h)
+    {
+        Req &q = reqs_[h];
+        for (int i = 0; i < Slots; i++)
+            if (owner_[i] < 0)
+            {
+                owner_[i] = h;
+                q.slot = i;
+                Loader &L = *loaders_[i];
+                L.setIdleTimeout(q.stream ? 120000 : 30000);
+                L.start(q.url, false, q.hasBody ? (q.body.data ? q.body.data : (const uint8_t *)"") : nullptr, q.body.len,
+                        q.contentType[0] ? q.contentType : nullptr, q.method, q.headers.len ? q.headers.cstr() : nullptr);
+                return true;
+            }
+        return false;
+    }
+
+    bool failed(int h, Event &e, const char *why)
+    {
+        scopy(reqs_[h].error, why && *why ? why : "network error", sizeof(reqs_[h].error));
+        release(h);
+        e.kind = Event::FAIL;
+        e.error = reqs_[h].error;
+        return true;
+    }
+
+    void release(int h)
+    {
+        Req &q = reqs_[h];
+        if (q.slot >= 0)
+        {
+            Loader &L = *loaders_[q.slot];
+            if (L.busy())
+                L.cancel();
+            L.response().body.release();
+            owner_[q.slot] = -1;
+            q.slot = -1;
+        }
+        q.used = false;
+        q.headers.release();
+        q.body.release();
+    }
+};
+#else
+class ScriptNet
+{
+};
+#endif
+
+//  ── The natives dom.js calls ────────────────────────────────────────────────
+
+struct ScriptPage::Fetch
+{
+    int id = 0;
+    int handle = -1;
+    bool module = false, failed = false;
+    char url[1200] = {};
+    Buf body{true};
+};
+
+struct ScriptNatives
+{
+    static ScriptPage *P(JSContext *ctx) { return (ScriptPage *)jsr2::Engine::from(ctx)->opaque; }
+
+    static void copyArg(JSContext *ctx, JSValueConst v, char *out, size_t cap)
+    {
+        const char *s = JS_ToCString(ctx, v);
+        scopy(out, s ? s : "", cap);
+        JS_FreeCString(ctx, s);
+    }
+
+    //  parse(html, fragment, context) -> the ops of htmlparse.h
+    static JSValue parse(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        size_t len = 0;
+        const char *s = argc ? JS_ToCStringLen(ctx, &len, argv[0]) : nullptr;
+        if (!s)
+            return JS_EXCEPTION;
+        char context[32] = "";
+        if (argc > 2)
+            copyArg(ctx, argv[2], context, sizeof(context));
+        JSValue r = parseHtml(ctx, s, len, argc > 1 && JS_ToBool(ctx, argv[1]), context);
+        JS_FreeCString(ctx, s);
+        return r;
+    }
+
+    static JSValue invalidate(JSContext *ctx, JSValueConst, int, JSValueConst *)
+    {
+        P(ctx)->dirty_ = true;
+        return JS_UNDEFINED;
+    }
+
+    static JSValue navigate(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        ScriptPage *p = P(ctx);
+        if (argc)
+            copyArg(ctx, argv[0], p->nextUrl_, sizeof(p->nextUrl_));
+        p->nextReplace_ = argc > 1 && JS_ToBool(ctx, argv[1]);
+        return JS_UNDEFINED;
+    }
+
+    static JSValue setUrl(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        ScriptPage *p = P(ctx);
+        if (argc)
+        {
+            copyArg(ctx, argv[0], p->newUrl_, sizeof(p->newUrl_));
+            scopy(p->pageUrl_, p->newUrl_, sizeof(p->pageUrl_));
+            p->engine_.setBaseUrl(p->pageUrl_);
+        }
+        return JS_UNDEFINED;
+    }
+
+    static JSValue history(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        int d = 0;
+        if (argc)
+            JS_ToInt32(ctx, &d, argv[0]);
+        P(ctx)->history_ = d;
+        return JS_UNDEFINED;
+    }
+
+    static JSValue open(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        if (argc)
+            copyArg(ctx, argv[0], P(ctx)->openUrl_, sizeof(P(ctx)->openUrl_));
+        return JS_UNDEFINED;
+    }
+
+    static JSValue alert(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        ScriptPage *p = P(ctx);
+        if (argc)
+            copyArg(ctx, argv[0], p->status_, sizeof(p->status_));
+        //  The status line holds one line.
+        for (char *c = p->status_; *c; c++)
+            if (*c == '\n' || *c == '\r' || *c == '\t')
+                *c = ' ';
+        if (!p->status_[0])
+            scopy(p->status_, " ", sizeof(p->status_));
+        return JS_UNDEFINED;
+    }
+
+    //  loadScript(url, id, module): an external script the page added.
+    static JSValue loadScript(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        ScriptPage *p = P(ctx);
+        if (argc < 2)
+            return JS_UNDEFINED;
+        int id = 0;
+        JS_ToInt32(ctx, &id, argv[1]);
+        ScriptPage::Fetch *f = nullptr;
+        for (int i = 0; i < 8 && !f; i++)
+            if (!p->fetches_[i].id)
+                f = &p->fetches_[i];
+        if (!f || !id)
+        {
+            //  Too many at once: it fails, as a load error does.
+            JSValue a[2] = {JS_NewInt32(ctx, id), JS_FALSE};
+            p->callBridge("scriptLoaded", 2, a);
+            return JS_UNDEFINED;
+        }
+        f->id = id;
+        f->module = argc > 2 && JS_ToBool(ctx, argv[2]);
+        f->failed = false;
+        f->body.clear();
+        copyArg(ctx, argv[0], f->url, sizeof(f->url));
+        f->handle = -1;
+#ifndef WEB_HOST
+        const char *why = "";
+        jsr2::Transport::Request r = {"GET", f->url, "Accept: */*\r\n", nullptr, 0, false};
+        f->handle = p->net_->open(r, &why);
+#endif
+        if (f->handle < 0)
+            f->failed = true;
+        p->nFetches_++;
+        return JS_UNDEFINED;
+    }
+
+    //  evalScript(source, name, module): an inline script added to the page.
+    static JSValue evalScript(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        ScriptPage *p = P(ctx);
+        size_t len = 0;
+        const char *s = argc ? JS_ToCStringLen(ctx, &len, argv[0]) : nullptr;
+        if (!s)
+            return JS_EXCEPTION;
+        char name[256] = "script";
+        if (argc > 1)
+            copyArg(ctx, argv[1], name, sizeof(name));
+        bool module = argc > 2 && JS_ToBool(ctx, argv[2]);
+        p->engine_.eval(s, len, name, module ? JS_EVAL_TYPE_MODULE : JS_EVAL_TYPE_GLOBAL);
+        JS_FreeCString(ctx, s);
+        return JS_UNDEFINED;
+    }
+
+    //  storage(kind, origin, json): stores json; with null, answers what is stored.
+    static JSValue storage(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        if (argc < 3)
+            return JS_NULL;
+        char kind[8], origin[128];
+        copyArg(ctx, argv[0], kind, sizeof(kind));
+        copyArg(ctx, argv[1], origin, sizeof(origin));
+        if (JS_IsNull(argv[2]) || JS_IsUndefined(argv[2]))
+        {
+            Stored *s = findStore(kind, origin, false);
+            return s && s->json.len ? JS_NewStringLen(ctx, (const char *)s->json.data, s->json.len) : JS_NULL;
+        }
+        size_t len = 0;
+        const char *j = JS_ToCStringLen(ctx, &len, argv[2]);
+        if (!j)
+            return JS_EXCEPTION;
+        if (len > MAX_STORED)
+        {
+            JS_FreeCString(ctx, j);
+            return JS_ThrowRangeError(ctx, "Storage quota exceeded (%u bytes).", (unsigned)MAX_STORED);
+        }
+        Stored *s = findStore(kind, origin, true);
+        s->json.clear();
+        s->json.append(j, len);
+        JS_FreeCString(ctx, j);
+        return JS_TRUE;
+    }
+
+    static JSValue viewport(JSContext *ctx, JSValueConst, int, JSValueConst *)
+    {
+        ScriptPage *p = P(ctx);
+        JSValue a = JS_NewArray(ctx);
+        for (int i = 0; i < 5; i++)
+            JS_SetPropertyUint32(ctx, a, (uint32_t)i, JS_NewInt32(ctx, p->vp_[i]));
+        return a;
+    }
+
+    //  submit(action, method, data): a form sent by the DOM.
+    static JSValue submit(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        ScriptPage *p = P(ctx);
+        if (argc < 3)
+            return JS_UNDEFINED;
+        copyArg(ctx, argv[0], p->submit_.action, sizeof(p->submit_.action));
+        char method[8];
+        copyArg(ctx, argv[1], method, sizeof(method));
+        p->submit_.post = ieq(method, "post");
+        size_t len = 0;
+        const char *d = JS_ToCStringLen(ctx, &len, argv[2]);
+        p->submit_.data.clear();
+        if (d)
+            p->submit_.data.append(d, len);
+        JS_FreeCString(ctx, d);
+        p->haveSubmit_ = true;
+        return JS_UNDEFINED;
+    }
+};
+
+static const JSCFunctionListEntry NATIVES[] = {
+    JS_CFUNC_DEF("parse", 3, ScriptNatives::parse),
+    JS_CFUNC_DEF("invalidate", 0, ScriptNatives::invalidate),
+    JS_CFUNC_DEF("navigate", 2, ScriptNatives::navigate),
+    JS_CFUNC_DEF("setUrl", 1, ScriptNatives::setUrl),
+    JS_CFUNC_DEF("history", 1, ScriptNatives::history),
+    JS_CFUNC_DEF("open", 1, ScriptNatives::open),
+    JS_CFUNC_DEF("alert", 1, ScriptNatives::alert),
+    JS_CFUNC_DEF("loadScript", 3, ScriptNatives::loadScript),
+    JS_CFUNC_DEF("evalScript", 3, ScriptNatives::evalScript),
+    JS_CFUNC_DEF("storage", 3, ScriptNatives::storage),
+    JS_CFUNC_DEF("viewport", 0, ScriptNatives::viewport),
+    JS_CFUNC_DEF("submit", 3, ScriptNatives::submit),
+};
+
+//  ── ScriptPage ──────────────────────────────────────────────────────────────
+
+ScriptPage::ScriptPage() { fetches_ = new Fetch[8]; }
+
+ScriptPage::~ScriptPage()
+{
+    clear();
+    delete[] fetches_;
+}
+
+bool ScriptPage::active() const { return engine_.running() && !JS_IsUndefined(bridge_); }
+
+void ScriptPage::clear()
+{
+    if (active())
+        callBridge("unload", 0, nullptr);
+    if (engine_.running())
+        JS_FreeValue(engine_.context(), bridge_);
+    bridge_ = JS_UNDEFINED;
+    for (int i = 0; i < 8; i++)
+    {
+#ifndef WEB_HOST
+        if (fetches_[i].id && fetches_[i].handle >= 0)
+            net_->close(fetches_[i].handle);
+#endif
+        fetches_[i].id = 0;
+        fetches_[i].body.release();
+    }
+    nFetches_ = 0;
+    engine_.stop();
+#ifndef WEB_HOST
+    delete net_;
+#endif
+    net_ = nullptr;
+    nScripts_ = 0;
+    code_.release();
+    dirty_ = haveSubmit_ = nextReplace_ = false;
+    nextUrl_[0] = newUrl_[0] = openUrl_[0] = pageUrl_[0] = 0;
+    history_ = 0;
+}
+
+bool ScriptPage::callBridge(const char *fn, int argc, JSValueConst *argv, JSValue *result)
+{
+    if (result)
+        *result = JS_UNDEFINED;
+    if (!active())
+        return false;
+    JSContext *ctx = engine_.context();
+    JSValue f = JS_GetPropertyStr(ctx, bridge_, fn);
+    bool ok = engine_.call(f, bridge_, argc, argv, result);
+    JS_FreeValue(ctx, f);
+    return ok;
+}
+
+bool ScriptPage::start(const Buf &html, const char *charset, const char *url)
+{
+    clear();
+    status_[0] = 0;
+    if (!needsScripts(html))
+        return false;
+    ensurePlatform();
+    jsr2::Limits limits;
+    limits.heapBytes = HeapLimit;
+    limits.taskMs = 1000;
+    limits.stackBytes = 160u << 10;
+    if (!engine_.start(limits))
+    {
+        scopy(status_, "JavaScript could not start: ", sizeof(status_));
+        scat(status_, engine_.error()[0] ? engine_.error() : "no memory", sizeof(status_));
+        return false;
+    }
+    engine_.opaque = this;
+    scopy(pageUrl_, url, sizeof(pageUrl_));
+#ifndef WEB_HOST
+    net_ = new ScriptNet;
+    engine_.setTransport(net_);
+#endif
+    engine_.setBaseUrl(url);
+    JSContext *ctx = engine_.context();
+
+    //  The DOM: dom.js's function, called with the natives and libjsr2's
+    //  helpers, returns the bridge.
+    JSValue fn;
+    if (!engine_.evalBinary(r2web_dom, r2web_dom_size, "dom.js", &fn) || !JS_IsFunction(ctx, fn))
+    {
+        JS_FreeValue(ctx, fn);
+        char why[160];
+        scopy(why, engine_.error(), sizeof(why));
+        clear();
+        scopy(status_, why, sizeof(status_));
+        return false;
+    }
+    JSValue natives = JS_NewObject(ctx);
+    JS_SetPropertyFunctionList(ctx, natives, NATIVES, (int)(sizeof(NATIVES) / sizeof(NATIVES[0])));
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue lib = JS_GetPropertyStr(ctx, global, "__jsr2lib");
+    JSValue args[2] = {natives, lib};
+    JSValue bridge;
+    bool ok = engine_.call(fn, JS_UNDEFINED, 2, args, &bridge);
+    JS_FreeValue(ctx, fn);
+    JS_FreeValue(ctx, natives);
+    JS_FreeValue(ctx, lib);
+    JS_FreeValue(ctx, global);
+    if (!ok || !JS_IsObject(bridge))
+    {
+        JS_FreeValue(ctx, bridge);
+        char why[160];
+        scopy(why, engine_.error(), sizeof(why));
+        clear();
+        scopy(status_, why, sizeof(status_));
+        return false;
+    }
+    bridge_ = bridge;
+
+    //  The page into the DOM.
+    Buf utf8{true};
+    if (!pageToUtf8(html.data, html.len, charset, utf8))
+    {
+        clear();
+        return false;
+    }
+    JSValue a[2] = {JS_NewString(ctx, url), parseHtml(ctx, utf8.cstr(), utf8.len, false, nullptr)};
+    utf8.release();
+    ok = callBridge("load", 2, a);
+    JS_FreeValue(ctx, a[0]);
+    JS_FreeValue(ctx, a[1]);
+    if (!ok)
+    {
+        char why[160];
+        scopy(why, engine_.error(), sizeof(why));
+        clear();
+        scopy(status_, why, sizeof(status_));
+        return false;
+    }
+
+    //  Its scripts: those that run as the page is read first, in order, then
+    //  the deferred ones and modules, in order.
+    JSValue list;
+    if (callBridge("scripts", 0, nullptr, &list) && JS_IsArray(ctx, list))
+    {
+        JSValue lenv = JS_GetPropertyStr(ctx, list, "length");
+        int32_t n = 0;
+        JS_ToInt32(ctx, &n, lenv);
+        JS_FreeValue(ctx, lenv);
+        for (int pass = 0; pass < 2; pass++)
+            for (int32_t i = 0; i < n && nScripts_ < MaxScripts; i++)
+            {
+                JSValue e = JS_GetPropertyUint32(ctx, list, (uint32_t)i);
+                JSValue kind = JS_GetPropertyUint32(ctx, e, 0), src = JS_GetPropertyUint32(ctx, e, 1);
+                JSValue text = JS_GetPropertyUint32(ctx, e, 2), defer = JS_GetPropertyUint32(ctx, e, 4);
+                int32_t k = 0;
+                JS_ToInt32(ctx, &k, kind);
+                const char *u = JS_ToCString(ctx, src);
+                //  Modules are deferred; defer means nothing to inline classics.
+                bool later = k == 1 || (JS_ToBool(ctx, defer) && u && u[0]);
+                if ((pass == 0) == !later)
+                {
+                    Script &s = scripts_[nScripts_];
+                    s.module = k == 1;
+                    scopy(s.url, u ? u : "", sizeof(s.url));
+                    s.source = (uint32_t)code_.len;
+                    if (!s.url[0])
+                    {
+                        size_t tl = 0;
+                        const char *t = JS_ToCStringLen(ctx, &tl, text);
+                        if (t)
+                            code_.append(t, tl);
+                        JS_FreeCString(ctx, t);
+                    }
+                    code_.push(0);
+                    //  Which of the bridge's list it was, for currentScript.
+                    code_.append(&i, sizeof(i));
+                    nScripts_++;
+                }
+                JS_FreeCString(ctx, u);
+                JS_FreeValue(ctx, kind);
+                JS_FreeValue(ctx, src);
+                JS_FreeValue(ctx, text);
+                JS_FreeValue(ctx, defer);
+                JS_FreeValue(ctx, e);
+            }
+    }
+    JS_FreeValue(ctx, list);
+    if (code_.failed)
+        nScripts_ = 0;
+    dirty_ = true;
+    return true;
+}
+
+bool ScriptPage::run(int i, const char *code, size_t len)
+{
+    if (!active() || i < 0 || i >= nScripts_)
+        return false;
+    JSContext *ctx = engine_.context();
+    //  The bridge's index of this script follows its text in code_.
+    const char *t = source(i);
+    int32_t index;
+    memcpy(&index, t + strlen(t) + 1, sizeof(index));
+    JSValue a = JS_NewInt32(ctx, index);
+    callBridge("current", 1, &a);
+    bool ok = engine_.eval(code, len, scripts_[i].url[0] ? scripts_[i].url : pageUrl_,
+                           scripts_[i].module ? JS_EVAL_TYPE_MODULE : JS_EVAL_TYPE_GLOBAL);
+    a = JS_NewInt32(ctx, -1);
+    callBridge("current", 1, &a);
+    return ok;
+}
+
+void ScriptPage::parsed() { callBridge("parsed", 0, nullptr); }
+
+bool ScriptPage::eval(const char *source)
+{
+    if (!active())
+        return false;
+    return engine_.eval(source, strlen(source), "javascript:", 0);
+}
+
+int ScriptPage::nodeOf(const char *handler)
+{
+    if (!handler || handler[0] != 'r' || handler[1] != '2' || handler[2] != ':')
+        return -1;
+    int n = 0;
+    for (const char *p = handler + 3; *p >= '0' && *p <= '9'; p++)
+        n = n * 10 + (*p - '0');
+    return n;
+}
+
+bool ScriptPage::click(int node)
+{
+    if (!active())
+        return true;
+    JSValue a = JS_NewInt32(engine_.context(), node), r;
+    if (!callBridge("click", 1, &a, &r))
+        return false;
+    int32_t v = 0;
+    JS_ToInt32(engine_.context(), &v, r);
+    JS_FreeValue(engine_.context(), r);
+    return v != 0;
+}
+
+void ScriptPage::input(int node, const char *text)
+{
+    if (!active())
+        return;
+    JSContext *ctx = engine_.context();
+    JSValue a[2] = {JS_NewInt32(ctx, node), JS_NewString(ctx, text)};
+    callBridge("input", 2, a);
+    JS_FreeValue(ctx, a[1]);
+}
+
+void ScriptPage::controlChanged(int node)
+{
+    if (!active())
+        return;
+    JSValue a = JS_NewInt32(engine_.context(), node);
+    callBridge("changed", 1, &a);
+}
+
+bool ScriptPage::state(int node, bool checked, int selected)
+{
+    if (!active())
+        return true;
+    JSContext *ctx = engine_.context();
+    JSValue a[3] = {JS_NewInt32(ctx, node), JS_NewBool(ctx, checked), JS_NewInt32(ctx, selected)}, r;
+    if (!callBridge("state", 3, a, &r))
+        return true;
+    bool keep = JS_ToBool(ctx, r);
+    JS_FreeValue(ctx, r);
+    return keep;
+}
+
+bool ScriptPage::submitFrom(int node)
+{
+    if (!active())
+        return true;
+    JSValue a = JS_NewInt32(engine_.context(), node), r;
+    if (!callBridge("submitFrom", 1, &a, &r))
+        return false;
+    bool go = JS_ToBool(engine_.context(), r);
+    JS_FreeValue(engine_.context(), r);
+    return go;
+}
+
+bool ScriptPage::key(const char *keyName)
+{
+    if (!active())
+        return false;
+    JSContext *ctx = engine_.context();
+    static const char *const types[] = {"keydown", "keyup"};
+    int code = !strcmp(keyName, "Enter") ? 13 : !strcmp(keyName, "Escape") ? 27 : !strcmp(keyName, "Tab") ? 9 : 0;
+    bool taken = false;
+    for (const char *type : types)
+    {
+        JSValue a[7] = {JS_NewString(ctx, type), JS_NewString(ctx, keyName), JS_NewString(ctx, keyName),
+                        JS_NewInt32(ctx, code), JS_FALSE, JS_FALSE, JS_FALSE};
+        JSValue r;
+        if (callBridge("key", 7, a, &r))
+        {
+            if (type == types[0])
+                taken = JS_ToBool(ctx, r) != 0;
+            JS_FreeValue(ctx, r);
+        }
+        for (int i = 0; i < 3; i++)
+            JS_FreeValue(ctx, a[i]);
+    }
+    return taken;
+}
+
+void ScriptPage::focus(int node)
+{
+    if (!active())
+        return;
+    JSValue a = JS_NewInt32(engine_.context(), node);
+    callBridge("focus", 1, &a);
+}
+
+void ScriptPage::pollFetches()
+{
+    if (!nFetches_)
+        return;
+    JSContext *ctx = engine_.context();
+    for (int i = 0; i < 8; i++)
+    {
+        Fetch &f = fetches_[i];
+        if (!f.id)
+            continue;
+        bool done = f.failed, ok = false;
+#ifndef WEB_HOST
+        jsr2::Transport::Event e;
+        while (!done && net_->next(f.handle, e))
+        {
+            if (e.kind == jsr2::Transport::Event::HEADERS && e.status != 200)
+                f.failed = true;
+            else if (e.kind == jsr2::Transport::Event::DATA)
+                f.body.append(e.data, e.len);
+            else if (e.kind == jsr2::Transport::Event::END)
+                done = true, ok = !f.failed && !f.body.failed;
+            else if (e.kind == jsr2::Transport::Event::FAIL)
+                done = true;
+            e = jsr2::Transport::Event();
+        }
+#endif
+        if (!done)
+            continue;
+        int id = f.id;
+        f.id = 0;
+        nFetches_--;
+        if (ok)
+            engine_.eval(f.body.cstr(), f.body.len, f.url, f.module ? JS_EVAL_TYPE_MODULE : JS_EVAL_TYPE_GLOBAL);
+        f.body.release();
+        JSValue a[2] = {JS_NewInt32(ctx, id), JS_NewBool(ctx, ok)};
+        callBridge("scriptLoaded", 2, a);
+    }
+}
+
+void ScriptPage::tick()
+{
+    if (!active())
+        return;
+    engine_.tick();
+    pollFetches();
+}
+
+bool ScriptPage::busy() const { return active() && (engine_.busy() || nFetches_ > 0); }
+bool ScriptPage::wantsFrame() const { return active() && engine_.wantsFrame(); }
+void ScriptPage::frame(double ms) { engine_.frame(ms); }
+bool ScriptPage::changed() const { return active() && dirty_; }
+
+bool ScriptPage::render(Buf &html, char *title, size_t titleCap, bool force)
+{
+    if (!active() || (!dirty_ && !force))
+        return false;
+    JSContext *ctx = engine_.context();
+    JSValue a = JS_NewBool(ctx, force), r;
+    dirty_ = false;
+    if (!callBridge("render", 1, &a, &r))
+        return false;
+    bool done = false;
+    if (JS_IsArray(ctx, r))
+    {
+        JSValue h = JS_GetPropertyUint32(ctx, r, 0), t = JS_GetPropertyUint32(ctx, r, 1);
+        size_t len = 0;
+        const char *s = JS_ToCStringLen(ctx, &len, h);
+        if (s && len <= 4 * PageLimit)
+        {
+            html.clear();
+            html.append(s, len);
+            done = !html.failed;
+        }
+        JS_FreeCString(ctx, s);
+        const char *ts = JS_ToCString(ctx, t);
+        if (title)
+            scopy(title, ts ? ts : "", titleCap);
+        JS_FreeCString(ctx, ts);
+        JS_FreeValue(ctx, h);
+        JS_FreeValue(ctx, t);
+    }
+    JS_FreeValue(ctx, r);
+    if (!done && !status_[0])
+        scopy(status_, "The page grew too big to show.", sizeof(status_));
+    return done;
+}
+
+const char *ScriptPage::error() const { return engine_.running() ? engine_.error() : ""; }
+
+bool ScriptPage::takeStatus(char *out, size_t cap)
+{
+    if (!status_[0])
+        return false;
+    scopy(out, status_, cap);
+    status_[0] = 0;
+    return true;
+}
+
+bool ScriptPage::takeUrl(char *out, size_t cap)
+{
+    if (!newUrl_[0])
+        return false;
+    scopy(out, newUrl_, cap);
+    newUrl_[0] = 0;
+    return true;
+}
+
+bool ScriptPage::takeOpen(char *out, size_t cap)
+{
+    if (!openUrl_[0])
+        return false;
+    scopy(out, openUrl_, cap);
+    openUrl_[0] = 0;
+    return true;
+}
+
+int ScriptPage::takeHistory()
+{
+    int h = history_;
+    history_ = 0;
+    return h;
+}
+
+bool ScriptPage::takeSubmit(Submit &s)
+{
+    if (!haveSubmit_)
+        return false;
+    haveSubmit_ = false;
+    scopy(s.action, submit_.action, sizeof(s.action));
+    s.post = submit_.post;
+    s.data.clear();
+    s.data.append(submit_.data.data, submit_.data.len);
+    submit_.data.release();
+    return true;
+}
+
+void ScriptPage::setViewport(int cols, int rows, int cellW, int cellH, bool dark)
+{
+    vp_[0] = cols;
+    vp_[1] = rows;
+    vp_[2] = cellW;
+    vp_[3] = cellH;
+    vp_[4] = dark;
+}
+
+size_t ScriptPage::heapBytes() const { return engine_.heapBytes(); }
+
+const char *scriptConsole(size_t *len)
+{
+    *len = g_consoleLen;
+    return g_console;
+}
+
+} // namespace web

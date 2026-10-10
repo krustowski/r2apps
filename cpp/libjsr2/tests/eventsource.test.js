@@ -1,0 +1,30 @@
+test('EventSource: messages, named events, reconnect with Last-Event-ID', async () => {
+  const es = new EventSource('/sse');
+  eq(es.readyState, EventSource.CONNECTING);
+  eq(es.url, 'http://test/sse');
+  const got = [];
+  let opens = 0, errors = 0;
+  es.onopen = () => opens++;
+  es.onmessage = (e) => got.push(['message', e.data, e.lastEventId]);
+  es.addEventListener('tick', (e) => got.push(['tick', e.data]));
+  es.onerror = () => errors++;
+  await waitFor(() => got.some(g => g[1] === 'again'), 3000);
+  es.close();
+  eq(es.readyState, EventSource.CLOSED);
+  deepEq(got, [['message', 'one', ''], ['tick', 'té\nsecond line'], ['message', 'three', '7'], ['message', 'again', '7']]);
+  eq(opens, 2);
+  eq(errors, 1);
+  eq(__probe('sseConnections'), 2);
+  assert(/last-event-id: 7/.test(__probe('lastSseHeaders')), __probe('lastSseHeaders'));
+  assert(/accept: text\/event-stream/.test(__probe('lastSseHeaders')));
+  await waitFor(() => __probe('openRequests') === 0);
+});
+test('EventSource: a wrong content type fails without reconnecting', async () => {
+  const es = new EventSource('/not-sse');
+  let errors = 0;
+  es.onerror = () => errors++;
+  await waitFor(() => errors === 1);
+  await sleep(30);
+  eq(es.readyState, EventSource.CLOSED);
+  eq(errors, 1);
+});

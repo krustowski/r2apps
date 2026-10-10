@@ -86,6 +86,12 @@ private:
     web::ScriptPage script;
     bool jsOn = true;
     int scriptNext = -1;
+    //  The page's own loop: when it was last laid out again and when its
+    //  animation frames last ran (both at a few per second at most: a layout
+    //  is a whole re-read of the page).
+    uint64_t lastScriptRender = 0, lastFrame = 0;
+    char lastScriptError[96] = {};
+    static const uint64_t SCRIPT_RENDER_MS = 150, FRAME_MS = 50;
 
     //  What the address bar shows when it is not being edited.
     char current[ADDR_CAP] = "about:home";
@@ -309,20 +315,35 @@ private:
         script.clear(); scriptNext = -1;
         web::Buf b;
         pageBody.release();
+        if (!strcmp(what, "about:console"))
+        {
+            size_t n = 0;
+            const char *log = web::scriptConsole(&n);
+            b.appendStr("<title>Console</title><h2>What page scripts logged</h2><pre>");
+            web::Buf text;
+            text.append(log, n);
+            escapeInto(b, n ? text.cstr() : "(nothing yet)");
+            b.appendStr("</pre>");
+            doc.loadHtml(b.data, b.len, "utf-8");
+            showDocument(what, push, 0);
+            return;
+        }
         if (!strcmp(what, "about:net") || !strcmp(what, "about:"))
         {
             char net[400];
             web::r2NetDescribe(net, sizeof(net));
             b.appendStr("<title>About</title><h1>r2web</h1>"
                         "<p>A small web browser for rou2exOS: HTTP/1.1, TLS 1.2 by BearSSL, and HTML "
-                        "with CSS, pictures and small ES5 scripts (MuJS), in the kernel's own font.</p><h3>Network</h3><p>");
+                        "with CSS, pictures and JavaScript (QuickJS: ES2023, a DOM, timers, fetch, EventSource), "
+                        "in the kernel's own font.</p><h3>Network</h3><p>");
             escapeInto(b, net);
             b.appendStr("</p><p>Address, gateway and DNS are the ones the eth driver got by DHCP (or was "
                         "given). Override with <code>:dns 9.9.9.9</code> or <code>:gw 192.168.1.1</code> in "
                         "the address bar; <code>:css off</code> shows pages without their style sheets, "
                         "<code>:img off</code> without their pictures (PNG, JPEG, GIF and BMP, the first "
                         "16 on a page), and "
-                        "<code>:js off</code> disables page scripts, and "
+                        "<code>:js off</code> disables page scripts (what they logged is on "
+                        "<a href=\"about:console\">about:console</a>), and "
                         "<code>:dark on</code> (or Ctrl+D) draws them light on dark. Under "
                         "QEMU with a tap, the guest needs NAT on the host for its network.</p>"
                         "<h3>Keys</h3><pre>"
@@ -527,18 +548,6 @@ private:
     {
         if (idx < 0 || idx >= doc.linkCount())
             return;
-        if (jsOn && doc.linkHandler(idx)[0]) {
-            char handler[2048], id[128];
-            web::scopy(handler, doc.linkHandler(idx), sizeof(handler));
-            web::scopy(id, doc.linkId(idx), sizeof(id));
-            script.click(handler, id);
-            updateScriptPage(); return;
-        }
-        if (jsOn && web::istarts(doc.linkHref(idx), "javascript:")) {
-            web::Buf source;
-            source.appendStr(doc.linkHref(idx) + 11);
-            script.eval(source.cstr()); updateScriptPage(); return;
-        }
         int ci = doc.linkControl(idx);
         if (ci >= 0)
         {
@@ -546,7 +555,27 @@ private:
             activateControl(ci, false);
             return;
         }
-        const char *href = doc.linkHref(idx);
+        //  A link of a page with scripts: the page has the click first.
+        int node = scriptNode(doc.linkHandler(idx));
+        char href[ADDR_CAP];
+        web::scopy(href, doc.linkHref(idx), sizeof(href));
+        if (node >= 0)
+        {
+            bool go = script.click(node);
+            if (updateScriptPage() || !go)
+                return;
+        }
+        else if (jsOn && script.active() && web::istarts(href, "javascript:"))
+        {
+            script.eval(href + 11);
+            updateScriptPage();
+            return;
+        }
+        followHref(href);
+    }
+
+    void followHref(const char *href)
+    {
         if (web::istarts(href, "about:"))
         {
             navigate(href, true);
@@ -598,19 +627,53 @@ private:
 
     // ── Forms ─────────────────────────────────────────────────────────────────
 
+    //  The page's node behind an "r2:N" handler, when its scripts run.
+    int scriptNode(const char *handler) const
+    {
+        return jsOn && script.active() ? web::ScriptPage::nodeOf(handler) : -1;
+    }
+
+    //  The control for node N after the page was laid out again, or -1.
+    int controlOfNode(int node) const
+    {
+        for (int k = 0; k < doc.controlCount(); k++)
+            if (web::ScriptPage::nodeOf(doc.str(doc.control(k).onclick)) == node)
+                return k;
+        return -1;
+    }
+
     void activateControl(int ci, bool backwards)
     {
-        web::Control &c = doc.control(ci);
-        if (jsOn && c.isButton() && doc.str(c.onclick)[0]) {
-            char handler[2048], id[128];
-            web::scopy(handler, doc.str(c.onclick), sizeof(handler));
-            web::scopy(id, doc.str(c.id), sizeof(id));
-            script.click(handler, id); updateScriptPage(); return;
+        int node = scriptNode(doc.str(doc.control(ci).onclick));
+        if (node >= 0)
+        {
+            web::Control &k = doc.control(ci);
+            if (k.type == web::Control::CHECKBOX || k.type == web::Control::RADIO || k.type == web::Control::SELECT)
+            {
+                //  The change first, as a browser makes it; the page may take
+                //  it back by cancelling the click.
+                doc.controlActivate(ci, backwards);
+                formsTouched = true;
+                if (!script.state(node, doc.control(ci).checked, doc.control(ci).selected))
+                    doc.controlActivate(ci, !backwards);
+                updateScriptPage();
+                wnd->Repaint();
+                return;
+            }
+            bool go = script.click(node);
+            if (updateScriptPage() || !go)
+                return;
+            ci = controlOfNode(node);
+            if (ci < 0)
+                return;
         }
+        web::Control &c = doc.control(ci);
         if (c.isText())
         {
             edit = EDIT_FIELD;
             editControl = ci;
+            if (node >= 0)
+                script.focus(node);
         }
         else if (c.type == web::Control::SUBMIT || c.type == web::Control::IMAGE)
         {
@@ -719,58 +782,197 @@ private:
         setTitle(doc.title());
     }
 
-    bool updateScriptPage()
+    //  The page's DOM laid out again, focus and typing kept on the same nodes.
+    void renderScriptPage()
     {
-        if (script.changed()) {
-            web::StyleSheetText sheets[MAX_SHEETS];
-            for (int i = 0; i < nSheets; ++i) sheets[i] = {sheetBody[i].data, sheetBody[i].len};
-            renderPage(sheets, cssOn ? nSheets : 0, true);
-            script.rendered();
+        int focusNode = focusedLink >= 0 ? web::ScriptPage::nodeOf(doc.linkHandler(focusedLink)) : -1;
+        int editNode = edit == EDIT_FIELD && editControl >= 0 && editControl < doc.controlCount()
+                           ? web::ScriptPage::nodeOf(doc.str(doc.control(editControl).onclick))
+                           : -1;
+        int scroll = scrollRow;
+        web::StyleSheetText sheets[MAX_SHEETS];
+        for (int i = 0; i < nSheets; ++i) sheets[i] = {sheetBody[i].data, sheetBody[i].len};
+        web::scopy(pageCharset, "utf-8", sizeof(pageCharset));
+        renderPage(sheets, cssOn ? nSheets : 0, false);
+        scrollRow = scroll;
+        if (focusNode >= 0)
+            for (int i = 0; i < doc.linkCount(); i++)
+                if (web::ScriptPage::nodeOf(doc.linkHandler(i)) == focusNode)
+                {
+                    focusedLink = i;
+                    break;
+                }
+        if (editNode >= 0)
+        {
+            editControl = controlOfNode(editNode);
+            if (editControl < 0)
+                edit = EDIT_NONE;
         }
-        if (script.error()[0]) web::scopy(message, script.error(), sizeof(message));
-        wnd->Repaint();
-        if (script.navigation()[0]) {
-            char target[ADDR_CAP]; web::scopy(target, script.navigation(), sizeof(target));
-            script.clearNavigation();
-            char local[ADDR_CAP]; web::Url u;
-            if (localAddress(target, local, sizeof(local))) navigate(local, true);
-            else if (web::urlResolve(pageUrl, target, u)) { char addr[ADDR_CAP]; web::urlFormat(u, addr, sizeof(addr)); navigate(addr, true); }
-            else navigate(target, true);
+        lastScriptRender = web::now_ms();
+        //  Pictures the page's scripts added are fetched like the page's own.
+        if (imagesOn && imgNext < 0 && sheetNext < 0 && scriptNext < 0 && !loader.busy())
+            startImages();
+    }
+
+    //  What the page's scripts did since we last looked: a new layout, a
+    //  message, an address, a form to send, a page to go to.  True when the
+    //  browser went somewhere else.
+    bool updateScriptPage(bool renderNow = true)
+    {
+        if (!script.active())
+        {
+            char why[96];
+            if (script.takeStatus(why, sizeof(why)))
+                web::scopy(message, why, sizeof(message));
+            return false;
+        }
+        bool repaint = false;
+        if (renderNow && script.changed() && script.render(pageBody, nullptr, 0))
+        {
+            renderScriptPage();
+            repaint = true;
+        }
+        if (script.error()[0] && strcmp(script.error(), lastScriptError))
+        {
+            web::scopy(lastScriptError, script.error(), sizeof(lastScriptError));
+            web::scopy(message, script.error(), sizeof(message));
+            repaint = true;
+        }
+        char t[ADDR_CAP];
+        if (script.takeStatus(t, sizeof(t)))
+        {
+            web::scopy(message, t, sizeof(message));
+            messageFirst = true;
+            repaint = true;
+        }
+        if (script.takeUrl(t, sizeof(t)))
+        {
+            //  pushState or a new #fragment: the same page at a new address.
+            web::scopy(current, t, sizeof(current));
+            if (histPos >= 0)
+                web::scopy(hist[histPos].addr, t, ADDR_CAP);
+            repaint = true;
+        }
+        if (script.takeOpen(t, sizeof(t)))
+            openInNewWindow(t);
+        if (int h = script.takeHistory())
+        {
+            goHistory(h);
             return true;
         }
+        web::ScriptPage::Submit sub;
+        if (script.takeSubmit(sub))
+        {
+            web::Url u;
+            if (!web::urlFromInput(sub.action, u))
+            {
+                web::scopy(message, "The form goes somewhere this browser cannot follow.", sizeof(message));
+                wnd->Repaint();
+                return false;
+            }
+            edit = EDIT_NONE;
+            if (sub.post)
+                startLoad(u, false, true, 0, &sub.data);
+            else
+            {
+                char *q = strchr(u.path, '?');
+                if (q)
+                    *q = 0;
+                if (sub.data.len && strlen(u.path) + 1 + sub.data.len < sizeof(u.path))
+                {
+                    web::scat(u.path, "?", sizeof(u.path));
+                    web::scat(u.path, sub.data.cstr(), sizeof(u.path));
+                }
+                startLoad(u, false, true, 0);
+            }
+            return true;
+        }
+        if (script.navigation()[0]) {
+            char target[ADDR_CAP]; web::scopy(target, script.navigation(), sizeof(target));
+            bool replace = script.navigationReplaces();
+            script.clearNavigation();
+            char local[ADDR_CAP]; web::Url u;
+            if (localAddress(target, local, sizeof(local))) navigate(local, !replace);
+            else if (web::urlResolve(pageUrl, target, u)) { char addr[ADDR_CAP]; web::urlFormat(u, addr, sizeof(addr)); navigate(addr, !replace); }
+            else navigate(target, !replace);
+            return true;
+        }
+        if (repaint)
+            wnd->Repaint();
         return false;
     }
+
+    //  The page's own life between the user's actions: its timers, network
+    //  and animation frames, and a new layout when its DOM changed.
+    void scriptLoop()
+    {
+        uint64_t now = web::now_ms();
+        script.tick();
+        if (script.wantsFrame() && now - lastFrame >= FRAME_MS)
+        {
+            lastFrame = now;
+            script.frame((double)now);
+        }
+        updateScriptPage(now - lastScriptRender >= SCRIPT_RENDER_MS);
+    }
+
     void startScripts()
     {
-        script.start(pageBody, doc, current);
-        scriptNext = jsOn ? 0 : script.count();
-        fetchNextScript();
+        scriptNext = -1;
+        lastScriptError[0] = 0;
+        if (jsOn && script.start(pageBody, pageCharset, current))
+        {
+            scriptNext = 0;
+            ensureIdleLoop(true);
+            fetchNextScript();
+            return;
+        }
+        char why[96];
+        if (script.takeStatus(why, sizeof(why)))
+        {
+            web::scopy(message, why, sizeof(message));
+            wnd->Repaint();
+        }
+        afterScripts();
+    }
+    void afterScripts()
+    {
+        if (!pageIsFile && cssOn && doc.stylesheetCount()) { sheetNext = 0; fetchNextSheet(); }
+        else startImages();
     }
     void fetchNextScript()
     {
         while (scriptNext >= 0 && scriptNext < script.count()) {
             if (!script.src(scriptNext)[0]) {
-                script.eval(script.source(scriptNext++));
-                if (updateScriptPage()) return;
+                const char *code = script.source(scriptNext);
+                script.run(scriptNext, code, strlen(code));
+                ++scriptNext;
+                if (updateScriptPage(false)) return;
                 continue;
             }
             char local[ADDR_CAP];
             if (localAddress(script.src(scriptNext), local, sizeof(local))) {
                 web::Buf body{true}; bool tooBig;
-                if (readLocal(local, body, tooBig)) script.eval(body.cstr());
+                if (readLocal(local, body, tooBig)) script.run(scriptNext, body.cstr(), body.len);
                 ++scriptNext;
-                if (updateScriptPage()) return;
+                if (updateScriptPage(false)) return;
                 continue;
             }
             web::Url u;
-            if (web::urlResolve(pageUrl, script.src(scriptNext), u)) {
+            if (web::urlFromInput(script.src(scriptNext), u)) {
                 loader.start(u, false); ensureIdleLoop(true); return;
             }
             ++scriptNext;
         }
-        scriptNext = -1;
-        if (!pageIsFile && cssOn && doc.stylesheetCount()) { sheetNext = 0; fetchNextSheet(); }
-        else startImages();
+        if (scriptNext >= 0)
+        {
+            scriptNext = -1;
+            script.parsed();
+            if (updateScriptPage())
+                return;
+            ensureIdleLoop(true);
+        }
+        afterScripts();
     }
     void onScriptLoaded()
     {
@@ -781,10 +983,10 @@ private:
             wnd->Repaint(); return;
         }
         if (loader.phase() == web::Loader::DONE && r.status == 200 && !r.truncated)
-            script.eval(r.body.cstr());
+            script.run(scriptNext, r.body.cstr(), r.body.len);
         else web::scopy(message, "Could not load a page script.", sizeof(message));
         r.body.release(); ++scriptNext;
-        if (!updateScriptPage()) fetchNextScript();
+        if (!updateScriptPage(false)) fetchNextScript();
     }
 
     void applySheets()
@@ -1423,11 +1625,26 @@ private:
             return;
         }
         web::Control &c = doc.control(ci);
+        int node = scriptNode(doc.str(c.onclick));
         if (key->isEscape)
+        {
             edit = EDIT_NONE;
+            if (node >= 0)
+            {
+                script.key("Escape");
+                script.controlChanged(node);
+                updateScriptPage();
+            }
+        }
         else if (key->isTab)
         {
             edit = EDIT_NONE;
+            if (node >= 0)
+            {
+                script.controlChanged(node);
+                if (updateScriptPage())
+                    return;
+            }
             focusLink((key->isLeftShift || key->isRightShift) ? -1 : +1);
             return;
         }
@@ -1437,6 +1654,18 @@ private:
                 doc.controlInsert(ci, '\n');
             else
             {
+                //  The page hears Enter first (a chat box sends on it), then
+                //  the form is sent as the page's DOM says.
+                if (node >= 0)
+                {
+                    script.controlChanged(node);
+                    bool taken = script.key("Enter");
+                    if (taken || !script.submitFrom(node))
+                    {
+                        updateScriptPage();
+                        return;
+                    }
+                }
                 submitForm(c.form, -1);
                 return;
             }
@@ -1452,6 +1681,12 @@ private:
         else
             return;
         formsTouched = true;
+        if (node >= 0 && ci < doc.controlCount())
+        {
+            //  Every change reaches the page as it is typed (search boxes).
+            script.input(node, doc.control(ci).edit ? doc.control(ci).edit : "");
+            updateScriptPage();
+        }
         wnd->Repaint();
     }
 
@@ -1604,6 +1839,12 @@ private:
 
     void onIdle()
     {
+        if (script.active())
+        {
+            scriptLoop();
+            if (script.busy() || script.changed())
+                idleSince = web::now_ms();
+        }
         if (loader.busy())
         {
             loader.step();
@@ -2341,8 +2582,10 @@ private:
             }
             if (c.type == web::Control::SUBMIT || c.type == web::Control::IMAGE)
             {
-                web::scat(out, c.form < 0 ? " (needs JavaScript)" : doc.formPost(c.form) ? ": sends the form (POST)"
-                                                                                       : ": sends the form",
+                bool scripted = scriptNode(doc.str(c.onclick)) >= 0;
+                web::scat(out, c.form < 0 ? (scripted ? ": for the page's script" : " (needs JavaScript)")
+                               : doc.formPost(c.form) ? ": sends the form (POST)"
+                                                      : ": sends the form",
                           cap);
             }
             else if (c.isText())
@@ -2354,6 +2597,12 @@ private:
             return;
         }
         const char *href = doc.linkHref(idx);
+        if (web::istarts(href, "javascript:") || !strcmp(href, "#r2"))
+        {
+            //  What a script does, not an address.
+            web::scopy(out, !strcmp(href, "#r2") ? "Runs the page's script" : href, cap);
+            return;
+        }
         if (localAddress(href, out, cap))
             return;
         web::Url base, u;
@@ -2600,6 +2849,9 @@ private:
         visibleRows = (int)(contentH / rowH);
         if (visibleRows < 1)
             visibleRows = 1;
+        //  What layout queries and media queries see (window.innerWidth...).
+        script.setViewport((int)(contentW / cw), visibleRows, (int)(cw * pxPerUnit + 0.5), (int)(rowH * pxPerUnit + 0.5),
+                           dark);
         paintPage(target);
         paintStatus(target, W, H);
         if (menuOpen)

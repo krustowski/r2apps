@@ -21,46 +21,58 @@ existing path `/mnt/tar/opt/memento/cacerts.bin`.
 
 ## JavaScript
 
-[MuJS](https://mujs.com/) 1.3.5 is vendored under its ISC license in
-[`../third_party/mujs`](../third_party/mujs/README-r2.md). It supplies ES5
-functions, arrays, objects, closures, JSON, regexps, Date and Math. The r2
-port provides real number formatting and x86-64 setjmp/longjmp, without a
-host libc. [`port/`](port/) contains the freestanding compatibility code.
+Pages run on [QuickJS](https://bellard.org/quickjs/) through
+[`../libjsr2`](../libjsr2/README.md): ES2023 and later (classes and private
+fields, async/await, modules without imports, BigInt, regexps with named
+groups), an event loop with timers, microtasks and animation frames, and the
+Web APIs that need no document --- fetch, XMLHttpRequest, EventSource,
+URL, TextEncoder/TextDecoder, atob/btoa, crypto random values, Blob,
+FormData, AbortController, structuredClone, console.
 
-The browser runs the first 16 classic inline/external `<script>` elements
-in document order, after parsing HTML and before loading linked stylesheets
-and pictures. Local pages can load local `.js` files; remote pages use the
-existing HTTP/TLS loader. Non-JavaScript types, including modules and JSON
-data scripts, are skipped. CSS/image updates do not execute scripts again.
+The document is [`js/dom.js`](js/dom.js), compiled to bytecode at build
+time: a DOM tree (nodes, elements and the HTML element classes, attributes,
+classList, dataset, inline style, innerHTML/outerHTML, selectors for
+querySelector/matches/closest, events with capture and bubbling, inline
+`on...` handlers, forms and their controls, templates, shadow roots, custom
+elements, MutationObserver), and the window around it (location and history
+with pushState, localStorage/sessionStorage and cookies kept per origin for
+the browser's session, matchMedia, getComputedStyle, IntersectionObserver
+and ResizeObserver that report everything visible). [`htmlparse.cpp`](htmlparse.cpp)
+reads HTML into that tree the way browsers do (implied html/head/body, end
+tags paragraphs and list items imply, tables, raw text, SVG).
 
-Available browser bindings:
+The tree is the page once its scripts start. The browser keeps its text
+layout ([`web/doc.cpp`](../memento-hello/web/doc.cpp)) and lays out what the
+DOM serialises after every change (at most every 150 ms), with each link and
+control marked `onclick="r2:N"`; what the user does to it comes back as DOM
+events on node N: clicks (a listener makes any element clickable), typing
+(an `input` event per key), checkboxes, lists, Enter and form submission,
+which goes through the page's `submit` event and its DOM's values. Focus and
+the field being typed into stay on their nodes across re-layouts.
+[`script.cpp`](script.cpp) is the bridge: the engine, the natives `dom.js`
+calls, and the page's network --- three connections of its own next to the
+browser's, streamed, so an EventSource lasts as long as the page.
 
-- `window` (the global object), `document.title`, `document.body`.
-- `document.write(...)`, which appends markup at the end of the body.
-- `document.getElementById(id)`, returning a small element object or `null`.
-- Element `innerHTML`, `textContent`/`innerText`, text-control `value`,
-  `className`, `href` and `src`; values can be read and assigned.
-- Inline `onclick` on links and buttons, with `this` bound to their element
-  when they have an ID. Supported handlers handle the activation themselves;
-  automatic link navigation/form submission is suppressed.
-- `location.href` and `location.assign(url)` request navigation.
-- `console.log(...)` and `alert(...)` show text in the status line.
+Scripts run in document order (classic first, then deferred and module
+scripts), external ones fetched by the loader, `file:` ones read from the
+disk; scripts a page adds later run when they are connected. `document.write`
+while the page loads lands after the running script. Pages without scripts
+or inline handlers start no engine at all. `:js off` disables scripts and
+reloads; [about:console](about:console) shows what scripts logged.
 
-This is a small browser API, not a complete DOM. ES modules, modern JS syntax,
-timers, event listeners/onload, fetch/XHR, cookies, storage, dynamic script
-insertion and the broader DOM are not implemented. MuJS does not turn this
-text-layout browser into an engine for current web applications. `:js off`
-disables scripts and reloads; `:js on` enables them again. The demo tests
-arithmetic, generated content, a form value and a button handler.
+Limits: **12 MiB** of script heap per page, **one second** per task (a
+script, a callback and its microtasks; then it is stopped with an
+uncatchable error and the page goes on), 160 KiB of native stack. Not there:
+`import` in modules, synchronous XMLHttpRequest, WebSocket, canvas drawing,
+layout geometry (getBoundingClientRect answers with a text box) and CSS
+beyond what the cell layout reads. The build checks the ELF against the
+kernel's private 2 MiB image limit (about 1.35 MiB with the stack).
 
-Each VM has a **2 MiB allocation limit**, including allocation headers.
-Each script/handler gets at most **one million interpreter/regexp steps or
-250 ms**, whichever happens first. A timeout discards that VM and releases
-all its allocations, including abandoned parser temporaries. Syntax/runtime
-errors are reported and the next script can run. DOM output retains the
-existing 768 KiB page cap. The browser's arena grows on the kernel user heap;
-there is no scripting arena in the desktop process. The build checks both
-ELFs against the kernel's private 2 MiB image limit.
+`make test` runs the host checks (parser, DOM, events, loop, limits, shared
+frames); libjsr2 has its own, on the host and in QEMU. GARN's served folder
+(`r2_main/iso/opt/garn`) has `jstest.htm` (self-checking, with things to
+click and type into) and `sse.htm` (an event stream from GARN's `/events`)
+for `http://localhost/` on r2 itself.
 
 ## Hosting
 
@@ -73,8 +85,9 @@ which can grow beyond the client area during a resize. Closing waits for the
 child, then terminates it if needed, before reclaiming the shared block.
 
 Each hosted browser uses eight TCP ports starting at `48000 + slot*32` and
-a DNS port at base+10. Memento's Telegram stack keeps its original 47000
+a DNS port at base+10; telegram.elf, hosted the same way, takes four from its
+own slot's base. Memento's own stack (the Video window) keeps the 47000
 range; port bindings route replies to the right process. Browser windows
 have independent page/script state and run alongside Telegram, Chat and IRC.
 The shared engine stays in [`../memento-hello/web`](../memento-hello/web/README.md)
-because Telegram uses its loader, TLS, picture and PNG code too.
+because Memento and jug use its loader, TLS and PNG code too.
