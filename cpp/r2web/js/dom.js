@@ -3,7 +3,7 @@
 //
 // Compiled to bytecode at build time (libjsr2's jsr2c) and run after
 // libjsr2's prelude in every page that has scripts.  The tree lives here,
-// in JavaScript; the browser keeps its own text layout (web/doc.cpp) and
+// in JavaScript; the browser keeps its native layout (web/doc.cpp, web/pixels.cpp) and
 // gets this tree back as HTML whenever it changed (render()), with every
 // link and form control marked onclick="r2:N" so that what the user does to
 // the laid-out page comes back here as events on node N.
@@ -11,7 +11,8 @@
 // `b` is the browser's natives (script.cpp):
 //   parse(html, fragment) -> flat ops   invalidate()   navigate(url, replace)
 //   alert(text)   loadScript(url, id)   evalScript(src, name)   status(text)
-//   storage(origin, json?)   viewport() -> [cols, rows, cellW, cellH, dark]
+//   storage(origin, json?)   viewport() -> [cols, rows, cellW, cellH, dark, width, height, scrollY]
+//   geometry(uid, html?) -> native box dimensions (null in text mode)
 // and what the browser calls back is the object this function returns.
 (function (b, lib) {
 'use strict';
@@ -25,7 +26,8 @@ const RAW = new Set(['script', 'style', 'xmp', 'iframe', 'noembed', 'noframes', 
 
 let dirty = true;
 let renderDepth = 0;
-const touch = () => { if (!dirty) { dirty = true; b.invalidate(); } };
+let geometrySynced = false;
+const touch = () => { geometrySynced = false; if (!dirty) { dirty = true; b.invalidate(); } };
 
 // ── mutation observers ────────────────────────────────────────────────────
 
@@ -913,12 +915,12 @@ class Element extends Node {
   insertAdjacentText(where, text) { this.insertAdjacentElement(where, this._doc.createTextNode(String(text))); }
   getBoundingClientRect() { return rectFor(this); }
   getClientRects() { const r = rectFor(this); return r.width || r.height ? [r] : []; }
-  get clientWidth() { return rectFor(this).width; }
-  get clientHeight() { return rectFor(this).height; }
-  get clientTop() { return 0; }
-  get clientLeft() { return 0; }
-  get scrollWidth() { return rectFor(this).width; }
-  get scrollHeight() { return rectFor(this).height; }
+  get clientWidth() { return geometryFor(this)?.[4] ?? rectFor(this).width; }
+  get clientHeight() { return geometryFor(this)?.[5] ?? rectFor(this).height; }
+  get clientTop() { return geometryFor(this)?.[9] ?? 0; }
+  get clientLeft() { return geometryFor(this)?.[8] ?? 0; }
+  get scrollWidth() { return geometryFor(this)?.[6] ?? rectFor(this).width; }
+  get scrollHeight() { return geometryFor(this)?.[7] ?? rectFor(this).height; }
   get scrollTop() { return 0; }
   set scrollTop(v) {}
   get scrollLeft() { return 0; }
@@ -978,10 +980,22 @@ function hiddenByStyle(el) {
   return !!st && /(^|;)\s*display\s*:\s*none/i.test(st);
 }
 
-// Geometry: the browser lays out in character cells; an element gets a box
-// of its text's width, which is enough for code that only asks whether an
-// element is visible or how big it is roughly.
+// Geometry flushes the native pixel layout synchronously after DOM mutations.
+// The optional text layout uses the earlier cell approximation.
+function geometryFor(el) {
+  if (!el.isConnected || hiddenByStyle(el)) return Array(16).fill(0);
+  if (!b.geometry) return null;
+  const fresh = !geometrySynced;
+  if (fresh && !renderHtml(document, true)) return null;
+  const box = b.geometry(el._uid);
+  // The native side owns the snapshot. Keep only whether it is current,
+  // rather than pinning a second full HTML copy in the script heap.
+  if (box && fresh) geometrySynced = true;
+  return box;
+}
 function rectFor(el) {
+  const box = geometryFor(el);
+  if (box) return new DOMRect(...box.slice(0, 4));
   const [cols, , cw, ch] = viewport();
   let w = 0, h = 0;
   if (el.isConnected && !hiddenByStyle(el)) {
@@ -994,7 +1008,7 @@ function rectFor(el) {
 }
 let vp = null, vpAt = -1;
 function viewport() {
-  if (vpAt !== renderDepth || !vp) { vp = b.viewport(); vpAt = renderDepth; }
+  vp = b.viewport(); vpAt = renderDepth;
   return vp;
 }
 class DOMRect {
@@ -1060,9 +1074,13 @@ class HTMLElement extends Element {
   get autofocus() { return this.hasAttribute('autofocus'); }
   get nonce() { return this.getAttribute('nonce') || ''; }
   get popover() { return this.getAttribute('popover'); }
-  get offsetParent() { return this.isConnected ? this._doc.body : null; }
-  get offsetTop() { return 0; }
-  get offsetLeft() { return 0; }
+  get offsetParent() {
+    if (!this.isConnected || this === this._doc.body || this === this._doc.documentElement) return null;
+    const uid = geometryFor(this)?.[12];
+    return uid ? Array.from(this._doc.querySelectorAll("*")).find(el => el._uid === uid) || null : this._doc.body;
+  }
+  get offsetTop() { return geometryFor(this)?.[11] ?? 0; }
+  get offsetLeft() { return geometryFor(this)?.[10] ?? 0; }
   get offsetWidth() { return rectFor(this).width; }
   get offsetHeight() { return rectFor(this).height; }
   click() {
@@ -2173,6 +2191,10 @@ function getComputedStyle(el) {
 }
 const blockTags = /^(html|body|address|article|aside|blockquote|details|dialog|div|dl|dd|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hgroup|hr|main|nav|ol|p|pre|section|ul|summary|center|menu|search)$/;
 function computed(el, decls, name) {
+  if (name === 'width' || name === 'height') {
+    const box = geometryFor(el);
+    if (box) return `${box[box[15] ? (name === 'width' ? 2 : 3) : (name === 'width' ? 13 : 14)]}px`;
+  }
   const v = decls.getPropertyValue(name);
   if (v) return v;
   switch (name) {
@@ -2193,7 +2215,7 @@ function computed(el, decls, name) {
     case 'font-family': return 'monospace';
     case 'font-weight': return /^(b|strong|h[1-6]|th)$/.test(el._local) ? '700' : '400';
     case 'line-height': return 'normal';
-    case 'width': case 'height': return `${rectFor(el)[name]}px`;
+    case 'width': case 'height': { const box = geometryFor(el); return `${box ? box[name === 'width' ? 13 : 14] : rectFor(el)[name]}px`; }
     case 'overflow': case 'overflow-x': case 'overflow-y': return 'visible';
     case 'box-sizing': return 'content-box';
     case 'pointer-events': return 'auto';
@@ -2246,8 +2268,8 @@ const CSS = {
 };
 
 const screen = {
-  get width() { const [c, , cw] = viewport(); return c * cw; },
-  get height() { const [, r, , ch] = viewport(); return r * ch; },
+  get width() { const [c, , cw, , , w] = viewport(); return w ?? c * cw; },
+  get height() { const [, r, , ch, , , h] = viewport(); return h ?? r * ch; },
   get availWidth() { return this.width; }, get availHeight() { return this.height; },
   colorDepth: 4, pixelDepth: 4, orientation: { type: 'landscape-primary', angle: 0, addEventListener() {}, removeEventListener() {} },
 };
@@ -2283,30 +2305,51 @@ for (const [k, v] of Object.entries(windowProps)) install(k, v);
 Object.defineProperty(g, 'origin', { configurable: true, get: () => location.origin });
 for (const p of ['innerWidth', 'outerWidth']) Object.defineProperty(g, p, { configurable: true, get: () => screen.width });
 for (const p of ['innerHeight', 'outerHeight']) Object.defineProperty(g, p, { configurable: true, get: () => screen.height });
+for (const p of ['scrollY', 'pageYOffset']) Object.defineProperty(g, p, { configurable: true, get: () => viewport()[7] || 0 });
 Object.defineProperty(g, 'devicePixelRatio', { configurable: true, get: () => 1 });
-for (const p of ['scrollX', 'scrollY', 'pageXOffset', 'pageYOffset', 'screenX', 'screenY', 'screenLeft', 'screenTop']) Object.defineProperty(g, p, { configurable: true, get: () => 0 });
+for (const p of ['scrollX', 'pageXOffset', 'screenX', 'screenY', 'screenLeft', 'screenTop']) Object.defineProperty(g, p, { configurable: true, get: () => 0 });
 Object.defineProperty(g, 'event', { configurable: true, get: () => undefined });
 
 // ── rendering for the browser ─────────────────────────────────────────────
 
-// The tree as HTML for web/doc.cpp: every link, form control and element
+// The tree as HTML for the native document/layout: every link, form control and element
 // with click behaviour carries onclick="r2:N", N its node's id (stable from
 // one render to the next, so the browser keeps its focus), and controls
 // show their current state.  Scripts, templates and hidden
 // elements are left out; a shadow root is drawn in place of its host's
 // children.
 let rendered = new Map();
-function renderHtml(doc) {
-  rendered = new Map();
-  const out = [];
-  const mark = (n) => { rendered.set(n._uid, n); return n._uid; };
+function renderHtml(doc, geometry = false) {
+  if (!b.snapshot(null, geometry)) return false;
+  const targets = geometry ? null : new Map();
+  // Flush bounded batches to native memory instead of holding all fragments
+  // alongside a joined page-sized string in the script heap.
+  let parts = [], chars = 0, ok = true;
+  const flush = () => { ok = b.snapshot(parts.join(''), geometry); parts = []; chars = 0; };
+  const out = { push(...values) {
+    for (const value of values) {
+      if (!ok) return;
+      // A large text/attribute value already is a string: copy it directly
+      // rather than allocating another large string by joining it.
+      if (value.length >= 8192) {
+        if (parts.length) flush();
+        if (ok) ok = b.snapshot(value, geometry);
+      } else {
+        parts.push(value); chars += value.length;
+        if (parts.length >= 256 || chars >= 8192) flush();
+      }
+    }
+  } };
+  const mark = (n) => { if (!geometry) targets.set(n._uid, n); return n._uid; };
   const clickable = (el) => {
     if (el._local === 'a' || el._local === 'button' || el._local === 'input' || el._local === 'select' || el._local === 'textarea' || el._local === 'summary' || el._local === 'area') return true;
     return false;
   };
   const listensClick = (el) => (el[kListeners] && (el[kListeners].get('click') || el[kListeners].get('mousedown') || el[kListeners].get('pointerdown'))) || el.hasAttribute('onclick');
   const attrs = (el, extra) => {
+    if (geometry) out.push(' data-r2-node="', String(el._uid), '"');
     for (const a of el._attrs) {
+      if (a.name === 'data-r2-node') continue;
       if (a.name === 'onclick' || (a.name.startsWith('on') && a.name.length > 2)) continue;
       if (extra && extra.skip && extra.skip.includes(a.name)) continue;
       out.push(' ', a.name, '="', escAttr(a.value), '"');
@@ -2314,6 +2357,7 @@ function renderHtml(doc) {
   };
   const walk = (n, inLink) => {
     for (const c of (n._shadow ? n._shadow._children : n._children) || []) {
+      if (!ok) return;
       if (c.nodeType === TEXT) { out.push(escText(c._data)); continue; }
       if (c.nodeType !== ELEMENT) continue;
       const el = c, t = el._local;
@@ -2359,6 +2403,7 @@ function renderHtml(doc) {
     }
   };
   for (const c of doc._children) {
+    if (!ok) break;
     if (c.nodeType === DOCTYPE) out.push('<!DOCTYPE ', c._name, '>');
     else if (c.nodeType === ELEMENT) {
       out.push('<', c._local);
@@ -2368,7 +2413,9 @@ function renderHtml(doc) {
       out.push('</', c._local, '>');
     }
   }
-  return out.join('');
+  if (ok && parts.length) flush();
+  if (ok && !geometry) rendered = targets;
+  return ok;
 }
 
 // Elements with an id are properties of the window (window.foo, or just
@@ -2401,7 +2448,7 @@ const bridge = {
     build(ops, doc, doc);
     if (!doc.documentElement) build(b.parse('<html><head></head><body></body></html>', false, ''), doc, doc);
     parsing = true;
-    dirty = true;
+    dirty = true; geometrySynced = false;
   },
   // The page's own scripts, in document order, for the browser to run:
   // [kind, src, inline text, async, defer] with kind 0 classic, 1 module.
@@ -2447,7 +2494,7 @@ const bridge = {
     if (el) el.dispatchEvent(new Event(ok ? 'load' : 'error'));
   },
   scriptElement(id) { const el = pendingScripts.get(id); return el || null; },
-  // The page changed since the last render; the HTML to lay out, or null.
+  // The page changed since the last render: snapshot success and title, or null.
   render(force) {
     if (!dirty && !force) return null;
     dirty = false;

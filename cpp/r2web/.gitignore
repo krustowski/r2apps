@@ -2,3 +2,4 @@ obj/
 *.elf
 *.bin
 tests/unit
+tests/browser_menu

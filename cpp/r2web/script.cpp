@@ -546,8 +546,79 @@ struct ScriptNatives
     {
         ScriptPage *p = P(ctx);
         JSValue a = JS_NewArray(ctx);
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < 8; i++)
             JS_SetPropertyUint32(ctx, a, (uint32_t)i, JS_NewInt32(ctx, p->vp_[i]));
+        return a;
+    }
+
+    // Each batch is copied straight to native memory; null starts a new
+    // snapshot. No complete HTML string needs to live in the script heap.
+    static JSValue snapshot(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        ScriptPage *p = P(ctx);
+        if (argc < 2)
+            return JS_FALSE;
+        bool geometry = JS_ToBool(ctx, argv[1]);
+        if (geometry && !p->pixelMode_)
+            return JS_FALSE;
+        Buf &html = geometry ? p->geometryHtml_ : p->renderedHtml_;
+        if (JS_IsNull(argv[0]))
+        {
+            html.clear();
+            if (geometry)
+                p->geometryValid_ = false;
+            return JS_TRUE;
+        }
+        size_t len = 0;
+        const char *s = JS_ToCStringLen(ctx, &len, argv[0]);
+        if (!s)
+            return JS_EXCEPTION;
+        bool fits = len <= ScriptPage::RenderLimit - html.len;
+        bool copied = fits && html.append(s, len);
+        JS_FreeCString(ctx, s);
+        if (!copied)
+        {
+            html.clear();
+            scopy(p->status_, fits ? "Not enough memory to show the page." : "The page grew too big to show.", sizeof(p->status_));
+            return JS_FALSE;
+        }
+        return JS_TRUE;
+    }
+
+    static JSValue geometry(JSContext *ctx, JSValueConst, int argc, JSValueConst *argv)
+    {
+        ScriptPage *p=P(ctx);
+        if (!p->pixelMode_ || argc<1) return JS_NULL;
+        uint32_t uid=0; JS_ToUint32(ctx,&uid,argv[0]);
+        if (!p->geometryValid_) {
+            StyleSheetText sheet={p->geometrySheets_.data,p->geometrySheets_.len};
+            p->geometryDoc_.loadHtml(p->geometryHtml_.data,p->geometryHtml_.len,"utf-8",&sheet,1,p->geometryCss_);
+            if (p->geometryImages_) {
+                for(int i=0;i<p->geometryDoc_.imageCount();++i)
+                    for(int j=0;j<p->geometryImages_->imageCount();++j)
+                        if (!strcmp(p->geometryDoc_.imageSrc(i),p->geometryImages_->imageSrc(j))) {
+                            // Images already have their intrinsic sizes in the painted document.
+                            const Document &d=*p->geometryImages_;
+                            // Expose size without depending on the painted line being present.
+                            int w,h; d.imageSize(j,w,h);p->geometryDoc_.setImageSize(i,w,h);break;
+                        }
+            }
+            p->geometryDoc_.layoutPixels(p->pixelWidth_,p->vp_[2],p->vp_[3],p->pixelHeight_);
+            p->geometryValid_=!p->geometryDoc_.outOfMemory();
+        }
+        const Box *b=p->geometryDoc_.boxForNode(uid);
+        int values[16]={};
+        if (b && b->style.display!=CssStyle::D_NONE) {
+            const Box *parent=&p->geometryDoc_.box(b->parent);
+            while(parent->parent && !parent->block && !parent->atomic)parent=&p->geometryDoc_.box(parent->parent);
+            values[0]=b->x;values[1]=b->y-p->pixelScroll_;values[2]=b->w;values[3]=b->h;
+            values[4]=b->clientW;values[5]=b->clientH;values[6]=b->scrollW;values[7]=b->scrollH;
+            values[8]=b->border[3];values[9]=b->border[0];
+            values[10]=b->x-parent->x-parent->border[3];values[11]=b->y-parent->y-parent->border[0];
+            values[12]=(int)parent->uid;values[13]=b->contentW;values[14]=b->contentH;values[15]=b->style.box.sizing;
+        }
+        JSValue a=JS_NewArray(ctx);
+        for(int i=0;i<16;++i)JS_SetPropertyUint32(ctx,a,(uint32_t)i,JS_NewInt32(ctx,values[i]));
         return a;
     }
 
@@ -584,6 +655,8 @@ static const JSCFunctionListEntry NATIVES[] = {
     JS_CFUNC_DEF("evalScript", 3, ScriptNatives::evalScript),
     JS_CFUNC_DEF("storage", 3, ScriptNatives::storage),
     JS_CFUNC_DEF("viewport", 0, ScriptNatives::viewport),
+    JS_CFUNC_DEF("snapshot", 2, ScriptNatives::snapshot),
+    JS_CFUNC_DEF("geometry", 1, ScriptNatives::geometry),
     JS_CFUNC_DEF("submit", 3, ScriptNatives::submit),
 };
 
@@ -601,6 +674,7 @@ bool ScriptPage::active() const { return engine_.running() && !JS_IsUndefined(br
 
 void ScriptPage::clear()
 {
+    geometryDoc_.clear();geometryHtml_.release();geometrySheets_.release();geometryValid_=false;
     if (active())
         callBridge("unload", 0, nullptr);
     if (engine_.running())
@@ -623,6 +697,7 @@ void ScriptPage::clear()
     net_ = nullptr;
     nScripts_ = 0;
     code_.release();
+    renderedHtml_.release();
     dirty_ = haveSubmit_ = nextReplace_ = false;
     nextUrl_[0] = newUrl_[0] = openUrl_[0] = pageUrl_[0] = 0;
     history_ = 0;
@@ -967,15 +1042,20 @@ bool ScriptPage::render(Buf &html, char *title, size_t titleCap, bool force)
     if (JS_IsArray(ctx, r))
     {
         JSValue h = JS_GetPropertyUint32(ctx, r, 0), t = JS_GetPropertyUint32(ctx, r, 1);
-        size_t len = 0;
-        const char *s = JS_ToCStringLen(ctx, &len, h);
-        if (s && len <= 4 * PageLimit)
+        if (JS_ToBool(ctx, h) && !renderedHtml_.failed)
         {
-            html.clear();
-            html.append(s, len);
-            done = !html.failed;
+            if (html.big)
+            {
+                html.swap(renderedHtml_);
+                done = true;
+            }
+            else
+            {
+                html.clear();
+                done = html.append(renderedHtml_.data, renderedHtml_.len);
+            }
+            renderedHtml_.clear();
         }
-        JS_FreeCString(ctx, s);
         const char *ts = JS_ToCString(ctx, t);
         if (title)
             scopy(title, ts ? ts : "", titleCap);
@@ -1042,9 +1122,36 @@ void ScriptPage::setViewport(int cols, int rows, int cellW, int cellH, bool dark
 {
     vp_[0] = cols;
     vp_[1] = rows;
-    vp_[2] = cellW;
-    vp_[3] = cellH;
+
     vp_[4] = dark;
+    vp_[5] = cols * cellW; vp_[6] = rows * cellH;
+    setPixelViewport(vp_[5],vp_[6],cellW,cellH,pixelScroll_,pixelMode_,geometryCss_,dark);
+}
+
+void ScriptPage::setPixelViewport(int width,int height,int cellW,int lineH,int scroll,bool enabled,bool css,bool dark)
+{
+    if (pixelWidth_!=width || pixelHeight_!=height || vp_[2]!=cellW || vp_[3]!=lineH || geometryCss_!=css || pixelMode_!=enabled)
+        geometryValid_=false;
+    pixelWidth_=width;pixelHeight_=height;pixelScroll_=scroll;pixelMode_=enabled;geometryCss_=css;
+    vp_[0]=width/(cellW>0?cellW:1);vp_[1]=height/(lineH>0?lineH:1);
+    vp_[2]=cellW;vp_[3]=lineH;vp_[4]=dark;vp_[5]=width;vp_[6]=height;vp_[7]=scroll;
+}
+void ScriptPage::setLayoutSheets(const StyleSheetText *sheets,int count)
+{
+    geometrySheets_.clear();
+    for(int i=0;i<count;++i) {geometrySheets_.append(sheets[i].data,sheets[i].len);geometrySheets_.push('\n');}
+    geometryValid_=false;
+}
+void ScriptPage::setLayoutImages(const Document *document)
+{
+    uint32_t hash=2166136261u;
+    if(document)for(int i=0;i<document->imageCount();++i) {
+        int w,h;document->imageSize(i,w,h);
+        hash=(hash^(uint32_t)w)*16777619u;hash=(hash^(uint32_t)h)*16777619u;
+        for(const char *s=document->imageSrc(i);*s;++s)hash=(hash^(uint8_t)*s)*16777619u;
+    }
+    if(hash!=geometryImageHash_ || document!=geometryImages_)geometryValid_=false;
+    geometryImageHash_=hash;geometryImages_=document;
 }
 
 size_t ScriptPage::heapBytes() const { return engine_.heapBytes(); }

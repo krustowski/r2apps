@@ -27,6 +27,7 @@ class ScriptPage
 public:
     static constexpr size_t HeapLimit = 12u << 20;
     static constexpr size_t PageLimit = 768 * 1024;
+    static constexpr size_t RenderLimit = 4 * PageLimit;
     static constexpr int MaxScripts = 64;
 
     ScriptPage();
@@ -91,8 +92,13 @@ public:
     };
     bool takeSubmit(Submit &s);
 
-    //  For layout queries: the window in cells, a cell in pixels.
+    //  Legacy viewport setter, for callers measuring in cells.
     void setViewport(int cols, int rows, int cellW, int cellH, bool dark);
+    // Pixel geometry is a synchronous snapshot of the same document and
+    // layout used to paint. Text mode retains its approximate geometry.
+    void setPixelViewport(int width, int height, int cellW, int lineH, int scroll, bool enabled, bool css, bool dark = false);
+    void setLayoutSheets(const StyleSheetText *sheets, int count);
+    void setLayoutImages(const Document *document);
     size_t heapBytes() const;
 
 private:
@@ -111,6 +117,7 @@ private:
     Script scripts_[MaxScripts];
     int nScripts_ = 0;
     Buf code_{true};
+    Buf renderedHtml_{true};
     Fetch *fetches_ = nullptr;
     int nFetches_ = 0;
     bool dirty_ = false;
@@ -118,8 +125,14 @@ private:
     bool nextReplace_ = false, haveSubmit_ = false;
     int history_ = 0;
     Submit submit_;
-    int vp_[5] = {80, 25, 8, 16, 0};
+    int vp_[8] = {80, 25, 8, 16, 0, 640, 400, 0};
     char pageUrl_[1200] = {};
+    Document geometryDoc_;
+    Buf geometryHtml_{true}, geometrySheets_{true};
+    bool geometryValid_ = false, pixelMode_ = true, geometryCss_ = true;
+    int pixelWidth_ = 640, pixelHeight_ = 400, pixelScroll_ = 0;
+    const Document *geometryImages_ = nullptr;
+    uint32_t geometryImageHash_ = 0;
 
     bool callBridge(const char *fn, int argc, JSValueConst *argv, JSValue *result = nullptr);
     void pollFetches();

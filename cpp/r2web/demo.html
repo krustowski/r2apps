@@ -1,13 +1,38 @@
 <!doctype html>
-<html><head><title>r2web JavaScript demo</title></head><body>
+<html><head><title>r2web JavaScript demo</title>
+<style>
+body { background: #fff; color: #000; }
+.boxes { display: flex; flex-wrap: wrap; gap: 12px; padding: 8px; border: 2px solid navy; }
+.card { flex: 1 1 160px; padding: 8px; border: 1px solid blue; background: silver; }
+#sample { width: 120px; padding: 6px; border: 2px solid red; background: yellow; }
+</style></head><body>
 <h1>QuickJS in a separate browser process</h1>
 <p id="answer">JavaScript has not run.</p>
 <input id="name" name="name" value="Memento">
 <button id="greet" type="button" onclick="document.getElementById('answer').textContent = 'Hello, ' + document.getElementById('name').value;">Greet</button>
+<div class="boxes">
+<div class="card">These boxes use flex layout, padding, borders and wrapping.</div>
+<div class="card">Type :layout text or :layout px in the address bar to switch layouts.</div>
+</div>
+<div id="sample">Change my width to see text wrap inside this box.</div>
+<button type="button" id="resizeBox">Change box width</button>
+<p id="boxSize"></p>
 <script>
 var count = 6 * 7;
 document.getElementById('answer').textContent = 'JavaScript works: 6 * 7 = ' + count;
 document.write('<p>This paragraph was written by JavaScript.</p>');
+function showBoxSize() {
+    var box = document.getElementById('sample');
+    var rect = box.getBoundingClientRect();
+    document.getElementById('boxSize').textContent = 'Box: ' + rect.width + ' x ' + rect.height +
+        ' pixels; client: ' + box.clientWidth + ' x ' + box.clientHeight;
+}
+document.getElementById('resizeBox').onclick = function () {
+    var box = document.getElementById('sample');
+    box.style.width = box.style.width === '200px' ? '120px' : '200px';
+    showBoxSize();
+};
+showBoxSize();
 </script>
 <p><a href="javascript:document.title='JS link works';">Change the title</a></p>
 </body></html>

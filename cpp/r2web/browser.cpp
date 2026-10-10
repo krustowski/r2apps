@@ -41,6 +41,7 @@
 
 #include "../memento-hello/web/css.h"
 #include "../memento-hello/web/doc.h"
+#include "../memento-hello/web/boxpaint.h"
 #include "../memento-hello/web/image.h"
 #include "../memento-hello/web/loader.h"
 #include "../memento-hello/web/net_r2.h"
@@ -85,6 +86,8 @@ private:
     web::Document doc;
     web::ScriptPage script;
     bool jsOn = true;
+    int pixelViewportHeight = 0;
+    bool pixelsOn = true; // pixel boxes replace text layout by default
     int scriptNext = -1;
     //  The page's own loop: when it was last laid out again and when its
     //  animation frames last ran (both at a few per second at most: a layout
@@ -227,7 +230,12 @@ private:
     PlatformColor *cChrome = nullptr, *cChromeDark = nullptr, *cMark = nullptr, *cFocus = nullptr;
     PlatformColor *cField = nullptr;   // the buttons and the address box
     PlatformColor *cOnFocus = nullptr; // text on cFocus
-    PlatformColor *cPal[16] = {};      // the EGA palette, for the page's own colours
+    PlatformColor *cPal[16] = {};      // EGA colours for chrome and text mode
+    PlatformColor *cPage[256] = {};   // CSS colours, quantised once by the bitmap
+    uint32_t pageRgbValues[256] = {};
+    int pageColorCount = 0;
+    PlatformDrawingContext *pageDc = nullptr;
+    bool pageIsDark = false;
     PlatformFont *font = nullptr, *bigFont = nullptr;
     double cw = 3, ch = 6;     // one cell of the small font, in window units
     double rowH = 7;           // a row of text, with a unit of leading
@@ -342,6 +350,7 @@ private:
                         "the address bar; <code>:css off</code> shows pages without their style sheets, "
                         "<code>:img off</code> without their pictures (PNG, JPEG, GIF and BMP, the first "
                         "16 on a page), and "
+                        "<code>:layout text</code> switches to the old cell layout; <code>:layout px</code> returns to pixel boxes. "
                         "<code>:js off</code> disables page scripts (what they logged is on "
                         "<a href=\"about:console\">about:console</a>), and "
                         "<code>:dark on</code> (or Ctrl+D) draws them light on dark. Under "
@@ -491,6 +500,19 @@ private:
             ok = web::ieq(cmd + 3, "on") || web::ieq(cmd + 3, "off");
             if (ok) { jsOn = web::ieq(cmd + 3, "on"); reload(); }
         }
+        else if (web::istarts(cmd, "layout ")) {
+            ok = web::ieq(cmd + 7, "px") || web::ieq(cmd + 7, "text");
+            if (ok && pixelsOn != web::ieq(cmd + 7, "px")) {
+                int pixelScroll = pixelsOn ? scrollRow : (int)(scrollRow * rowH * pxPerUnit);
+                pixelsOn = !pixelsOn;
+                scrollRow = pixelsOn ? pixelScroll : (int)(pixelScroll / (rowH * pxPerUnit));
+                for (int i=0;i<histLen;++i)
+                    hist[i].scroll = pixelsOn ? (int)(hist[i].scroll*rowH*pxPerUnit) : (int)(hist[i].scroll/(rowH*pxPerUnit));
+                doc.layout(0); findLine = (size_t)-1;
+                updateLayoutViewport();
+                wnd->Repaint();
+            }
+        }
         else if (web::istarts(cmd, "dns "))
             ok = web::r2NetSetDns(cmd + 4);
         else if (web::istarts(cmd, "gw "))
@@ -539,7 +561,7 @@ private:
                 setDark(web::ieq(cmd + 5, "on"));
         }
         web::scopy(message,
-                   ok ? "Setting changed." : "Unknown command; try :dns <ip>, :gw <ip>, :css on|off, :img on|off or :dark on|off",
+                   ok ? "Setting changed." : "Unknown command; try :dns <ip>, :gw <ip>, :css on|off, :img on|off, :dark on|off or :layout px|text",
                    sizeof(message));
         wnd->Repaint();
     }
@@ -762,6 +784,7 @@ private:
             saved.push(0);
         }
         doc.loadHtml(pageBody.data, pageBody.len, pageCharset, sheets, n, cssOn);
+        script.setLayoutSheets(sheets, n);
         if (!saved.failed) for (size_t at = 0; at + sizeof(Saved) < saved.len;) {
             Saved s; memcpy(&s, saved.data + at, sizeof(s)); at += sizeof(s);
             int i = -1;
@@ -789,6 +812,9 @@ private:
         int editNode = edit == EDIT_FIELD && editControl >= 0 && editControl < doc.controlCount()
                            ? web::ScriptPage::nodeOf(doc.str(doc.control(editControl).onclick))
                            : -1;
+        bool keepMenu = menuOpen;
+        int menuTarget = menuLink;
+        int menuNode = keepMenu && menuTarget >= 0 ? web::ScriptPage::nodeOf(doc.linkHandler(menuTarget)) : -1;
         int scroll = scrollRow;
         web::StyleSheetText sheets[MAX_SHEETS];
         for (int i = 0; i < nSheets; ++i) sheets[i] = {sheetBody[i].data, sheetBody[i].len};
@@ -802,6 +828,21 @@ private:
                     focusedLink = i;
                     break;
                 }
+        // A DOM refresh changes link indexes, but is not a menu dismissal.
+        // Keep its items, selection and position, and follow the original node.
+        // If that node disappeared, close instead of acting on a different link.
+        if (keepMenu)
+        {
+            menuLink = -1;
+            if (menuNode >= 0)
+                for (int i = 0; i < doc.linkCount(); i++)
+                    if (web::ScriptPage::nodeOf(doc.linkHandler(i)) == menuNode)
+                    {
+                        menuLink = i;
+                        break;
+                    }
+            menuOpen = menuTarget < 0 || menuLink >= 0;
+        }
         if (editNode >= 0)
         {
             editControl = controlOfNode(editNode);
@@ -922,6 +963,10 @@ private:
         lastScriptError[0] = 0;
         if (jsOn && script.start(pageBody, pageCharset, current))
         {
+            web::StyleSheetText sheets[MAX_SHEETS];
+            for (int i=0;i<nSheets;++i) sheets[i]={sheetBody[i].data,sheetBody[i].len};
+            script.setLayoutSheets(sheets,cssOn?nSheets:0);
+            updateLayoutViewport();
             scriptNext = 0;
             ensureIdleLoop(true);
             fetchNextScript();
@@ -1447,6 +1492,16 @@ private:
 
     // ── Scrolling and links ───────────────────────────────────────────────────
 
+    int scrollStep() const { return pixelsOn ? (int)(rowH * pxPerUnit + 0.5) : 1; }
+
+    void updateLayoutViewport()
+    {
+        int glyphW = (int)(cw * pxPerUnit + 0.5), lineH = (int)(rowH * pxPerUnit + 0.5);
+        script.setPixelViewport((int)((contentW-2)*pxPerUnit), (int)(contentH*pxPerUnit), glyphW, lineH,
+                                pixelsOn?scrollRow:scrollRow*lineH,pixelsOn,cssOn,dark);
+        script.setLayoutImages(&doc);
+    }
+
     int maxScroll() const
     {
         int m = doc.rows() - visibleRows + 1;
@@ -1462,6 +1517,7 @@ private:
         if (row != scrollRow)
         {
             scrollRow = row;
+            updateLayoutViewport();
             wnd->Repaint();
         }
     }
@@ -1536,6 +1592,8 @@ private:
     {
         if (x < contentX || y < contentY || x >= contentX + contentW || y >= contentY + contentH)
             return -1;
+        if (pixelsOn) return doc.pixelLinkAt((int)((x-contentX-1)*pxPerUnit),
+                                            scrollRow+(int)((y-contentY)*pxPerUnit));
         int row = scrollRow + (int)((y - contentY) / rowH);
         size_t li = doc.lineAtRow(row);
         if (li >= doc.lineCount())
@@ -1802,7 +1860,7 @@ private:
         }
         case PlatformWindowInputEventType::OnMouseWheel:
             closeMenu();
-            scrollTo(scrollRow + (data->Data.OnMouseWheel.up ? -3 : 3));
+            scrollTo(scrollRow + (data->Data.OnMouseWheel.up ? -3 : 3) * scrollStep());
             return;
         case PlatformWindowInputEventType::OnMouseClick:
             if (data->Data.OnMouseClick.state == PlatformWindowButtonState::Pressed)
@@ -1941,7 +1999,7 @@ private:
         bool ctrl = key->isLeftControl || key->isRightControl;
         bool alt = key->isLeftAlt || key->isRightAlt;
         bool shift = key->isLeftShift || key->isRightShift;
-        int page = visibleRows > 2 ? visibleRows - 2 : 1;
+        int page = visibleRows > 2*scrollStep() ? visibleRows - 2*scrollStep() : scrollStep();
 
         if (key->isEscape)
         {
@@ -2017,9 +2075,9 @@ private:
             return;
         }
         if (key->isArrowUp)
-            scrollTo(scrollRow - 1);
+            scrollTo(scrollRow - scrollStep());
         else if (key->isArrowDown)
-            scrollTo(scrollRow + 1);
+            scrollTo(scrollRow + scrollStep());
         else if (key->isPageUp)
             scrollTo(scrollRow - page);
         else if (key->isPageDown || (key->isChar && key->theChar == ' '))
@@ -2265,7 +2323,7 @@ private:
                 if (n + 1 < cap)
                     web::scopyn(out + n, doc.text(ru.off), ru.len, cap - n);
             }
-            if (found && !here)
+            if (found && !here && !pixelsOn)
                 break;
         }
     }
@@ -2273,6 +2331,13 @@ private:
     //  Just below where link l is drawn, for a menu opened by key.
     void linkPoint(int l, double &x, double &y)
     {
+        if (pixelsOn) {
+            int px,py;
+            if (doc.pixelLinkPoint(l,px,py) && py>=scrollRow && py<scrollRow+visibleRows) {
+                x=contentX+1+px/pxPerUnit;y=contentY+(py-scrollRow)/pxPerUnit+rowH;
+            }
+            return;
+        }
         int row = doc.linkRow(l);
         if (row < scrollRow || row >= scrollRow + visibleRows)
             return;
@@ -2401,13 +2466,13 @@ private:
     {
         if (cPal[0])
             return;
-        //  Everything is quantised to the 16 EGA colours, so the palette is
-        //  all there is; the theme picks from it.
+        // Chrome keeps EGA colours; CSS uses the active framebuffer palette.
         static const uint32_t ega[16] = {0xFF000000, 0xFF0000AA, 0xFF00AA00, 0xFF00AAAA, 0xFFAA0000, 0xFFAA00AA,
                                          0xFFAA5500, 0xFFAAAAAA, 0xFF555555, 0xFF5555FF, 0xFF55FF55, 0xFF55FFFF,
                                          0xFFFF5555, 0xFFFF55FF, 0xFFFFFF55, 0xFFFFFFFF};
         for (int k = 0; k < 16; k++)
             cPal[k] = dc->CreateColor(ega[k], nullptr, nullptr);
+        pageDc = dc;
         font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         bigFont = dc->CreateFont(12, nullptr, false, false, false, nullptr, nullptr);
         if (font)
@@ -2457,6 +2522,32 @@ private:
     {
         static const uint8_t opposite[16] = {15, 9, 10, 11, 12, 13, 14, 8, 7, 1, 2, 3, 4, 5, 6, 0};
         return dark ? opposite[idx & 15] : idx;
+    }
+
+    static int rgbLuma(uint32_t rgb)
+    {
+        return (((rgb >> 16) & 255)*30 + ((rgb >> 8) & 255)*59 + (rgb & 255)*11)/100;
+    }
+
+    PlatformColor *pageRgb(uint32_t rgb)
+    {
+        // An authored dark canvas already supplies a dark theme.
+        if (dark && !pageIsDark) rgb = web::cssDarkRgb(rgb);
+        for (int k=0;k<pageColorCount;++k) if(pageRgbValues[k]==rgb) return cPage[k];
+        if (pageColorCount<256) {
+            PlatformColor *c=pageDc->CreateColor(rgb,nullptr,nullptr);
+            if(c) {pageRgbValues[pageColorCount]=rgb;cPage[pageColorCount++]=c;return c;}
+        }
+        // Bound resource use across pages with many different colours.
+        int best=0;int64_t distance=0x7FFFFFFF;
+        for(int k=0;k<pageColorCount;++k) {
+            int dr=int((rgb>>16)&255)-int((pageRgbValues[k]>>16)&255);
+            int dg=int((rgb>>8)&255)-int((pageRgbValues[k]>>8)&255);
+            int db=int(rgb&255)-int(pageRgbValues[k]&255);
+            int64_t d=3*dr*dr+6*dg*dg+db*db;
+            if(d<distance){distance=d;best=k;}
+        }
+        return pageColorCount?cPage[best]:cText;
     }
 
     void setDark(bool on)
@@ -2649,7 +2740,16 @@ private:
 
     void paintPage(PlatformBitmap *t)
     {
-        t->FillRect(Coord(contentX - 1), Coord(contentY - 1), Coord(contentW + 1), Coord(contentH + 1), cBg, false);
+        PlatformColor *background=cBg;
+        uint32_t canvasRgb=0;
+        if(pixelsOn)for(size_t i=1;i<doc.boxCount();++i) {
+            const web::Box &b=doc.box(i);
+            if(b.style.bgRgb && (b.tag==web::cssHash("html",4,true) || b.tag==web::cssHash("body",4,true)))
+                canvasRgb=b.style.bgRgb;
+        }
+        pageIsDark=canvasRgb && rgbLuma(canvasRgb)<128;
+        if(canvasRgb)background=pageRgb(canvasRgb);
+        t->FillRect(Coord(contentX - 1), Coord(contentY - 1), Coord(contentW + 1), Coord(contentH + 1), background, false);
 
         //  The pixels a cell and a row take, which is what pictures are
         //  measured in.  From the DPI, not from the bitmap: Memento allocates
@@ -2661,25 +2761,48 @@ private:
             pxPerUnit = wnd->GetEffectiveDPI() / 96.0;
         doc.setCellPixels((int)(cw * pxPerUnit + 0.5), (int)(rowH * pxPerUnit + 0.5));
 
-        int cols = (int)((contentW - 2) / cw);
-        if (cols != doc.layoutCols())
+        int cols = pixelsOn ? (int)((contentW-2)*pxPerUnit) : (int)((contentW - 2) / cw);
+        if (cols != doc.layoutCols() || pixelsOn != doc.pixelLayout() || (pixelsOn && pixelViewportHeight!=(int)(contentH*pxPerUnit)))
         {
-            doc.layout(cols);
+            if (pixelsOn) doc.layoutPixels(cols,(int)(cw*pxPerUnit+0.5),(int)(rowH*pxPerUnit+0.5),(int)(contentH*pxPerUnit));
+            else doc.layout(cols);
+            pixelViewportHeight=(int)(contentH*pxPerUnit);
             if (scrollRow > maxScroll())
                 scrollRow = maxScroll();
         }
 
         t->SetClip(Coord(contentX), Coord(contentY), Coord(contentW), Coord(contentH), false);
+        if (pixelsOn) {
+            for (size_t i=1;i<doc.boxCount();++i) {
+                const web::Box &b=doc.box(i);
+                if (b.y+b.h<=scrollRow || b.y>=scrollRow+visibleRows) continue;
+                int control=doc.linkControl(b.link);
+                bool selected=b.link>=0 && (b.link==focusedLink || (edit==EDIT_FIELD && control==editControl));
+                bool controlBox=control>=0 && b.atomic;
+                PlatformColor *fill=b.style.bgRgb?pageRgb(b.style.bgRgb):controlBox?cChrome:nullptr;
+                if(selected && controlBox && !doc.control(control).isButton()) fill=cFocus;
+                PlatformColor *edge=b.style.box.borderRgb?pageRgb(b.style.box.borderRgb):
+                                    b.style.fgRgb?pageRgb(b.style.fgRgb):cText;
+                // Focus changes the outline, preserving the primary button's fill.
+                if ((selected || b.link==hoverLink) && controlBox) edge=b.style.fgRgb?pageRgb(b.style.fgRgb):cFocus;
+                web::paintBox(b,[&](int bx,int by,int bw,int bh,bool border) {
+                    PlatformColor *c=border?edge:fill;
+                    if(c)t->FillRect(Coord(contentX+1+bx/pxPerUnit),Coord(contentY+(by-scrollRow)/pxPerUnit),
+                                     Coord(bw/pxPerUnit),Coord(bh/pxPerUnit),c,false);
+                });
+            }
+        }
         char buf[512];
         for (size_t li = doc.lineAtRow(scrollRow); li < doc.lineCount(); li++)
         {
             const web::Line &l = doc.line(li);
-            if (l.row >= scrollRow + visibleRows)
-                break;
-            double y = contentY + (l.row - scrollRow) * rowH;
+            if (l.row >= scrollRow + visibleRows) { if (!pixelsOn) break; else continue; }
+            if (pixelsOn && l.row+l.height()<=scrollRow) continue;
+            double y = contentY + (l.row - scrollRow) * (pixelsOn ? 1/pxPerUnit : rowH);
             if (l.hr)
             {
-                t->FillRect(Coord(contentX + 1), Coord(y + rowH / 2), Coord(cols * cw), Coord(0.5), cFaint, false);
+                t->FillRect(Coord(contentX + 1 + (pixelsOn?l.imgX/pxPerUnit:0)), Coord(y + (pixelsOn?0:rowH/2)),
+                            Coord(pixelsOn?l.imgW/pxPerUnit:cols*cw), Coord(0.5), cFaint, false);
                 continue;
             }
             if (l.img)
@@ -2688,14 +2811,14 @@ private:
                 continue;
             }
             double cell = l.big ? bcw : cw;
-            double lh = l.big ? rowH * 2 : rowH;
+            double lh = pixelsOn ? l.height()/pxPerUnit : l.big ? rowH * 2 : rowH;
             for (uint32_t r = 0; r < l.nRuns; r++)
             {
                 const web::Run &ru = doc.run(l.firstRun + r);
                 size_t n = ru.len < sizeof(buf) - 1 ? ru.len : sizeof(buf) - 1;
                 memcpy(buf, doc.text(ru.off), n);
                 buf[n] = 0;
-                double x = contentX + 1 + ru.col * cell;
+                double x = contentX + 1 + (pixelsOn ? ru.x/pxPerUnit : ru.col * cell);
                 double w = n * cell;
 
                 bool isLink = ru.link >= 0;
@@ -2720,8 +2843,10 @@ private:
                     }
                     bool typing = edit == EDIT_FIELD && editControl == ci;
                     PlatformColor *box = focused || typing ? cFocus : cChrome;
-                    t->FillRect(Coord(x), Coord(y), Coord(w), Coord(lh - 1), box, false);
-                    text(t, x, y, w + cell, lh, buf, focused || typing ? cOnFocus : cText, font, !live);
+                    if (!pixelsOn) t->FillRect(Coord(x), Coord(y), Coord(w), Coord(lh - 1), box, false);
+                    PlatformColor *fg=pixelsOn ? (typing || (focused && !c.isButton()))?cOnFocus:
+                                      ru.fgRgb?pageRgb(ru.fgRgb):cText : focused||typing?cOnFocus:cText;
+                    text(t, x, y, w + cell, lh, buf, fg, font, !live);
                     continue;
                 }
 
@@ -2729,7 +2854,7 @@ private:
                 //  what is behind it (the find mark, when there is one)
                 //  gives way to black or white.
                 int bgIdx = pageColour(ru.bg ? ru.bg - 1 : 15);
-                int fgIdx = isLink ? 1 : ru.fg ? ru.fg - 1 : l.big ? 1 : (ru.style & web::ST_FAINT) ? 8 : 0;
+                int fgIdx = ru.fg ? ru.fg - 1 : isLink ? 1 : l.big ? 1 : (ru.style & web::ST_FAINT) ? 8 : 0;
                 fgIdx = pageColour(fgIdx);
                 int under = found ? (dark ? DARK : LIGHT).mark : bgIdx;
                 int dl = web::cssLuma((uint8_t)fgIdx) - web::cssLuma((uint8_t)under);
@@ -2737,7 +2862,7 @@ private:
                     dl = -dl;
                 if (dl < 90)
                     fgIdx = web::cssLuma((uint8_t)under) < 128 ? 15 : 0;
-                PlatformColor *fg = cPal[fgIdx];
+                PlatformColor *fg = pixelsOn && ru.fgRgb?pageRgb(ru.fgRgb):cPal[fgIdx];
                 if (focused)
                 {
                     t->FillRect(Coord(x), Coord(y), Coord(w), Coord(lh - 1), cFocus, false);
@@ -2745,11 +2870,11 @@ private:
                 }
                 else if (found)
                     t->FillRect(Coord(x), Coord(y), Coord(w), Coord(lh - 1), cMark, false);
-                else if (bgIdx != pageColour(15))
+                else if (!pixelsOn && bgIdx != pageColour(15))
                     t->FillRect(Coord(x), Coord(y), Coord(w), Coord(lh - 1), cPal[bgIdx], false);
 
                 text(t, x, y, w + cell, lh, buf, fg, l.big ? bigFont : font, (ru.style & web::ST_BOLD) || l.big);
-                if ((isLink || (ru.style & web::ST_UNDER)) && !focused)
+                if (((ru.style & web::ST_UNDER) || (isLink && (!pixelsOn || ru.link==hoverLink))) && !focused)
                     t->FillRect(Coord(x), Coord(y + lh - 1.5), Coord(w), Coord(0.5),
                                 isLink && ru.link == hoverLink ? cText : fg, false);
             }
@@ -2761,11 +2886,10 @@ private:
             for (size_t li = doc.lineAtRow(scrollRow); li < doc.lineCount(); li++)
             {
                 const web::Line &l = doc.line(li);
-                if (l.row >= scrollRow + visibleRows)
-                    break;
+                if (l.row >= scrollRow + visibleRows) { if (!pixelsOn) break; else continue; }
                 if (!l.img || l.link != focusedLink)
                     continue;
-                double x = contentX + 1 + l.imgX / pxPerUnit, y = contentY + (l.row - scrollRow) * rowH;
+                double x = contentX + 1 + l.imgX / pxPerUnit, y = contentY + (l.row - scrollRow) * (pixelsOn?1/pxPerUnit:rowH);
                 double w = l.imgW / pxPerUnit, h = l.imgH / pxPerUnit;
                 t->SetClip(Coord(contentX), Coord(contentY), Coord(contentW), Coord(contentH), false);
                 t->FillRect(Coord(x - 1), Coord(y - 1), Coord(w + 2), Coord(1), cFocus, false);
@@ -2846,13 +2970,13 @@ private:
         contentY = toolbarH + 1;
         contentW = W - contentX - SCROLL_W - 1;
         contentH = H - contentY - sh - 1;
-        visibleRows = (int)(contentH / rowH);
+        if (wnd->GetEffectiveDPI()>0) pxPerUnit=wnd->GetEffectiveDPI()/96.0;
+        visibleRows = pixelsOn ? (int)(contentH*pxPerUnit) : (int)(contentH / rowH);
         if (visibleRows < 1)
             visibleRows = 1;
         //  What layout queries and media queries see (window.innerWidth...).
-        script.setViewport((int)(contentW / cw), visibleRows, (int)(cw * pxPerUnit + 0.5), (int)(rowH * pxPerUnit + 0.5),
-                           dark);
         paintPage(target);
+        updateLayoutViewport();
         paintStatus(target, W, H);
         if (menuOpen)
             paintMenu(target);
