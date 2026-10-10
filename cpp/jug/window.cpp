@@ -19,7 +19,8 @@
 //  While it is open the window keeps looking: at the list every `check`
 //  seconds of jug.cfg, and every few seconds at /mnt/tmp/jug, which the
 //  console's jug may change.  Fresh builds a check finds are named on the
-//  status line, and Memento marks the window until it is looked at.
+//  status line. Memento shows their count over the taskbar clock and marks
+//  the window until it is looked at.
 //
 
 class JugWindow
@@ -64,8 +65,10 @@ private:
     bool mementoUpdated = false;                  // prompt after the download queue
     bool onlyUpdates = false;                      // F: the programs that are not current
     r2::vector<int> view;                          // the rows shown, as indices into model.rows
-    r2::vector<r2::string> fresh;                  // what a check found new, named once read
+    r2::vector<r2::string> fresh;                  // what a refresh found new, named once read
     bool announce = false;
+    bool checkedList = false;                     // first successful refresh reports existing updates too
+    bool announceListChange = false;              // only automatic checks report changes without updates
     jug::Digest diskSeen;                          // /mnt/tmp/jug as this window left it
     bool restamp = true;                           // ... once the rows are read again
     char status[160] = {};
@@ -220,26 +223,26 @@ private:
             checking = false;
             listAt = r2::ticks();
             jug::Catalog older;
-            if (automatic)
+            if (checkedList)
                 older = model.catalog;
             if (!fetch.ok())
                 say(automatic ? "Checking the list: " : "The list: ", fetch.error());
             else if (!model.takeList(resp.body.data, resp.body.len, resp.lastModified, automatic ? &changed : nullptr))
                 say("That is no list of programs: ", model.config.list);
-            else if (!changed)
+            else if (!changed && checkedList)
             {
                 // the same list: nothing to say
             }
             else
             {
                 restamp = true;
-                if (automatic)
-                {
-                    //  Named once the programs here are read again.
-                    fresh = model.catalog.freshSince(older);
-                    announce = true;
-                }
-                else
+                //  Named once the programs here are read again. The first
+                //  refresh compares against an empty list, even with a cache.
+                fresh = model.catalog.freshSince(older);
+                announce = true;
+                announceListChange = automatic;
+                checkedList = true;
+                if (!automatic)
                 {
                     char n[16] = {};
                     jug::scatU(n, model.catalog.packages.size(), sizeof(n));
@@ -283,7 +286,7 @@ private:
         }
     }
 
-    //  The builds a check found that this machine has not got.
+    //  The builds a refresh found that this machine has not got.
     void tellFresh()
     {
         char names[64] = {};
@@ -299,7 +302,8 @@ private:
         fresh = r2::vector<r2::string>();
         if (!n)
         {
-            say("The list changed; nothing new for this machine.");
+            if (announceListChange)
+                say("The list changed; nothing new for this machine.");
             return;
         }
         if (n > 4)
@@ -309,7 +313,7 @@ private:
             jug::scat(names, " programs", sizeof(names));
         }
         say("Fresh on the server: ", names, ".  G gets one, A all updates.");
-        askAttention();
+        notifyUpdates((uint32_t)n);
     }
 
     void onIdle()

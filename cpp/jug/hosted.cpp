@@ -38,9 +38,12 @@ static void clipboardSet(const char *s)
     }
 }
 
-//  Fresh builds found by a check: Memento marks the window (red title and
-//  taskbar button) unless it has the focus.
-static void askAttention() { r2web::store(&g_host->attentionPending, 1); }
+//  Fresh builds: Memento shows their count over the taskbar clock and marks
+//  the window (red title and taskbar button) unless it has the focus.
+static void notifyUpdates(uint32_t count)
+{
+    r2web::store(&g_host->attentionPending, jughost::UpdateNotification | count);
+}
 
 #include "window.cpp"
 

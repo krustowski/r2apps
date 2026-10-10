@@ -14,4 +14,8 @@ namespace jughost {
 constexpr uint32_t Magic = 0x3147554a; // "JUG1"
 //  The local ports of the window's connections; the command line has 46000.
 constexpr uint32_t PortBase = 46100;
+//  attentionPending: this flag plus the number of fresh builds asks Memento
+//  for a clock notification as well as attention. Legacy value 1 asks only
+//  for attention; older hosts treat either value as an attention request.
+constexpr uint32_t UpdateNotification = 1u << 31;
 } // namespace jughost

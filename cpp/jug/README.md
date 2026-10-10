@@ -61,9 +61,14 @@ sets keyboard focus. Restart still requires **Y** to confirm.
 While open, the window keeps checking. It fetches the list again every `check`
 seconds (see below); a list that has not changed leaves the window as it was.
 When it has, the status line names the fresh builds this machine does not
-have yet, and Memento marks the Jug window for attention (red title bar and
+have yet. Memento shows **Jug: 1 new update available.** (or the number of
+updates) for six seconds in the bubble above the taskbar clock, even when
+Jug has focus, and marks the Jug window for attention (red title bar and
 taskbar button until it is focused), as it does for IRC and Telegram
-messages. Every five seconds it also looks at `/mnt/tmp/jug`, and reads the
+messages. The first successful refresh also reports existing updates,
+including with a cached list; **Update/U** reports newly discovered builds.
+Unchanged builds and programs already current do not repeat the notification.
+Every five seconds it also looks at `/mnt/tmp/jug`, and reads the
 programs again when another Jug (such as `fg jug upgrade` on the console)
 downloaded, replaced or removed one. Checks wait while a transfer runs or a
 **Y / N** question is open; **Get** and **Get all** interrupt a check in
