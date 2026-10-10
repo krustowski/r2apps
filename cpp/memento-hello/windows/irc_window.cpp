@@ -701,11 +701,16 @@ class IRCWindow
         if (!netDriverInit)
         {
             static const unsigned char eth[] = {'e', 't', 'h', 0};
+            // The driver registration through netmux when it is free, so the
+            // rest of Memento knows it is this process's: c/libcr2 would take
+            // it as quietly as it takes the port.
+            netmux_take_driver();
             if (net_driver_bind_port(eth, LOCAL_PORT) < 0)
             {
                 addLine("[net: driver init failed]");
                 return;
             }
+            netmux_port_bound(LOCAL_PORT, "IRC");
             net_get_local_ip(my_ip);
             // ARP broadcast to seed the cache before SYN is sent
             unsigned char f[42];
@@ -738,7 +743,7 @@ class IRCWindow
             f[39] = server_ip[1];
             f[40] = server_ip[2];
             f[41] = server_ip[3];
-            send_eth_frame(f, 42);
+            netmux_send(f, 42);
             netDriverInit = true;
         }
         else

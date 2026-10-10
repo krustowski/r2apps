@@ -97,6 +97,10 @@ bool bind_port(uint16_t port)
 }
 extern "C" bool netmux_take_driver() { return driver; }
 extern "C" void netmux_claim(int, uint16_t, uint16_t) {}
+extern "C" bool netmux_send(const uint8_t *frame, uint32_t len)
+{ return r2::raw_syscall(r2::Sys::SendPacket, 4, (int64_t)frame, len) == 0; }
+extern "C" void netmux_port_bound(uint16_t, const char *) {}
+extern "C" void netmux_port_released(uint16_t) {}
 extern "C" int64_t netmux_pull(int, uint8_t *out, uint32_t cap)
 {
     auto &queue = incoming[process];

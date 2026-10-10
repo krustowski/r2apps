@@ -14,14 +14,18 @@
 // and Memento itself are refused: the one would take the machine with it, the
 // other every window on the screen.
 //
-// Memory, the second tab (Tab, M, or the button at the right): the user heap
-// with a bar for how full it is, each program with its 2 MiB frame and what it
-// holds on the heap, and Memento's own arena --- from syscall 0x3C through
-// r2::meminfo(), read again every second while the tab is showing.
+// The two lists sit under tabs along the top, Tasks and Memory: a click on
+// one, Tab, T and M, or Left and Right switch between them.  Memory is the user
+// heap with a bar for how full it is, each program with its 2 MiB frame and
+// what it holds on the heap, and Memento's own arena --- from syscall 0x3C
+// through r2::meminfo(), read again every second while the tab is showing.
 //
-// There can be 32 tasks, more than the ten rows the window has room for: the
-// list scrolls to keep the bar in view, and the Memory tab's list scrolls with
-// the arrows.  A thumb at the right edge says where the rows are.
+// Nothing but the tab strip has a fixed place: the columns are spread over the
+// width the window has and the lists take the height left between the strip
+// and the buttons, so a maximised window shows more rows, not a margin.  There
+// can be 32 tasks: the list scrolls to keep the bar in view, the wheel and
+// PgUp/PgDn scroll either list, and a thumb at the right edge says where the
+// rows are.
 //
 
 class TasksWindow
@@ -42,6 +46,9 @@ private:
     int nLive = 0; // last known task count; key handlers use it
     int top = 0;    // the first task row shown
     int memTop = 0; // and the first row of the Memory tab's list
+    int rowsShown = 0; // task rows the last paint had room for
+    int memRows = 0;   // and Memory rows
+    bool follow = true; // bring the bar into view on the next paint
     r2::vector<r2::TaskInfo> tasks; // what the last read returned
     unsigned long lastRead = 0;
     bool haveTasks = false;
@@ -54,25 +61,46 @@ private:
     bool memTab = false;     // showing Memory rather than the tasks
     r2::optional<r2::MemInfo> mem; // what the last read of it returned
     unsigned long memRead = 0;
-    int tabX = 0; // the Memory/Tasks button
 
     // Layout in the window's own client area — the root draws the frame, the
     // title bar and the line on the taskbar, so everything here starts at the
-    // top left corner of the content.
-    static const int HEAD_Y = 3;    // column headers
-    static const int ROW_Y = 15;    // first task row
-    static const int ROW_H = 10;    // one row
-    static const int VISIBLE_ROWS = 10; // task rows on screen at once
+    // top left corner of the content.  The font is the 8x16 glyph, 4 x 8 of
+    // these units.
+    static const int HEAD_Y = TabStrip::BELOW; // column headers, under the tabs
+    static const int ROW_Y = HEAD_Y + 12;    // first task row
+    static const int ROW_H = 10;             // one row
     static const int BACK_W = 80, BACK_H = 11;
     static const int KILL_W = 60;
-    static const int STATUS_Y = ROW_Y + VISIBLE_ROWS * ROW_H + 5;
+    static const int MARGIN = 6; // left of the first column, and right of the last
+    static const int NCOLS = 5;
 
-    // Columns: PID, name, mode, status, and where the task was last put down.
-    static const int COL_PID = 6, COLW_PID = 22;
-    static const int COL_NAME = 30, COLW_NAME = 104;
-    static const int COL_MODE = 136, COLW_MODE = 32;
-    static const int COL_STATUS = 170, COLW_STATUS = 48;
-    static const int COL_RIP = 220, COLW_RIP = 66;
+    // Columns: PID, name, mode, status, and where the task was last put down,
+    // as they sit in the 290-wide window the layout was drawn for. A wider one
+    // stretches them; the address is 16 digits and keeps the 64 they need.
+    static constexpr int TASK_COLS[NCOLS] = {6, 28, 130, 162, 214};
+    static constexpr int MEM_COLS[4] = {6, 28, 110, 200};
+    static const int BASE_RIGHT = 278; // where the last column ends at 290
+
+    // A list's columns for a window W wide: the starts above scaled from
+    // their 290 layout, and each one as wide as the gap to the next.
+    static void spread(const int *base, int n, int W, int *x, int *w)
+    {
+        int right = W - MARGIN - SCROLL_ROOM;
+        for (int i = 0; i < n; i++)
+            x[i] = MARGIN + (base[i] - MARGIN) * (right - MARGIN) / (BASE_RIGHT - MARGIN);
+        for (int i = 0; i < n; i++)
+            w[i] = (i + 1 < n ? x[i + 1] - 2 : right) - x[i];
+    }
+
+    // Where the bottom row of things goes: the buttons along the bottom edge,
+    // a line over them and a line of text over that. The lists end above it.
+    static int backTop(int H) { return H - BACK_H - 2; }
+    static int statusTop(int H) { return backTop(H) - 3 - (ROW_H + 1); }
+    static int rowsFit(int y, int H)
+    {
+        int rows = (statusTop(H) - 2 - y) / ROW_H;
+        return rows < 1 ? 1 : rows;
+    }
 
     static const char *statusStr(unsigned char s)
     {
@@ -311,6 +339,20 @@ private:
             askKill(tasks[sel].id);
     }
 
+    // The bar onto row s, or onto Back past the last one, and into view.
+    void moveSel(int s)
+    {
+        if (s > nLive)
+            s = nLive;
+        if (s < 0)
+            s = 0;
+        if (s == sel)
+            return;
+        sel = s;
+        follow = true;
+        wnd->Repaint();
+    }
+
     void onEvent_(struct PlatformWindowInterfaceInputEvent *data)
     {
         if (data->type == PlatformWindowInputEventType::OnImmediateModeIdleLoop)
@@ -323,20 +365,34 @@ private:
             OnPaint(data->Data.OnPaint.ctx, data->Data.OnPaint.target);
             return;
         }
+        if (data->type == PlatformWindowInputEventType::OnMouseWheel)
+        {
+            // The list under the wheel scrolls; the bar stays on its task,
+            // in view or not. The paint keeps either list in range.
+            int d = data->Data.OnMouseWheel.up ? -3 : 3;
+            if (memTab)
+                memTop += d;
+            else
+                top += d;
+            wnd->Repaint();
+            return;
+        }
         if (data->type == PlatformWindowInputEventType::OnMouseClick)
         {
             if (data->Data.OnMouseClick.state != PlatformWindowButtonState::Pressed)
                 return;
             Coord mx = data->Data.OnMouseClick.mouseX;
             Coord my = data->Data.OnMouseClick.mouseY;
+            int tab = TabStrip::at(F_COORD(mx), F_COORD(my), 2); // 0 Tasks, 1 Memory
+            if (tab >= 0)
+            {
+                if ((tab == 1) != memTab)
+                    setTab(tab == 1);
+                return;
+            }
             if (my >= backY && my < backY + BACK_H && mx >= backX && mx < backX + BACK_W)
             {
                 wnd->Close();
-                return;
-            }
-            if (my >= backY && my < backY + BACK_H && mx >= tabX && mx < tabX + KILL_W)
-            {
-                setTab(!memTab);
                 return;
             }
             if (memTab)
@@ -348,7 +404,7 @@ private:
                 return;
             }
             // Task rows: a hit selects the row it landed in
-            for (int r = 0; r < VISIBLE_ROWS && top + r < nLive; r++)
+            for (int r = 0; r < rowsShown && top + r < nLive; r++)
             {
                 if (my >= ROW_Y + r * ROW_H && my < ROW_Y + r * ROW_H + (ROW_H - 1))
                 {
@@ -368,23 +424,50 @@ private:
             return;
 
         char c = key->isChar ? (char)key->theChar : 0;
-        if (confirmPid < 0 && !typed[0] && (key->isTab || c == 'm' || c == 'M' || (memTab && (c == 't' || c == 'T'))))
+        // Tab flips between the two; T and Left, M and Right pick one. Not
+        // while a PID is being typed or a kill waits for its Y.
+        if (confirmPid < 0 && !typed[0])
         {
-            setTab(!memTab);
-            return;
+            int want = -1;
+            if (key->isTab)
+                want = memTab ? 0 : 1;
+            else if (c == 't' || c == 'T' || key->isArrowLeft)
+                want = 0;
+            else if (c == 'm' || c == 'M' || key->isArrowRight)
+                want = 1;
+            if (want >= 0)
+            {
+                if ((want == 1) != memTab)
+                    setTab(want == 1);
+                return;
+            }
         }
         if (memTab)
         {
+            int page = memRows > 1 ? memRows - 1 : 1;
+            int to = memTop; // drawMemory stops it at the last row
             if (key->isEscape || key->isEnter)
+            {
                 wnd->Close();
-            else if (key->isArrowUp && memTop > 0)
-            {
-                memTop--;
-                wnd->Repaint();
+                return;
             }
+            if (key->isArrowUp)
+                to--;
             else if (key->isArrowDown)
+                to++;
+            else if (key->isPageUp)
+                to -= page;
+            else if (key->isPageDown)
+                to += page;
+            else if (key->isHome)
+                to = 0;
+            else if (key->isEnd)
+                to = r2::MaxSlots + 1;
+            if (to < 0)
+                to = 0;
+            if (to != memTop)
             {
-                memTop++; // drawMemory stops it at the last row
+                memTop = to;
                 wnd->Repaint();
             }
             return;
@@ -457,28 +540,24 @@ private:
             wnd->Close();
             return;
         }
+        // Up and Down go a row at a time, Down past the last row onto Back;
+        // the page keys go a screenful and stay on the rows.
+        int page = rowsShown > 1 ? rowsShown - 1 : 1;
+        int last = nLive > 0 ? nLive - 1 : 0;
         if (key->isArrowUp)
-        {
-            if (sel > 0)
-            {
-                sel--;
-                wnd->Repaint();
-            }
-            return;
-        }
-        if (key->isArrowDown)
-        {
-            if (sel < nLive)
-            {
-                sel++;
-                wnd->Repaint();
-            }
-            return;
-        }
-        if (key->isEnter && sel == nLive)
-        {
+            moveSel(sel - 1);
+        else if (key->isArrowDown)
+            moveSel(sel + 1);
+        else if (key->isPageUp)
+            moveSel(sel - page);
+        else if (key->isPageDown)
+            moveSel(sel + page < last ? sel + page : last);
+        else if (key->isHome)
+            moveSel(0);
+        else if (key->isEnd)
+            moveSel(last);
+        else if (key->isEnter && sel == nLive)
             wnd->Close();
-        }
     }
 
     void OnPaint(PlatformDrawingContext *dc, PlatformBitmap *target)
@@ -491,7 +570,7 @@ private:
             light = dc->CreateColor(0xFFE0E0FF, nullptr, nullptr);
         // One size, the same one every other window uses: on the 640x400
         // screen that is the 8x16 glyph, which is what lets five columns and a
-        // 16-digit address share a 320-wide window.
+        // 16-digit address share a 290-wide window.
         if (!font)
             font = dc->CreateFont(6, nullptr, false, false, false, nullptr, nullptr);
         if (!dark || !light || !font)
@@ -514,20 +593,12 @@ private:
         nLive = n;
         if (sel > nLive)
             sel = nLive;
-        // The bar stays in view; on Back the list stays where it was.
-        if (sel < nLive && sel < top)
-            top = sel;
-        if (sel < nLive && sel >= top + VISIBLE_ROWS)
-            top = sel - VISIBLE_ROWS + 1;
-        if (top > n - VISIBLE_ROWS)
-            top = n - VISIBLE_ROWS;
-        if (top < 0)
-            top = 0;
 
-        Coord W = target->GetWidth();
-        Coord H = target->GetHeight();
+        Coord cw = target->GetWidth();
+        Coord ch = target->GetHeight();
+        int W = F_COORD(cw), H = F_COORD(ch);
 
-        target->FillRect(0, 0, W, H, light, false);
+        target->FillRect(0, 0, cw, ch, light, false);
 
         PlatformDrawTextOptions opts{};
         opts.font = font;
@@ -535,14 +606,17 @@ private:
         opts.horizontalAlign = PlatformAlign::Begin;
         opts.verticalAlign = PlatformAlign::Middle;
 
+        // The page first: the strip's corner note on Memory needs the
+        // reading it takes.
         if (memTab)
-            drawMemory(target, opts, F_COORD(W));
+            drawMemory(target, opts, W, H);
         else
-            drawTasks(target, opts, F_COORD(W), n);
+            drawTasks(target, opts, W, H, n);
+        drawTabs(target, opts, W, n);
 
         // Separator + Back button along the bottom of the client area
-        backX = (F_COORD(W) - BACK_W) / 2;
-        backY = F_COORD(H) - BACK_H - 2;
+        backX = (W - BACK_W) / 2;
+        backY = backTop(H);
         target->FillRect(2, backY - 3, W - 4, 1, dark, false);
         bool backFocused = !memTab && (sel == nLive);
         opts.horizontalAlign = PlatformAlign::Middle;
@@ -563,13 +637,9 @@ private:
         target->DrawText(backX, backY, BACK_W, BACK_H, "Back", &opts, false);
 
         // Kill, at the left: the task on the bar.
-        killX = 6;
+        killX = MARGIN;
         if (!memTab)
             button(target, opts, killX, backY, "Kill");
-
-        // The other tab, at the right.
-        tabX = F_COORD(W) - 6 - KILL_W;
-        button(target, opts, tabX, backY, memTab ? "Tasks" : "Memory");
     }
 
     void button(PlatformBitmap *target, PlatformDrawTextOptions &opts, int x, int y, const char *label)
@@ -579,6 +649,35 @@ private:
         opts.foreground = dark;
         opts.horizontalAlign = PlatformAlign::Middle;
         target->DrawText(x, y, KILL_W, BACK_H, (const mchar *)label, &opts, false);
+    }
+
+    // The strip: Tasks and Memory, and at the right end a word on what the
+    // page holds.
+    void drawTabs(PlatformBitmap *target, PlatformDrawTextOptions &opts, int W, int n)
+    {
+        static const char *const labels[2] = {"Tasks", "Memory"};
+        char note[48];
+        note[0] = 0;
+        if (memTab)
+        {
+            if (mem)
+            {
+                append(note, sizeof note, "RAM ");
+                appendU(note, sizeof note, mem->total_ram / (1024 * 1024));
+                append(note, sizeof note, " MiB");
+            }
+        }
+        else
+        {
+            int user = 0;
+            for (int i = 0; i < n; i++)
+                user += tasks[i].mode != 0;
+            appendU(note, sizeof note, n);
+            append(note, sizeof note, n == 1 ? " task, " : " tasks, ");
+            appendU(note, sizeof note, user);
+            append(note, sizeof note, " user");
+        }
+        TabStrip::draw(target, opts, dark, light, W, labels, 2, memTab ? 1 : 0, note);
     }
 
     // A thumb along the right edge for a list of `total` rows of which `shown`
@@ -596,22 +695,46 @@ private:
         target->FillRect(W - 7, thumbY, 3, thumbH, dark, false);
     }
 
-    void drawTasks(PlatformBitmap *target, PlatformDrawTextOptions &opts, int W, int n)
+    void drawTasks(PlatformBitmap *target, PlatformDrawTextOptions &opts, int W, int H, int n)
     {
+        int x[NCOLS], w[NCOLS];
+        spread(TASK_COLS, NCOLS, W, x, w);
+
         // Column headers
-        target->DrawText(COL_PID, HEAD_Y, COLW_PID, 10, "PID", &opts, false);
-        target->DrawText(COL_NAME, HEAD_Y, COLW_NAME, 10, "Name", &opts, false);
-        target->DrawText(COL_MODE, HEAD_Y, COLW_MODE, 10, "Mode", &opts, false);
-        target->DrawText(COL_STATUS, HEAD_Y, COLW_STATUS, 10, "Status", &opts, false);
-        target->DrawText(COL_RIP, HEAD_Y, COLW_RIP, 10, "RIP", &opts, false);
+        static const char *const heads[NCOLS] = {"PID", "Name", "Mode", "Status", "RIP"};
+        opts.foreground = dark;
+        for (int c = 0; c < NCOLS; c++)
+            target->DrawText(x[c], HEAD_Y, w[c], 10, (const mchar *)heads[c], &opts, false);
         target->FillRect(2, ROW_Y - 2, W - 4, 1, dark, false);
 
-        int rowW = n > VISIBLE_ROWS ? W - 4 - SCROLL_ROOM : W - 4;
-        for (int r = 0; r < VISIBLE_ROWS && top + r < n; r++)
+        // As many rows as the height leaves room for. The bar is brought into
+        // view when it moves and when the window changes size; the wheel may
+        // scroll it out, and on Back the list stays where it was.
+        int rows = rowsFit(ROW_Y, H);
+        if (rows != rowsShown)
+        {
+            rowsShown = rows;
+            follow = true;
+        }
+        if (follow && sel < n)
+        {
+            if (sel < top)
+                top = sel;
+            if (sel >= top + rows)
+                top = sel - rows + 1;
+        }
+        follow = false;
+        if (top > n - rows)
+            top = n - rows;
+        if (top < 0)
+            top = 0;
+
+        int rowW = n > rows ? W - 4 - SCROLL_ROOM : W - 4;
+        for (int r = 0; r < rows && top + r < n; r++)
         {
             int i = top + r;
             const r2::TaskInfo &task = tasks[i];
-            Coord ry = ROW_Y + r * ROW_H;
+            int ry = ROW_Y + r * ROW_H;
             if (sel == i)
             {
                 target->FillRect(2, ry, rowW, ROW_H - 1, dark, false);
@@ -629,33 +752,34 @@ private:
             char ripbuf[17];
             ripStr(task.rip, ripbuf);
 
-            target->DrawText(COL_PID, ry, COLW_PID, ROW_H - 1, (const mchar *)pidbuf, &opts, false);
-            target->DrawText(COL_NAME, ry, COLW_NAME, ROW_H - 1, (const mchar *)namebuf, &opts, false);
-            target->DrawText(COL_MODE, ry, COLW_MODE, ROW_H - 1, (const mchar *)modeStr(task.mode), &opts, false);
-            target->DrawText(COL_STATUS, ry, COLW_STATUS, ROW_H - 1, (const mchar *)statusStr(task.status), &opts, false);
-            target->DrawText(COL_RIP, ry, COLW_RIP, ROW_H - 1, (const mchar *)ripbuf, &opts, false);
+            target->DrawText(x[0], ry, w[0], ROW_H - 1, (const mchar *)pidbuf, &opts, false);
+            target->DrawText(x[1], ry, w[1], ROW_H - 1, (const mchar *)namebuf, &opts, false);
+            target->DrawText(x[2], ry, w[2], ROW_H - 1, (const mchar *)modeStr(task.mode), &opts, false);
+            target->DrawText(x[3], ry, w[3], ROW_H - 1, (const mchar *)statusStr(task.status), &opts, false);
+            target->DrawText(x[4], ry, w[4], ROW_H - 1, (const mchar *)ripbuf, &opts, false);
         }
-        scrollbar(target, ROW_Y, VISIBLE_ROWS * ROW_H - 1, top, VISIBLE_ROWS, n, W);
+        scrollbar(target, ROW_Y, rows * ROW_H - 1, top, rows, n, W);
 
         // What a kill is waiting for or came to, else how to ask for one.
         opts.foreground = dark;
-        target->DrawText(COL_PID, STATUS_Y, W - 2 * COL_PID, 10,
+        target->DrawText(MARGIN, statusTop(H), W - 2 * MARGIN, 10,
                          status[0] ? (const mchar *)status : "Del/K: kill the task on the bar   0-9 Enter: by PID", &opts,
                          false);
     }
 
     // ── The Memory tab ──────────────────────────────────────────────────────
 
-    // Columns: PID, name, the private frame, what it holds on the user heap.
-    static const int MCOL_PID = 6, MCOL_NAME = 30, MCOL_FRAME = 112, MCOL_HEAP = 214;
-    static const int MEM_HEAD_Y = 38, MEM_ROW_Y = 49, MEM_ROWS = 7;
+    // The heap's line, its bar and the line under it, then the programs.
+    static const int INFO_Y = HEAD_Y, BAR_Y = INFO_Y + 11, BAR_H = 7;
+    static const int USAGE_Y = BAR_Y + BAR_H + 2;
+    static const int MEM_HEAD_Y = USAGE_Y + 13, MEM_ROW_Y = MEM_HEAD_Y + 12;
 
     void text(PlatformBitmap *target, PlatformDrawTextOptions &opts, int x, int y, int w, const char *s)
     {
         target->DrawText(x, y, w, ROW_H - 1, (const mchar *)s, &opts, false);
     }
 
-    void drawMemory(PlatformBitmap *target, PlatformDrawTextOptions &opts, int W)
+    void drawMemory(PlatformBitmap *target, PlatformDrawTextOptions &opts, int W, int H)
     {
         unsigned long now = (unsigned long)r2::ticks();
         if (!mem || now - memRead >= 1000)
@@ -671,7 +795,8 @@ private:
         opts.horizontalAlign = PlatformAlign::Begin;
         if (!mem)
         {
-            text(target, opts, 6, HEAD_Y, W - 12, "No memory information: this kernel is older than syscall 0x3C.");
+            text(target, opts, MARGIN, INFO_Y, W - 2 * MARGIN,
+                 "No memory information: this kernel is older than syscall 0x3C.");
             return;
         }
         const r2::MemInfo &m = *mem;
@@ -684,22 +809,15 @@ private:
         append(line, sizeof line, " at ");
         appendHex(line, sizeof line, m.heap_start);
         append(line, sizeof line, ", shared by all");
-        text(target, opts, 6, HEAD_Y, W - 12, line);
-        line[0] = 0;
-        append(line, sizeof line, "RAM ");
-        appendU(line, sizeof line, m.total_ram / (1024 * 1024));
-        append(line, sizeof line, " MiB");
-        opts.horizontalAlign = PlatformAlign::End;
-        text(target, opts, 6, HEAD_Y, W - 12, line);
-        opts.horizontalAlign = PlatformAlign::Begin;
+        text(target, opts, MARGIN, INFO_Y, W - 2 * MARGIN, line);
 
-        const int barX = 6, barY = 14, barW = W - 12, barH = 7;
-        target->FillRect(barX, barY, barW, barH, dark, false);
-        target->FillRect(barX + 1, barY + 1, barW - 2, barH - 2, light, false);
+        const int barX = MARGIN, barW = W - 2 * MARGIN;
+        target->FillRect(barX, BAR_Y, barW, BAR_H, dark, false);
+        target->FillRect(barX + 1, BAR_Y + 1, barW - 2, BAR_H - 2, light, false);
         if (m.heap_size)
         {
             int used = (int)((unsigned long long)(barW - 2) * (m.heap_size - m.heap_free) / m.heap_size);
-            target->FillRect(barX + 1, barY + 1, used, barH - 2, dark, false);
+            target->FillRect(barX + 1, BAR_Y + 1, used, BAR_H - 2, dark, false);
         }
 
         line[0] = 0;
@@ -716,19 +834,21 @@ private:
         append(line, sizeof line, "/");
         appendU(line, sizeof line, m.heap_free_blocks);
         append(line, sizeof line, " free");
-        text(target, opts, 6, 24, W - 12, line);
+        text(target, opts, MARGIN, USAGE_Y, W - 2 * MARGIN, line);
 
         // Each program: its frame and its share of the heap.  Kernel tasks run
         // on the kernel's own mappings and hold nothing of either, so they
         // are counted on the last line rather than listed.
-        text(target, opts, MCOL_PID, MEM_HEAD_Y, 22, "PID");
-        text(target, opts, MCOL_NAME, MEM_HEAD_Y, 80, "Name");
-        text(target, opts, MCOL_FRAME, MEM_HEAD_Y, 100, "Frame (2 MiB)");
-        text(target, opts, MCOL_HEAP, MEM_HEAD_Y, 70, "Heap held");
+        int x[4], w[4];
+        spread(MEM_COLS, 4, W, x, w);
+        text(target, opts, x[0], MEM_HEAD_Y, w[0], "PID");
+        text(target, opts, x[1], MEM_HEAD_Y, w[1], "Name");
+        text(target, opts, x[2], MEM_HEAD_Y, w[2], "Frame (2 MiB)");
+        text(target, opts, x[3], MEM_HEAD_Y, w[3], "Heap held");
         target->FillRect(2, MEM_ROW_Y - 2, W - 4, 1, dark, false);
 
-        // The rows are picked first, as there can be more than MEM_ROWS of
-        // them with 32 slots, and the list shown from memTop.
+        // The rows are picked first, as there can be more of them than fit
+        // with 32 slots, and the list shown from memTop.
         int rows[r2::MaxSlots + 1];
         int nRows = 0, kernelTasks = 0;
         int slots = m.slots < r2::MaxSlots ? (int)m.slots : r2::MaxSlots;
@@ -747,12 +867,13 @@ private:
                 continue;
             rows[nRows++] = sl;
         }
-        if (memTop > nRows - MEM_ROWS)
-            memTop = nRows - MEM_ROWS;
+        memRows = rowsFit(MEM_ROW_Y, H);
+        if (memTop > nRows - memRows)
+            memTop = nRows - memRows;
         if (memTop < 0)
             memTop = 0;
 
-        for (int row = 0; row < MEM_ROWS && memTop + row < nRows; row++)
+        for (int row = 0; row < memRows && memTop + row < nRows; row++)
         {
             int sl = rows[memTop + row];
             uint8_t id = sl < r2::MaxSlots ? m.slot_task[sl] : 0xFF;
@@ -765,19 +886,19 @@ private:
             {
                 cell[0] = 0;
                 appendU(cell, sizeof cell, id);
-                text(target, opts, MCOL_PID, y, 22, cell);
+                text(target, opts, x[0], y, w[0], cell);
                 char namebuf[17];
                 nameStr(t->name, namebuf);
                 compact(namebuf);
-                text(target, opts, MCOL_NAME, y, 80, namebuf);
+                text(target, opts, x[1], y, w[1], namebuf);
             }
             else
             {
                 // Bytes tagged to a slot nobody is in: a program that died
                 // without its blocks being swept yet --- or, for the last
                 // row, blocks allocated with no owner at all.
-                text(target, opts, MCOL_PID, y, 22, "-");
-                text(target, opts, MCOL_NAME, y, 80, sl == r2::MaxSlots ? "(no owner)" : "(exited)");
+                text(target, opts, x[0], y, w[0], "-");
+                text(target, opts, x[1], y, w[1], sl == r2::MaxSlots ? "(no owner)" : "(exited)");
             }
             cell[0] = 0;
             if (t && t->mode != 0)
@@ -789,12 +910,12 @@ private:
             }
             else
                 append(cell, sizeof cell, "-");
-            text(target, opts, MCOL_FRAME, y, 100, cell);
+            text(target, opts, x[2], y, w[2], cell);
             cell[0] = 0;
             appendKiB(cell, sizeof cell, held);
-            text(target, opts, MCOL_HEAP, y, 70, cell);
+            text(target, opts, x[3], y, w[3], cell);
         }
-        scrollbar(target, MEM_ROW_Y, MEM_ROWS * ROW_H - 1, memTop, MEM_ROWS, nRows, W);
+        scrollbar(target, MEM_ROW_Y, memRows * ROW_H - 1, memTop, memRows, nRows, W);
 
         // Memento's own heap: its arena, which grows from the user heap.
         r2::heap::Stats st = r2::heap::stats();
@@ -813,6 +934,6 @@ private:
             appendU(line, sizeof line, kernelTasks);
             append(line, sizeof line, " kernel tasks");
         }
-        text(target, opts, 6, STATUS_Y, W - 12, line);
+        text(target, opts, MARGIN, statusTop(H), W - 2 * MARGIN, line);
     }
 };

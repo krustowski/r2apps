@@ -48,6 +48,7 @@
 //
 
 #include "../../mpegplay/vidhost.hpp"
+#include "../web/net_r2.h"
 #include "ui/platform/impl/r2/R2_BitmapImpl.h"
 
 #define VIDEO_DIR "/mnt/tar/video"

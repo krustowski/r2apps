@@ -113,7 +113,7 @@ WINDOWS := $(wildcard windows/*.cpp)
 
 OBJS += $(WEB_OBJS)
 
-.PHONY: check build install clean webtest browser jug
+.PHONY: check build install clean webtest nettest browser jug
 
 # Compile-only check — no linking, so neither archive has to exist yet.
 # Without -MMD: with no -o to follow, it writes main.d and the rest into the
@@ -180,6 +180,10 @@ $(BDIR)/R2_DrawingContextImpl.o: 	$(R2)/R2_DrawingContextImpl.cpp 		| $(BDIR) ; 
 $(BDIR)/R2_Vga.o:               	$(R2)/R2_Vga.cpp              			| $(BDIR) ; g++ -c $(CXXFLAGS) $< -o $@
 $(BDIR)/R2_WindowImpl.o:        	$(R2)/R2_WindowImpl.cpp       			| $(BDIR) ; g++ -c $(CXXFLAGS) $< -o $@
 $(BDIR)/R2_UIRootImpl.o:        	$(R2)/R2_UIRootImpl.cpp       			| $(BDIR) ; g++ -c $(CXXFLAGS) $< -o $@
+
+# Deterministic tests of the network tools, mux and port lifetime.
+nettest:
+	@$(MAKE) -C web/tests network_check
 
 # Host-side tests of the engine: make -C web/tests check
 webtest:

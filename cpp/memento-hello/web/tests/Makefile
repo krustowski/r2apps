@@ -23,7 +23,7 @@ WEB_C    := $(WEB)/tls.c $(WEB)/sysrng_stub.c
 
 BEARSSL_OBJS := $(patsubst $(BEARSSL)/src/%.c,$(BDIR)/bearssl/%.o,$(BEARSSL_SRCS))
 
-.PHONY: all check clean
+.PHONY: all check clean network_check
 
 all: host_fetch unit
 
@@ -64,13 +64,21 @@ $(BDIR)/stb_image.o: $(WEB)/stb_image.c $(STB)/stb_image.h
 $(BDIR)/mkcacerts: $(WEB)/tools/mkcacerts.c $(BDIR)/libbearssl.a
 	gcc $(CFLAGS) $< $(BDIR)/libbearssl.a -o $@
 
-check: unit net_unit
+check: unit net_unit network_unit
 	./unit
 	./net_unit
+	./network_unit
 
 # The production r2 stack with a host implementation of its kernel calls.
 net_unit: net.cpp $(WEB)/net_r2.cpp $(WEB)/net_r2.h $(WEB)/loader.h $(WEB)/http.h $(WEB)/url.h $(WEB)/wbase.h $(WEB)/wbase.cpp $(WEB)/url.cpp $(WEB)/../netmux.h $(wildcard include/r2/*.hpp)
 	g++ $(CXXFLAGS) -Iinclude net.cpp $(WEB)/wbase.cpp $(WEB)/url.cpp -o $@
 
+network_unit: ../../tests/network.cpp ../../nsk.cpp ../../nsk.h ../../netmux.cpp ../../netmux.h $(wildcard include/r2/*.hpp)
+	g++ $(CXXFLAGS) -Iinclude ../../tests/network.cpp ../../nsk.cpp ../../netmux.cpp -o $@
+
+network_check: net_unit network_unit
+	./net_unit
+	./network_unit
+
 clean:
-	rm -rf $(BDIR) host_fetch unit net_unit
+	rm -rf $(BDIR) host_fetch unit net_unit network_unit

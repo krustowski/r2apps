@@ -73,7 +73,7 @@ public:
 
     //  A GET, or with a body a POST of a urlencoded form.
     //  `contentType` is the body's; form data when null (multipart for an
-    //  upload: the Telegram window's photos).
+    //  upload).
     void start(const Url &u, bool insecure, const uint8_t *postBody = nullptr, size_t postLen = 0,
                const char *contentType = nullptr);
     void step();

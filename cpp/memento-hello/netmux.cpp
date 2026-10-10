@@ -16,6 +16,8 @@ extern "C"
 {
     typedef int64_t (*NetFrameSource_T)(uint8_t *buf, uint32_t cap, uint8_t blocking);
     void net_set_frame_source(NetFrameSource_T fn);
+    typedef void (*NetFrameSink_T)(const uint8_t *frame, uint32_t len);
+    void net_set_frame_sink(NetFrameSink_T fn);
 }
 
 namespace {
@@ -34,6 +36,7 @@ struct Stash
     uint16_t len[STASH] = {};
     int head = 0, count = 0;
     uint64_t lastPull = 0;
+    bool active = false;
 };
 
 Stash g_stash[NETMUX_CLIENTS];
@@ -48,13 +51,49 @@ struct Claim
 Claim g_claims[8];
 int g_nclaims = 0;
 
+//  The ports this process bound, as netmux_port_bound() was told: the
+//  kernel's registry has sixteen for the whole machine.
+struct PortNote
+{
+    uint16_t port;
+    const char *use;
+};
+PortNote g_ports[16];
+
 uint8_t g_frame[FRAME];
 
 uint16_t get16(const uint8_t *p) { return (uint16_t)((p[0] << 8) | p[1]); }
 
 bool listening(int who, uint64_t now)
 {
-    return g_stash[who].lastPull && now - g_stash[who].lastPull < IDLE_MS;
+    return g_stash[who].active && now - g_stash[who].lastPull < IDLE_MS;
+}
+
+bool toolId(uint16_t id)
+{
+    return id == NETMUX_NSK_ICMP_ID || id == NETMUX_PING_ICMP_ID || id == NETMUX_TRACE_ICMP_ID;
+}
+
+//  An ICMP message about one of the Network window's probes: an echo reply
+//  with one of its ids, or a time-exceeded or unreachable error that quotes
+//  an echo request with one (traceroute's answers from the routers on the
+//  way).  `icmp` is `len` bytes.
+bool toolIcmp(const uint8_t *icmp, size_t len)
+{
+    if (len < 8)
+        return false;
+    if (icmp[0] == 0)
+        return toolId(get16(icmp + 4));
+    if (icmp[0] != 3 && icmp[0] != 11)
+        return false;
+    //  The error quotes the probe's IP header and its first eight bytes.
+    const uint8_t *inner = icmp + 8;
+    if (len < 8 + 20)
+        return false;
+    size_t ihl = (size_t)(inner[0] & 15) * 4;
+    if ((inner[0] >> 4) != 4 || inner[9] != 1 || ihl < 20 || len < 8 + ihl + 8)
+        return false;
+    return inner[ihl] == 8 && toolId(get16(inner + ihl + 4));
 }
 
 //  Whose the frame is: a client, or -1 for all of them (ARP).
@@ -71,8 +110,12 @@ int owner(const uint8_t *f, size_t n, uint64_t now)
     const uint8_t *ip = f + 14;
     uint8_t proto = ip[9];
     size_t ihl = (size_t)(ip[0] & 15) * 4;
-    //  An echo reply to one of the host scan's probes.
-    if (proto == 1 && n >= 14 + ihl + 8 && ip[ihl] == 0 && get16(ip + ihl + 4) == NETMUX_NSK_ICMP_ID)
+    size_t total = get16(ip + 2);
+    if ((ip[0] >> 4) != 4 || ihl < 20 || total < ihl || total > n - 14 ||
+        (get16(ip + 6) & 0x3fff)) return fallback;
+    n = 14 + total;
+    //  An answer to one of the Network window's probes.
+    if (proto == 1 && n >= 14 + ihl + 8 && toolIcmp(ip + ihl, n - 14 - ihl))
         return listening(NETMUX_NSK, now) ? NETMUX_NSK : fallback;
     if ((proto == 6 || proto == 17) && n >= 14 + ihl + 4)
     {
@@ -124,6 +167,7 @@ extern "C" int64_t netmux_pull(int who, uint8_t *buf, uint32_t cap)
         return 0;
     uint64_t now = r2::ticks();
     g_stash[who].lastPull = now;
+    g_stash[who].active = true;
 
     //  What waited here comes first: it arrived first.
     if (g_stash[who].count)
@@ -138,6 +182,8 @@ extern "C" int64_t netmux_pull(int who, uint8_t *buf, uint32_t cap)
             return 0;
         if ((uint64_t)n > FRAME)
             continue;
+        g_stats.rx_frames++;
+        g_stats.rx_bytes += (uint64_t)n;
         int to = owner(g_frame, (size_t)n, now);
         if (to == -1)
         {
@@ -172,7 +218,58 @@ extern "C" void netmux_claim(int who, uint16_t lo, uint16_t hi)
         g_claims[g_nclaims++] = Claim{who, lo, hi};
 }
 
+extern "C" void netmux_forget(int who)
+{
+    if (who < 0 || who >= NETMUX_CLIENTS) return;
+    Stash &s = g_stash[who];
+    s.head = s.count = 0; s.active = false;
+}
+
 extern "C" NetmuxStats netmux_stats() { return g_stats; }
+
+extern "C" bool netmux_send(const uint8_t *frame, uint32_t len)
+{
+    //  The kernel refuses only a frame it cannot make sense of; a full
+    //  transmit ring loses the frame without saying so.
+    int64_t r = r2::raw_syscall(r2::Sys::SendPacket, 0x04, (int64_t)frame, (int64_t)len);
+    if (r != 0)
+        return false;
+    g_stats.tx_frames++;
+    g_stats.tx_bytes += len;
+    return true;
+}
+
+extern "C" void netmux_port_bound(uint16_t port, const char *use)
+{
+    PortNote *free = nullptr;
+    for (PortNote &p : g_ports)
+    {
+        if (p.use && p.port == port)
+        {
+            p.use = use;
+            return;
+        }
+        if (!p.use && !free)
+            free = &p;
+    }
+    if (free)
+        *free = PortNote{port, use};
+}
+
+extern "C" void netmux_port_released(uint16_t port)
+{
+    for (PortNote &p : g_ports)
+        if (p.use && p.port == port)
+            p = PortNote{};
+}
+
+extern "C" const char *netmux_port_use(uint16_t port)
+{
+    for (const PortNote &p : g_ports)
+        if (p.use && p.port == port)
+            return p.use;
+    return nullptr;
+}
 
 extern "C" bool netmux_take_driver()
 {
@@ -201,6 +298,13 @@ int64_t cr2Source(uint8_t *buf, uint32_t cap, uint8_t blocking)
     }
 }
 
+//  And its way out, counted with the rest.
+void cr2Sink(const uint8_t *frame, uint32_t len) { netmux_send(frame, len); }
+
 } // namespace
 
-void netmux_install_cr2() { net_set_frame_source(cr2Source); }
+void netmux_install_cr2()
+{
+    net_set_frame_source(cr2Source);
+    net_set_frame_sink(cr2Sink);
+}

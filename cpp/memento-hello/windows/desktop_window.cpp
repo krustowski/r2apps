@@ -766,9 +766,7 @@ private:
 
         for (int i = 0; i < ICONS; i++)
             DrawIcon(dc, target, i, &opts);
-
-        // A program that could not be started says so here, under the frame.
-        if (g_launchError[0])
-            target->DrawText(FX, FY + FH + 2, FW, LH, g_launchError, &opts, false);
+        // A program that could not be started says so over the taskbar's
+        // clock (desktopIdle in main.cpp).
     }
 };

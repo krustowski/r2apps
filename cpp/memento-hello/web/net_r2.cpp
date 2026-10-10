@@ -296,7 +296,7 @@ private:
     void arpSend(uint16_t op, const uint8_t tip[4], const uint8_t tmac[6]);
 
     bool sendIp(const uint8_t dst[4], uint8_t proto, size_t payloadLen);
-    void sendFrame(size_t len) { r2::raw_syscall(r2::Sys::SendPacket, 0x04, (int64_t)txFrame_, (int64_t)len); }
+    void sendFrame(size_t len) { netmux_send(txFrame_, (uint32_t)len); }
 
     void onFrame(size_t n);
     void onIcmp(const uint8_t *ip, size_t ipLen, const uint8_t *p, size_t n);
@@ -992,7 +992,10 @@ void Stack::freeConn(Tcp &c)
     {
         uint32_t bit = 1u << (port - PORT_BASE);
         if ((boundPorts_ & bit) && r2::raw_syscall(r2::Sys::NetRegister, port, 1) == 0)
+        {
             boundPorts_ &= ~bit;
+            netmux_port_released(port);
+        }
     }
 }
 
@@ -1016,6 +1019,7 @@ uint16_t Stack::allocPort()
             if (!r2::net::bind_port(port))
                 continue;
             boundPorts_ |= 1u << bit;
+            netmux_port_bound(port, "web");
         }
         return port;
     }

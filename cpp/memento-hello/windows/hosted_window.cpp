@@ -1,5 +1,7 @@
-// Shared host for r2web.elf and jug.elf: indexed frames, input and lifetime.
+// Shared host for r2web.elf, jug.elf and telegram.elf: indexed frames, input
+// and lifetime.
 #include "../../r2web/host.h"
+#include "../web/png.h"
 #include "../web/wbase.h"
 #include "ui/platform/impl/r2/R2_BitmapImpl.h"
 struct HostedSlot { r2web::HostBlock *block; uint8_t pid; bool orphan; const char *program; };
@@ -28,10 +30,30 @@ static void hostedKeepAlive()
         }
     }
 }
+//  The clipboard's picture as a PNG on the RAM disk (or the floppy), for a
+//  program that takes pictures: where, and how long it is.  The file is
+//  written over rather than replaced, so what lies past len is stale.
+static bool clipboardPictureFile(char *path, size_t cap, uint32_t &len)
+{
+    static const char *const places[] = {"/mnt/tmp/CLIP.PNG", "/mnt/fat/CLIP.PNG"};
+    web::Buf png{true};
+    if (!clipboardHasImage() ||
+        !web::encodePng(g_clipImage, g_clipImageW, g_clipImageH, g_clipPalette, g_clipColours, png))
+        return false;
+    for (const char *p : places)
+        if (r2::fs::write_at(r2::string_view(p, strlen(p)), r2::const_byte_span(png.data, png.len), 0) ==
+            (int64_t)png.len) {
+            web::scopy(path, p, cap); len = (uint32_t)png.len; return true;
+        }
+    return false;
+}
 class HostedWindow {
 public:
-    HostedWindow(const char *program, const char *title, uint32_t magic, uint32_t portBase, const char *url = nullptr)
-        : program_(program), title_(title)
+    //  pictures: a Ctrl+V with a picture on the clipboard hands the program
+    //  a PNG of it (r2web::PasteImage) rather than the clipboard's text.
+    HostedWindow(const char *program, const char *title, uint32_t magic, uint32_t portBase, const char *url = nullptr,
+                 bool pictures = false)
+        : program_(program), title_(title), pictures_(pictures), magic_(magic)
     {
         hostedKeepAlive();
         for (int i=0; i<8; ++i) if (!g_hostedSlots[i].block) { slot=i; break; }
@@ -43,25 +65,9 @@ public:
         if (w<=0 || h<=0) { strcpy(error,"Invalid screen size."); return; }
         block=(r2web::HostBlock *)r2::heap::kernel_allocate(r2web::blockSize(w*h));
         if (!block) { strcpy(error,"No memory for the window host block."); return; }
-        memset(block,0,sizeof(*block));
-        block->magic=magic; block->version=r2web::Version;
-        block->capacity=w*h; block->maxWidth=w; block->maxHeight=h;
-        block->colours=MementoR2Impl::R2_Palette::Count();
-        block->portBase=portBase ? portBase : 48000+slot*32; block->front=r2web::None; block->hostBeat=1;
-        web::scopy(block->initialUrl,url && *url ? url : "about:home",sizeof(block->initialUrl));
-        char args[64]; web::scopy(args,program,sizeof(args));
-        web::scat(args," --host 0x",sizeof(args));
-        size_t at=strlen(args);
-        uintptr_t address=(uintptr_t)block;
-        for (int shift=60; shift>=0; shift-=4) args[at++]="0123456789abcdef"[(address>>shift)&15];
-        args[at]=0;
-        auto id=r2::spawn(program,args);
-        if (!id) {
-            web::scopy(error,"Cannot start ",sizeof(error)); web::scat(error,program,sizeof(error));
-            web::scat(error,"; install it in the bin directory.",sizeof(error));
-            r2::heap::kernel_deallocate(block); block=nullptr; return;
-        }
-        pid=*id; g_hostedSlots[slot]={block,pid,false,program}; started=r2::ticks();
+        portBase_=portBase ? portBase : 48000+slot*32; width_=w; height_=h;
+        web::scopy(url_,url && *url ? url : "about:home",sizeof(url_));
+        if (!launch()) { r2::heap::kernel_deallocate(block); block=nullptr; }
     }
     ~HostedWindow()
     {
@@ -80,6 +86,9 @@ public:
     static void onEvent(void *p,PlatformWindowInterfaceInputEvent *e) { ((HostedWindow *)p)->event(e); }
 private:
     const char *program_, *title_;
+    bool pictures_;
+    uint32_t magic_, portBase_=0, width_=0, height_=0; // the block's largest frame
+    char url_[r2web::TextCapacity]={};
     PlatformWindow *wnd=nullptr;
     r2web::HostBlock *block=nullptr;
     int slot=-1;
@@ -88,6 +97,67 @@ private:
     uint64_t started=0,lastCheck=0;
     bool ended=false;
     char error[128]={};
+    uint8_t taskStatus=0;
+    uint64_t taskRip=0;
+    //  The block made ready for a child, and the child started on it: at
+    //  first, and again when one that ended is restarted in its window.
+    bool launch()
+    {
+        uint32_t w=width_,h=height_;
+        memset(block,0,sizeof(*block));
+        block->magic=magic_; block->version=r2web::Version;
+        block->capacity=w*h; block->maxWidth=w; block->maxHeight=h;
+        block->colours=MementoR2Impl::R2_Palette::Count();
+        block->portBase=portBase_; block->front=r2web::None; block->hostBeat=1;
+        web::scopy(block->initialUrl,url_,sizeof(block->initialUrl));
+        char args[64]; web::scopy(args,program_,sizeof(args));
+        web::scat(args," --host 0x",sizeof(args));
+        size_t at=strlen(args);
+        uintptr_t address=(uintptr_t)block;
+        for (int shift=60; shift>=0; shift-=4) args[at++]="0123456789abcdef"[(address>>shift)&15];
+        args[at]=0;
+        auto id=r2::spawn(program_,args);
+        if (!id) {
+            web::scopy(error,"Cannot start ",sizeof(error)); web::scat(error,program_,sizeof(error));
+            web::scat(error,"; install it in the bin directory.",sizeof(error));
+            return false;
+        }
+        pid=*id; g_hostedSlots[slot]={block,pid,false,program_};
+        started=r2::ticks(); lastCheck=0; ended=false; error[0]=0;
+        shown=sentWidth=sentHeight=0;
+        return true;
+    }
+    //  Enter on a window whose program has ended: it starts again there.
+    //  The old one is gone (its task ended, or it said it had), so nothing
+    //  else uses the block.
+    void restart()
+    {
+        if (!launch()) { wnd->Repaint(); return; }
+        wnd->SetImmediateMode(true); wnd->Repaint();
+    }
+    //  Whether the child is still there, noting how it is (and where it was,
+    //  for a crash).  A task table that cannot be read says it is.
+    bool alive()
+    {
+        auto tasks=r2::tasks();
+        if (tasks.empty()) return true;
+        for (const auto &t : tasks)
+            if (t.id==pid) { taskStatus=t.status; taskRip=t.rip; break; }
+        return hostedAlive(pid, program_);
+    }
+    //  Why the window has nothing to show: the program's own words, or a
+    //  crash and where it happened, or just that it ended.
+    void describeEnd()
+    {
+        if (block->error[0]) { web::scopy(error,block->error,sizeof(error)); return; }
+        web::scopy(error,title_,sizeof(error));
+        if (taskStatus==4) {
+            web::scat(error," crashed at 0x",sizeof(error));
+            char hex[17]; for (int i=0; i<16; ++i) hex[i]="0123456789abcdef"[(taskRip>>(60-4*i))&15];
+            hex[16]=0; web::scat(error,hex,sizeof(error));
+            web::scat(error,".",sizeof(error));
+        } else web::scat(error," has ended.",sizeof(error));
+    }
     PlatformColor *background=nullptr,*foreground=nullptr;
     PlatformFont *font=nullptr;
     bool send(const r2web::Command &c)
@@ -121,9 +191,8 @@ private:
         uint64_t now=r2::ticks();
         if (now-started<2000 || now-lastCheck<1000) return;
         lastCheck=now;
-        if (r2web::load(&block->exited) || !hostedAlive(pid, program_)) {
-            ended=true;
-            web::scopy(error,block->error[0] ? block->error : "Program ended. Reopen its window to restart.",sizeof(error));
+        if (r2web::load(&block->exited) || !alive()) {
+            ended=true; describeEnd();
             wnd->SetImmediateMode(false); wnd->Repaint();
         }
     }
@@ -175,14 +244,19 @@ private:
         o.horizontalAlign=o.verticalAlign=PlatformAlign::Begin;
         char starting[64]="Starting "; web::scat(starting,title_,sizeof(starting));
         web::scat(starting,"...",sizeof(starting));
-        target->DrawText(4,8,target->GetWidth()-Coord(8),32,error[0] ? error : starting,&o,false);
+        target->DrawText(4,8,target->GetWidth()-Coord(8),8,error[0] ? error : starting,&o,false);
+        if (ended && block)
+            target->DrawText(4,20,target->GetWidth()-Coord(8),8,"Enter starts it again; Esc closes the window.",&o,false);
     }
     void event(PlatformWindowInterfaceInputEvent *e)
     {
         if (e->type==PlatformWindowInputEventType::OnImmediateModeIdleLoop) { idle(); return; }
         if (e->type==PlatformWindowInputEventType::OnPaint) { paint(e->Data.OnPaint.ctx,e->Data.OnPaint.target); return; }
         if (ended) {
-            if (e->type==PlatformWindowInputEventType::OnKeyEvent && e->Data.OnKeyEvent.key->isKeyDown && e->Data.OnKeyEvent.key->isEscape) wnd->Close();
+            if (e->type==PlatformWindowInputEventType::OnKeyEvent && e->Data.OnKeyEvent.key->isKeyDown) {
+                if (e->Data.OnKeyEvent.key->isEscape) wnd->Close();
+                else if (e->Data.OnKeyEvent.key->isEnter && block) restart();
+            }
             return;
         }
         r2web::Command c{};
@@ -193,8 +267,11 @@ private:
 #define ENCODE_FLAG(name,bit) if (k->name) c.flags|=1u<<bit;
             R2WEB_KEY_FLAGS(ENCODE_FLAG)
 #undef ENCODE_FLAG
-            if (k->isChar && (k->theChar=='v' || k->theChar=='V') && (k->isLeftControl || k->isRightControl))
-                web::scopy(c.text,clipboardGet(),sizeof(c.text));
+            if (k->isChar && (k->theChar=='v' || k->theChar=='V') && (k->isLeftControl || k->isRightControl)) {
+                uint32_t n=0;
+                if (pictures_ && clipboardPictureFile(c.text,sizeof(c.text),n)) { c.x=r2web::PasteImage; c.y=(int32_t)n; }
+                else web::scopy(c.text,clipboardGet(),sizeof(c.text));
+            }
             break;
         }
         case PlatformWindowInputEventType::OnMouseMove:

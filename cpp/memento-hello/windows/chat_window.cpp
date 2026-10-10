@@ -107,11 +107,16 @@ class ChatWindow
         if (!netDriverInit)
         {
             static const unsigned char eth[] = {'e', 't', 'h', 0};
+            // The driver registration through netmux when it is free, so the
+            // rest of Memento knows it is this process's: c/libcr2 would take
+            // it as quietly as it takes the port.
+            netmux_take_driver();
             if (net_driver_bind_port(eth, LOCAL_PORT) < 0)
             {
                 addLine("[net: driver init failed]");
                 return;
             }
+            netmux_port_bound(LOCAL_PORT, "chat");
             net_get_local_ip(my_ip);
 
             // Send a broadcast ARP request so the ARP cache gets the server's
@@ -147,7 +152,7 @@ class ChatWindow
             f[39] = peer_ip[1];
             f[40] = peer_ip[2];
             f[41] = peer_ip[3];
-            send_eth_frame(f, 42);
+            netmux_send(f, 42);
 
             netDriverInit = true;
         }

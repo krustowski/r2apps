@@ -1,4 +1,4 @@
-# web — the shared browser and Telegram engine
+# web — the shared browser engine
 
 A small web browser for rou2exOS: HTTP/1.1, TLS 1.2 by
 [BearSSL](https://bearssl.org/), and HTML with a small CSS subset, pictures and forms,
@@ -19,18 +19,20 @@ doc                  HTML → items → lines and runs, in character cells; form
 css                  the CSS subset: selectors, cascade, @media
 url                  what the user typed, and links resolved (RFC 3986)
 image                PNG/JPEG/GIF/BMP → scaled, dithered palette indices;
-                     every frame of an animated GIF (Telegram)
+                     every frame of an animated GIF
    └── stb_image.c   the decoder (stb_image 2.30, in ../../third_party/stb)
-mp4                  an MP4 of H.264 → an animation, a step at a time (Telegram)
+mp4                  an MP4 of H.264 → an animation, a step at a time
    └── h264.c        the decoder (h264bsd, Baseline only, ../../third_party/h264bsd)
 png                  palette indices → PNG (screenshots)
 web_r2.cpp           memory, clock, entropy and the date, on r2
 ```
 
-The Telegram window (`../windows/telegram_window.cpp`) uses the same loader,
-TLS and picture code for the Bot API.
+Telegram runs in its own process, `telegram.elf` ([`go/telegram`](../../../go/telegram/README.md)),
+hosted by Memento's Telegram window like r2web.  Its pictures are `image` and
+`mp4` in Go over the same stb_image and h264bsd, and it reaches the Bot API
+through go/r2tls, which is `tls.c` and BearSSL.
 
-Nothing blocks.  The browser process turns the loader from its own loop (Telegram uses Memento's idle loop), the
+Nothing blocks.  The browser process turns the loader from its own loop, the
 loader turns the network stack, and the TLS engine is BearSSL's low-level one,
 which never touches a socket: bytes go in and come out through its buffers.
 
@@ -87,7 +89,8 @@ beside it.
 
 `Loader::start` takes a content type for the body of a POST, so an upload can
 be `multipart/form-data`; the request and the body are in the big pool.
-`png.cpp` writes the screenshots Telegram sends: an indexed PNG (4 bits a
+`png.cpp` writes Memento's screenshots, saved or pasted into a hosted window
+that takes pictures (telegram.elf sends them): an indexed PNG (4 bits a
 pixel with 16 colours, 8 with 256), rows filtered Up and deflated with the
 fixed codes and one-byte runs --- no match search, which a screen of flat
 windows does not need (an 800x600 desktop is about 12 KiB).
@@ -200,8 +203,8 @@ not something to trust against an attacker who can model the machine's timing.
   and IRC windows.  Within Memento, neither reads the queue itself: `../netmux.cpp` does, and
   gives each stack the frames for its ports (the browser claims 47000-47015;
   ARP goes to both, ping to one).  A frame for the stack that is not asking
-  just now waits for it there, so Telegram and an IRC session run side by side. r2web uses a
-  separate process and distinct bound ports for each browser.
+  just now waits for it there, so the Video window and an IRC session run side by side.
+  r2web and telegram.elf use separate processes and distinct bound ports.
 - TCP: one segment in flight when sending; three duplicate ACKs at once on
   a gap; retransmission with backoff.
 - Receiving: the window offered is sixteen full segments (`WEB_RX_SEGMENTS`,
@@ -253,3 +256,36 @@ the page, then its style sheets --- and prints the laid-out page; it reads the
 roots from `cacerts.bin` (or `$WEB_CACERTS`), and `WEB_NOCSS=1` leaves the
 page's CSS out.  What only runs on r2 --- `net_r2.cpp`, `web_r2.cpp`
 and the window --- was tested in QEMU with the networking above.
+
+### Memento Network window
+
+The Network window has Stats, Scan, Ping and Trace tabs. Tab or Left/Right
+switches pages; Enter starts/stops a tool, Delete clears its address field,
+and Up/Down, PgUp/PgDn and Home/End scroll results. Tools continue across tab
+switches; closing the window stops every tool and releases its bound port.
+
+Stats refreshes the kernel TCP port registry every second. PID and process
+name columns await a kernel API; Memento can identify the uses of its own
+ports. RX/TX throughput and totals count Ethernet frames handled by Memento
+(including its in-process stacks and probes). Hosted applications and the
+separate Ethernet driver are outside these counters; the current status
+syscall exposes no machine-wide byte counters.
+
+Scan accepts IPv4 CIDR ranges through /22, including /31 and /32, retries
+unanswered local addresses three times by ARP, then tries ICMP where available.
+Probes are paced at one per millisecond with gaps between rounds and a final
+1.5-second listening period, so delayed Wi-Fi replies and dropped first probes
+can still discover a host. Ping runs until stopped and records replies,
+timeouts, loss and min/average/max RTT. Trace sends three rounds of increasing
+TTL ICMP probes, up to 30 hops, and records router errors and the destination.
+
+When Memento owns the global network driver, ICMP tools work directly. With
+eth.elf or another driver running, the kernel delivers ICMP to that process:
+Scan uses ARP on the local link, Ping uses ARP locally or TCP port 80 remotely
+(a reset also confirms a live host), and Trace explains that ICMP is unavailable.
+Only one Network window can run tools at a time; other windows can inspect
+Stats without taking the active tools' port.
+
+`make nettest` runs the production tools and mux against simulated frames,
+including replies delayed by 130/450/1400 ms, retries, port cleanup, concurrent
+traffic, ICMP/ARP/TCP ping and traceroute completion.

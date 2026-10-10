@@ -238,8 +238,8 @@ static char g_clipboard[1200];
 //  Who is at the keyboard, as the kernel has it (syscall 0x01): the login
 //  Memento set as the system user (windows/login_window.cpp), or "root" when
 //  the login was left empty.  The windows that need a name for the person ---
-//  IRC's and Chat's nick, Telegram's own messages --- start from it.  Empty
-//  when the kernel would not say.
+//  IRC's and Chat's nick --- start from it.  Empty when the kernel would not
+//  say.
 static const char *systemUser()
 {
     static char name[32];
@@ -266,13 +266,6 @@ static int g_clipImageW = 0, g_clipImageH = 0, g_clipColours = 16;
 static uint8_t g_clipPalette[768];
 static bool g_clipIsImage = false;
 
-//  Or a GIF, as Telegram knows it: the file_id its Bot API gave for an
-//  animation.  The Telegram window copies one from a message and pastes it
-//  back in to send it again --- by that id, so nothing is uploaded.  Pasted
-//  anywhere else it is the text put beside it.
-static char g_clipGif[128];
-static bool g_clipIsGif = false;
-
 static bool clipboardSetImage(const uint8_t *pixels, int w, int h)
 {
     size_t n = (size_t)w * (size_t)h;
@@ -280,7 +273,6 @@ static bool clipboardSetImage(const uint8_t *pixels, int w, int h)
         r2::heap::kernel_deallocate(g_clipImage);
     g_clipImage = (uint8_t *)r2::heap::kernel_allocate(n);
     g_clipIsImage = false;
-    g_clipIsGif = false;
     if (!g_clipImage)
         return false;
     memcpy(g_clipImage, pixels, n);
@@ -303,7 +295,6 @@ static bool onPrintScreen(const uint8 *pixels, int32 width, int32 height)
 static void clipboardSet(const char *s)
 {
     g_clipIsImage = false;
-    g_clipIsGif = false;
     int n = 0;
     while (s[n] && n < (int)sizeof(g_clipboard) - 1)
     {
@@ -316,22 +307,6 @@ static void clipboardSet(const char *s)
 }
 
 static const char *clipboardGet() { return g_clipboard; }
-
-static void clipboardSetGif(const char *fileId, const char *text)
-{
-    clipboardSet(text);
-    int n = 0;
-    while (fileId[n] && n < (int)sizeof(g_clipGif) - 1)
-    {
-        g_clipGif[n] = fileId[n];
-        n++;
-    }
-    g_clipGif[n] = 0;
-    g_clipIsGif = n != 0;
-}
-
-//  The file_id of the GIF on the clipboard, or nullptr.
-static const char *clipboardGif() { return g_clipIsGif ? g_clipGif : nullptr; }
 
 //  Turbo C++ 23 (~/vxn/tcpp/r2), which r2_main's build_iso puts in /mnt/iso/bin
 //  and the kernel finds there from any working directory.  With a path it
@@ -348,6 +323,8 @@ static bool openInEditor(const char *path)
     return false;
 }
 
+#include "netmux.h"
+#include "windows/tab_strip.cpp"
 #include "windows/hello_window.cpp"
 #include "windows/wallpaper.cpp"
 #include "windows/login_window.cpp"
@@ -509,6 +486,14 @@ static void onLockKey() { (void)lockSession(); }
 static void desktopIdle()
 {
     ThemWindow::ReapClosed();
+    // Why a program would not start (or a window is open already): in a box
+    // over the taskbar's clock, where it is seen whatever covers the desktop.
+    // Here rather than where it is set, since some callers read it back.
+    if (g_launchError[0] && g_root)
+    {
+        MementoR2Impl::R2_Notify(g_launchError, 6000);
+        g_launchError[0] = 0;
+    }
     if (g_relaunchSupported && !g_relaunch && g_desktopWnd &&
         !MementoR2Impl::R2_Locked() && r2::desktop_relaunch_pending())
     {
@@ -703,7 +688,7 @@ static void openApp(int kind)
     case APP_TASKS:
     {
         TasksWindow *w = new TasksWindow();
-        wnd = g_root->CreateWindow("Tasks", 290, 150, TasksWindow::onEvent, w, &g_appOpts, deleteTasks, w);
+        wnd = g_root->CreateWindow("Tasks", 290, 160, TasksWindow::onEvent, w, &g_appOpts, deleteTasks, w);
         if (wnd)
             w->SetWindow(wnd);
         else
@@ -804,13 +789,16 @@ static void openApp(int kind)
     }
     case APP_TELEGRAM:
     {
+        // The client runs in telegram.elf (go/telegram); the window hosts it.
         TelegramWindow *w = new TelegramWindow();
+        if (!w || w->failed()) {
+            web::scopy(g_launchError, w ? w->why() : "Telegram: no memory for its window.", sizeof(g_launchError));
+            delete w; return;
+        }
         wnd = g_root->CreateWindow("Telegram", TelegramWindow::W, TelegramWindow::H, TelegramWindow::onEvent, w,
                                    &g_appOpts, deleteTelegram, w);
-        if (wnd)
-            w->SetWindow(wnd);
-        else
-            delete w;
+        if (wnd) { w->SetWindow(wnd); g_launchError[0] = 0; }
+        else { delete w; strcpy(g_launchError, "Telegram: no room for another window."); }
         break;
     }
     default:
@@ -950,6 +938,9 @@ extern "C" int main()
     const Coord fullW = Coord(screenPxW / 2.0), fullH = Coord(screenPxH / 2.0);
 
     // --- Landing screen ---
+    //
+    // Enter goes on to the login; Esc restarts the machine and Shift+Esc
+    // switches it off. On a kernel too old for either, Memento ends.
     bool wantsLogin = false;
     for (int i = 1; i < r2::arg_count(); ++i)
         if (r2::arg(i) == r2::string_view("--relaunch"))
@@ -965,10 +956,16 @@ extern "C" int main()
         wnd->SetVisible(true);
         root->EnterMainLoop();
 
-        wantsLogin = hw->wantsNext;
+        HelloWindow::Choice choice = hw->choice;
         delete wnd;
         delete hw;
         resetWallpaperCache(); // its colours belonged to that window's context
+
+        if (choice == HelloWindow::Reboot)
+            r2::reboot();
+        else if (choice == HelloWindow::PowerOff)
+            r2::power_off();
+        wantsLogin = choice == HelloWindow::Login;
     }
 
     // --- Login, and the desktop sessions after it ---

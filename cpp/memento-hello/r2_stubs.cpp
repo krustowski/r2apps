@@ -27,7 +27,8 @@
 //  it, a 700 KiB page no longer fitted.  The image has the room since the arena
 //  left it once (the private 2 MiB frame has to hold code, data and stack).
 //  It was 768 KiB until the H.264 decoder for Telegram's GIFs (web/mp4.cpp,
-//  about 80 KiB of code) needed the room.
+//  about 80 KiB of code) needed the room; Telegram has since moved out to
+//  go/telegram, and Memento's text with it is about 150 KiB smaller.
 //
 R2_HEAP_ARENA_GROWING(640 * 1024)
 
