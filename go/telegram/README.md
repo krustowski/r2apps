@@ -52,6 +52,7 @@ reachable from QEMU at the user network's host address (`10.3.4.1` with
 | Ctrl+Space, Alt+Space, right click | the menu on a message: 1-9 a reaction, 0 none, R reply, C copy the text, G copy the GIF; PgUp/PgDn move it to an older/newer message |
 | Ctrl+C | copy what is typed, or with nothing typed the chat's newest message |
 | Ctrl+V | paste; a PrintScreen is attached as a screenshot, a copied GIF as that GIF, and Enter sends it with what is typed as its caption (Backspace on an empty line takes it off) |
+| Ctrl+S, Settings button | open/close settings; click Notifications or press Space/N/Enter to toggle; Esc closes settings |
 | Esc | not reply after all; then close |
 
 `inline` and ` ```block``` ` in what is typed go out as code entities, the way
@@ -81,6 +82,33 @@ attention.  telegram.elf draws at Memento's 2 pixels a unit with Memento's own
 6x12 Terminus font (`font.go`, generated from Memento's sources by
 `make gen`), in the 16 EGA colours, which mean the same on the VGA and on the
 graphics kernel's 256-colour framebuffer.
+
+Incoming messages (including photos and GIFs) and added reactions also show
+six-second bubbles above the taskbar clock, even while Telegram is focused
+or minimised. Each bubble names the chat and shows a short preview; the
+newest sits nearest the clock and older bubbles stack upward. Memento keeps
+up to twelve visible alerts, each with its own expiry, and retains the newest
+on overflow. Outgoing messages, our own reactions, reaction removals and
+unchanged reaction totals do not alert.
+Incoming messages also mark the window title and taskbar button for attention
+until focused. Reactions show their clock bubble without marking the window.
+
+**Notification settings.** Notifications are on by default. Open **Settings**
+at the bottom left (or press **Ctrl+S**) and uncheck **Notifications** to stop
+clock bubbles and window attention. Changes save immediately as
+`notifications=on` or `notifications=off` in `/mnt/tmp/TELEGRAM.CFG`; each new
+Telegram window reads that preference before receiving updates. Muting drops
+the client's pending bubbles. Alerts already displayed finish their six-second
+expiry. The RAM disk keeps the setting for this OS session; token and API
+configuration continue to use their existing files.
+
+The host opts in to a notification queue in the Telegram window's unused
+`initialUrl` space: eight 96-byte slots, with head/tail words and a capability
+magic (`cpp/r2web/host.h`, `hosted.Client.Notify`). The Version 1 shared block
+and pixel offsets stay the same. A burst waits in a bounded 32-entry client
+backlog while the host queue fills; older Memento builds continue to use
+window attention. `make -C ../../cpp/memento-hello notifytest` checks stack
+expiry and the host queue; `make test` checks incoming events and retries.
 
 **The network.**  One request at a time: `getMe` once, then
 `getUpdates?timeout=20`, a long poll the server holds until something
@@ -112,6 +140,11 @@ move at once.  Pixels live on the kernel's user heap, outside Go's collector.
 Telegram window asks for pictures, so a Ctrl+V in it writes a PNG of the
 clipboard to `/mnt/tmp/CLIP.PNG` and tells telegram.elf where and how long it
 is (`r2web::PasteImage`), which sends it with `sendPhoto`.
+
+Uploads use TCP progress to renew their idle timeout, honor the server's
+segment-size limit and cap outgoing payloads at 1024 bytes for smaller internet
+paths. The response gets a fresh timeout after the complete multipart body is
+sent. Upload failures in the diagnostic log include bytes written/total bytes.
 
 ## When something goes wrong
 

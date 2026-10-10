@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -212,9 +213,17 @@ func (c *client) attempt(j job, fresh bool) result {
 		c.key, r.fresh = j.api, true
 	}
 	c.conn.SetTimeout(idleTimeout)
-	if _, err = c.conn.Write(e.request(j)); err == nil {
+	if _, err = writeBytes(c.conn, e.request(j)); err == nil {
+		sent, total := 0, 0
 		for _, p := range j.body {
-			if _, err = c.conn.Write(p); err != nil {
+			total += len(p)
+		}
+		for _, p := range j.body {
+			var n int
+			n, err = writeBytes(c.conn, p)
+			sent += n
+			if err != nil {
+				err = fmt.Errorf("upload %d/%d bytes: %w", sent, total, err)
 				break
 			}
 		}
@@ -224,6 +233,8 @@ func (c *client) attempt(j job, fresh bool) result {
 		r.err = err
 		return r
 	}
+	// Upload time does not spend the server's budget to begin its answer.
+	c.conn.SetTimeout(idleTimeout)
 	limit := j.limit
 	if limit == 0 {
 		limit = jsonLimit
@@ -259,4 +270,20 @@ func (c *client) attempt(j job, fresh bool) result {
 	}
 	r.status, r.body = resp.Status, resp.Body
 	return r
+}
+
+func writeBytes(w io.Writer, b []byte) (int, error) {
+	sent := 0
+	for len(b) > 0 {
+		n, err := w.Write(b)
+		sent += n
+		if err != nil {
+			return sent, err
+		}
+		if n == 0 {
+			return sent, io.ErrShortWrite
+		}
+		b = b[n:]
+	}
+	return sent, nil
 }

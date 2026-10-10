@@ -25,6 +25,7 @@ type fake struct {
 	cancels   int
 	copied    []string
 	attention int
+	notices   []string
 	closed    bool
 }
 
@@ -46,6 +47,7 @@ func newFake(t *testing.T) (*App, *fake) {
 	a.cancel = func() { f.cancels++ }
 	a.copyText = func(s string) bool { f.copied = append(f.copied, s); return true }
 	a.attention = func() { f.attention++ }
+	a.notify = func(s string) bool { f.notices = append(f.notices, s); return true }
 	a.closeWin = func() { f.closed = true }
 	return a, f
 }

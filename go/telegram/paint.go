@@ -12,6 +12,10 @@ func (a *App) paint() {
 	} else {
 		a.paintChat()
 	}
+	a.paintSettingsButton()
+	if a.settingsOpen {
+		a.paintSettings()
+	}
 	a.dirty = false
 }
 
@@ -39,7 +43,9 @@ func (a *App) paintSetup() {
 	c.fill(13, y-1, w-26, rowH+2, white)
 	c.text(16, y, w-32, tail(string(a.input)+"_", (w-36)/cw), black)
 	if a.status != "" {
-		c.text(12, h-rowH-4, w-24, a.status, blue)
+		x, _, buttonW, _ := a.settingsButtonBox()
+		left := x + buttonW + 8
+		c.text(left, h-rowH-4, w-left-12, a.status, blue)
 	}
 }
 
@@ -48,8 +54,12 @@ func (a *App) paintChat() {
 
 	// The chats down the left.
 	c.fill(0, 0, chatsW, h, lightGrey)
+	_, buttonY, _, _ := a.settingsButtonBox()
 	for i, ch := range a.chats {
 		y := 6 + i*rowH
+		if y+rowH > buttonY-4 {
+			break
+		}
 		label := ch.name
 		if ch.unread > 0 {
 			label = "* " + label

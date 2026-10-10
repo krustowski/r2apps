@@ -35,6 +35,9 @@ func main() {
 	a.cancel = w.cancel
 	a.copyText = host.Copy
 	a.attention = host.Attention
+	if host.Notifications() {
+		a.notify = host.Notify
+	}
 	a.closeWin = func() { quit = true }
 	a.log = logLine
 	if mw, mh := host.MaxSize(); mw < a.width || mh < a.height {

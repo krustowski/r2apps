@@ -122,12 +122,12 @@ func (p *plainConn) SetTimeout(d time.Duration) { p.idle = d }
 func (p *plainConn) Close() error               { return p.c.Close() }
 
 func (p *plainConn) Write(b []byte) (int, error) {
-	p.c.SetDeadline(p.idle)
+	p.c.SetTimeout(p.idle)
 	return p.c.Write(b)
 }
 
 func (p *plainConn) Read(b []byte) (int, error) {
-	p.c.SetDeadline(p.idle)
+	p.c.SetTimeout(p.idle)
 	n, err := p.c.Read(b)
 	if errors.Is(err, r2net.ErrClosed) {
 		err = io.EOF

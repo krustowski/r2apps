@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"strconv"
@@ -17,6 +18,70 @@ type fakeConn struct {
 	buf    []byte
 	closed bool
 	stop   bool // a request on it is stopped half way
+}
+
+// shortUploadConn accepts only part of each write, over enough simulated
+// time to use up the original response deadline while the upload progresses.
+type shortUploadConn struct {
+	now      *uint64
+	deadline uint64
+	written  []byte
+	response []byte
+	closed   bool
+	stall    bool
+}
+
+func (c *shortUploadConn) Write(b []byte) (int, error) {
+	if c.stall {
+		return 0, io.ErrShortWrite
+	}
+	*c.now += 1000
+	n := min(700, len(b))
+	c.written = append(c.written, b[:n]...)
+	return n, nil
+}
+func (c *shortUploadConn) Read(b []byte) (int, error) {
+	if *c.now >= c.deadline {
+		return 0, errors.New("response timed out")
+	}
+	if len(c.response) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(b, c.response)
+	c.response = c.response[n:]
+	return n, nil
+}
+func (c *shortUploadConn) Close() error               { c.closed = true; return nil }
+func (c *shortUploadConn) SetTimeout(d time.Duration) { c.deadline = *c.now + uint64(d.Milliseconds()) }
+
+func TestScreenshotUploadCompleteAndResponseBudget(t *testing.T) {
+	now := uint64(0)
+	socket := &shortUploadConn{now: &now, response: []byte(reply(`{"ok":true}`, true))}
+	c := &client{now: func() uint64 { return now }, dial: func(bool, string, uint16, time.Duration) (conn, error) { return socket, nil }}
+	png := bytes.Repeat([]byte("PNG screenshot"), 5000)
+	j := job{kind: rqSendPhoto, api: "https://api.telegram.org", path: "/botT/sendPhoto", body: photoBody("5", "look", 0, png), contentType: "multipart/form-data; boundary=" + boundary}
+	r := c.do(j)
+	if r.err != nil || r.status != 200 {
+		t.Fatalf("slow screenshot: %d, %v", r.status, r.err)
+	}
+	e, _ := parseAPI(j.api)
+	want := e.request(j)
+	for _, p := range j.body {
+		want = append(want, p...)
+	}
+	if !bytes.Equal(socket.written, want) || now <= uint64(idleTimeout.Milliseconds()) {
+		t.Fatalf("upload incomplete or too short: %d/%d bytes, %d ms", len(socket.written), len(want), now)
+	}
+}
+
+func TestScreenshotUploadStopsOnShortWrite(t *testing.T) {
+	now := uint64(0)
+	socket := &shortUploadConn{now: &now, stall: true}
+	c := &client{now: func() uint64 { return now }, dial: func(bool, string, uint16, time.Duration) (conn, error) { return socket, nil }}
+	r := c.do(send)
+	if !errors.Is(r.err, io.ErrShortWrite) || !socket.closed {
+		t.Fatalf("short write: %v, closed %v", r.err, socket.closed)
+	}
 }
 
 func (c *fakeConn) Write(b []byte) (int, error) {

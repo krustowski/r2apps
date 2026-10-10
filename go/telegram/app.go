@@ -178,11 +178,16 @@ type App struct {
 	cancel    func()            // the request in flight is to stop
 	copyText  func(string) bool // onto Memento's clipboard
 	attention func()
+	notify    func(string) bool // a clock bubble; false while Memento's queue is full
+	notices   []string
 	closeWin  func()
 	log       func(string) // a line for the diagnostic log
 	colours   int
 
-	dirty bool // to be painted again
+	dirty                bool // to be painted again
+	notificationsEnabled bool
+	settingsOpen         bool
+	settingsNote         string
 
 	token   string
 	api     string // "https://api.telegram.org", or what the configuration says
@@ -240,7 +245,7 @@ type App struct {
 }
 
 func newApp() *App {
-	a := &App{log: func(string) {}, api: "https://api.telegram.org", setup: true, cur: -1, menuSeq: -1, replyChat: -1, replySeq: -1,
+	a := &App{log: func(string) {}, api: "https://api.telegram.org", setup: true, notificationsEnabled: true, cur: -1, menuSeq: -1, replyChat: -1, replySeq: -1,
 		mp4Seq: -1, width: 600, height: 340, msgW: 400, visibleRows: 1, dirty: true,
 		lines: make([]line, 0, textCap)}
 	for i := range a.photos {
@@ -270,6 +275,7 @@ func capped(s string, n int) string {
 // start reads the token (the boot medium's, else the one typed in before)
 // and starts reading the bot's chats when there is one.
 func (a *App) start() {
+	a.loadSettings()
 	if !a.loadToken(shippedToken) {
 		a.loadToken(typedToken)
 	}
@@ -429,11 +435,9 @@ func (a *App) addMsg(chat int, mine bool, who, text string, id int64, quoted str
 	} else if chat >= 0 && !mine {
 		a.chats[chat].unread++
 	}
-	// Someone else's message while the window is minimised or behind others:
-	// its title bar and taskbar button go red until it is looked at.  What
-	// we sent, or failed to, is no news.
+	// Incoming messages get a clock bubble as well as window attention.
 	if !mine {
-		a.attention()
+		a.alert(chat, who+": "+text)
 	}
 	a.dirty = true
 }
@@ -742,12 +746,37 @@ func (a *App) takeReaction(b []byte, u int) {
 		return
 	}
 	for r := jfirst(b, jmember(b, u, "old_reaction")); r >= 0; r = jnext(b, r) {
-		countReact(m, reactionOf(b, r), -1)
+		kind := reactionOf(b, r)
+		countReact(m, kind, -1)
 	}
+	var changes [otherReaction + 1]int
 	for r := jfirst(b, jmember(b, u, "new_reaction")); r >= 0; r = jnext(b, r) {
-		countReact(m, reactionOf(b, r), 1)
+		kind := reactionOf(b, r)
+		countReact(m, kind, 1)
+		key := reactionKey(b, r)
+		found := false
+		for old := jfirst(b, jmember(b, u, "old_reaction")); old >= 0; old = jnext(b, old) {
+			if reactionKey(b, old) == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			changes[kind]++
+		}
 	}
-	a.attention()
+	user := jmember(b, u, "user")
+	if a.usernameIs(b, user) {
+		return
+	}
+	who, _ := jstr(b, jmember(b, user, "first_name"), nameCap, false, nil)
+	if who == "" {
+		who, _ = jstr(b, jmember(b, jmember(b, u, "actor_chat"), "title"), nameCap, false, nil)
+	}
+	if who == "" {
+		who = "Someone"
+	}
+	a.reactionAlert(m, who, changes)
 }
 
 // takeReactionCount: the totals of anonymous reactions (channels, groups
@@ -757,12 +786,24 @@ func (a *App) takeReactionCount(b []byte, u int) {
 	if m == nil {
 		return
 	}
+	var changes [otherReaction + 1]int
+	for _, r := range m.reacts {
+		if r.r >= 0 {
+			changes[r.r] -= r.n
+		}
+	}
 	for i := range m.reacts {
 		m.reacts[i].r = -1
 	}
 	for r := jfirst(b, jmember(b, u, "reactions")); r >= 0; r = jnext(b, r) {
 		countReact(m, reactionOf(b, jmember(b, r, "type")), int(jnumber(b, jmember(b, r, "total_count"))))
 	}
+	for _, r := range m.reacts {
+		if r.r >= 0 {
+			changes[r.r] += r.n
+		}
+	}
+	a.reactionAlert(m, "Someone", changes)
 }
 
 // reactLine is what is under a message with reactions, e.g. "  <3 2  +1
@@ -1260,6 +1301,7 @@ func (a *App) animate() {
 // idle is a turn of the loop: pictures moving, an MP4 decoding, and the next
 // request when the last has come back.
 func (a *App) idle() {
+	a.flushNotices()
 	if a.setup {
 		return
 	}
@@ -1408,9 +1450,11 @@ func (a *App) finished(r result) {
 	case rqPoll:
 		for u := jfirst(b, result); u >= 0; u = jnext(b, u) {
 			if _, ok := jraw(b, jmember(b, u, "update_id")); ok {
-				if id := jnumber(b, jmember(b, u, "update_id")); id+1 > a.offset {
-					a.offset = id + 1
+				id := jnumber(b, jmember(b, u, "update_id"))
+				if id < a.offset {
+					continue // a retried poll must not repeat messages or bubbles
 				}
+				a.offset = id + 1
 			}
 			m := jmember(b, u, "message")
 			if m < 0 {
@@ -1473,6 +1517,14 @@ type clipboard struct {
 // key is a key going down.
 func (a *App) key(k *hosted.Key, clip clipboard) {
 	ctrl, shift, alt := k.Ctrl(), k.Shift(), k.Alt()
+	if ctrl && k.IsChar && (k.Char == 's' || k.Char == 'S') {
+		a.toggleSettings()
+		return
+	}
+	if a.settingsOpen {
+		a.settingsKey(k)
+		return
+	}
 	if a.menuSeq >= 0 {
 		a.menuKey(k)
 		return
@@ -1686,6 +1738,14 @@ func (a *App) messageAt(x, y int) int {
 }
 
 func (a *App) click(x, y int, right bool) {
+	if a.settingsOpen {
+		a.settingsClick(x, y, right)
+		return
+	}
+	if !right && a.settingsButtonAt(x, y) {
+		a.toggleSettings()
+		return
+	}
 	if a.setup {
 		return
 	}
@@ -1721,7 +1781,7 @@ func (a *App) click(x, y int, right bool) {
 }
 
 func (a *App) wheel(up bool) {
-	if a.menuSeq >= 0 {
+	if a.menuSeq >= 0 || a.settingsOpen {
 		return
 	}
 	if up {
