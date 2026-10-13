@@ -9,6 +9,8 @@
 #  Everything is built inside the tinygo-r2 image, so the only thing that has
 #  to be installed on the host is Docker.  Run `make image` once (or after
 #  changing anything under tinygo-r2/) to build it.
+#  MEMENTO_APP := 1 also adds window metadata, using the host main's
+#  --memento-manifest output and Python 3 on the build host.
 #
 
 NAME        ?= placeholder
@@ -30,6 +32,9 @@ RUN = $(DOCKER) run --rm -v $(GO_ROOT):/src -w /src/$(APP_DIR) $(IMAGE)
 
 build:
 	@$(RUN) tinygo build $(TINYGO_FLAGS) -o /src/$(APP_DIR)/$(NAME).elf .
+ifeq ($(MEMENTO_APP),1)
+	@$(RUN) go run . --memento-manifest | python3 $(GO_ROOT)/libgor2/memento/hosted/tools/append_manifest.py $(NAME).elf
+endif
 	@echo "$(NAME).elf: $$(stat -c %s $(NAME).elf) bytes"
 
 # Build the TinyGo image that knows about the r2 target.  Cheap: it only copies

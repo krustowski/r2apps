@@ -7,6 +7,7 @@
 | `r2tls` | Certificate-verified HTTPS over r2net's TCP: Memento's portable BearSSL through Cgo. Used by `spotify`. | usable |
 | `libgor2/memento` | The window bridge for a Go program hosted in Memento: launch checks, commands, double-buffered snapshots, heartbeat and shutdown, with the C++ side in `host.hpp` (see its [README](libgor2/memento/README.md)). | usable |
 | `libgor2/memento/hosted` | The child side of Memento's `HostedWindow`, the window `r2web.elf` and `jug.elf` are shown in: a Go program draws its whole window itself, nothing app-specific in Memento. | usable |
+| [`hello-world`](hello-world/README.md) | A small Memento-hosted Go app using reusable event/paint hooks, native font and buttons, clipboard and notifications; open its ELF through Files > Run in new window. | example |
 | `tinygo-r2` | The TinyGo target that makes Go run on `r2` at all --- runtime hooks, entry point, memory map. | usable |
 | `hello` | The minimal Go program: says who it is, what it was given, and what time the machine thinks it is. | stable |
 | `gfxdemo` | Graphics test: plasma, bouncing balls and kernel-font text, through whichever of the three display paths the machine has. | stable |
