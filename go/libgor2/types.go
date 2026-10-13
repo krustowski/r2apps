@@ -81,6 +81,7 @@ const (
 	FsIso9660 = 3 // the CD at /mnt/iso
 	FsTar     = 4 // the boot medium's archive at /mnt/tar
 	FsMemDisk = 5 // the RAM disk at /mnt/tmp, whatever its format
+	FsNetDisk = 6 // RNTP/TCP FAT12/16 at /mnt/net
 )
 
 // Formats on the medium, reported by FsStat.Format.

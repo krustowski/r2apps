@@ -1,5 +1,9 @@
 # Go apps hosted in Memento
 
+For a small app that draws its own Memento window, start with
+[`go/hello-world`](../../hello-world/README.md). Its Go UI supplies event and
+paint hooks to `hosted.Run`; the reusable wrappers handle the window loop.
+
 `github.com/krustowski/rou2exOS-apps/go/libgor2/memento` is the reusable window
 bridge used by `go/spotify` and `cpp/memento-hello/windows/spotify_window.cpp`.
 It supplies launch validation, commands, double-buffered snapshots, heartbeats,
@@ -141,6 +145,95 @@ Read `runtimeText` after acknowledgement or confirmed task death.
 
 ## A window the program draws: package hosted
 
+### Window hooks and drawing
+
+`hosted.Run` (on the `r2` target) takes `Options` and `Hooks`. A minimal app is:
+
+```go
+//go:build r2
+
+package main
+
+import (
+    "fmt"
+    memento "github.com/krustowski/rou2exOS-apps/go/libgor2/memento/hosted"
+)
+
+func main() {
+    err := memento.Run(memento.Options{
+        Magic: 0x31484f47, Title: "Hello / Go", Width: 480, Height: 240,
+    }, memento.Hooks{
+        OnPaint: func(w *memento.Window, c *memento.Canvas) {
+            width, height := w.Size()
+            c.Text(memento.Rect{X: 16, Y: 16, W: width - 32, H: height - 32},
+                "Hello, world!", memento.Black)
+        },
+    })
+    if err != nil { fmt.Println(err) }
+}
+```
+
+The matching host must supply that magic. [Hello-world](../../hello-world/README.md)
+embeds build-time window metadata and opens through **Files > Run in new window**
+(Ctrl+Enter), using the generic hosted-window adapter. `Run` consumes
+the process's `--host` arguments, installs the runtime diagnostic sink, polls
+the host, drains bounded batches of input and retries busy frame buffers.
+
+`OnOpen` initializes state. `OnEvent` receives `Command` values; `cmd.Key()`
+decodes keys and `cmd.LeftPressed(rect)` tests button presses. Resize is
+applied before the event hook and invalid sizes are ignored. `OnPaint`
+receives a freshly cleared light-grey canvas only when its frame is leased.
+Input requests a repaint automatically. `OnIdle` can consume worker results
+and call `Repaint`; it receives boot time in milliseconds. `OnClose` receives
+the stop reason and runs before shared memory is released. All hooks run on
+one goroutine; join workers before returning from `OnClose`.
+
+`Window.Size`, `SetTitle`, `Repaint`, `Close` and `Fail` control the contents
+and lifecycle. `Colours` and `PortBase` expose the host's palette and reserved
+network ports. `Copy`, `Open`, `Attention`, `Notifications` and `Notify` wrap the
+existing desktop services. `Copy`/`Open` return false while their mailbox is
+busy; `Notify` returns false if notifications are unavailable or its queue is
+full. Apps needing guaranteed delivery should retry from `OnIdle`.
+
+`Canvas.Clear`, `FillRect`, `Text` and `Button` draw in client pixels and clip
+to the visible area. Text is code page 437, one byte per glyph, using the
+same 6x12 Terminus table as Memento. The named palette indices work with both
+the 16-colour VGA and 256-colour framebuffer backends. To regenerate the
+font from the sibling Memento checkout:
+
+```sh
+cd go/libgor2/memento/hosted
+go run tools/gen_font.go ../../../../../Memento/src/ui/platform/impl/r2/R2_TerminusFont.h
+```
+
+Canvas references are valid only inside `OnPaint`; do not retain them, use
+them from workers or nest drawing calls. The low-level `Client.Paint` also
+provides this direct drawing path for apps that keep their own event loop.
+It does not allocate a pixel buffer or copy a completed frame. The host's
+slot lease protects drawing from concurrent presentation. `Publish` remains
+available for apps with their own pixel buffers.
+
+### Launch from Files
+
+Set `MEMENTO_APP := 1` before including `go/Makefile.tmpl`. In a host-only
+`main_host.go`, handle the build's `--memento-manifest` argument by calling
+`hosted.WriteManifest(os.Stdout, options, pictures, notifications)`. Use the
+same `Options` as the r2 entry point; hello-world's host main is a complete
+example. The build runs this inside the Go container and uses Python 3 to
+append a 128-byte descriptor outside the ELF's load segments.
+
+Files reads that descriptor to get the protocol magic, title, initial pixel
+size and clipboard/notification features, then launches the selected absolute
+path with `--host`. The ELF can be renamed or moved without a desktop registry
+entry or a C++ window subclass. Paths must fit the kernel's 63-byte limit and
+have no spaces. Titles are 1..79 printable ASCII bytes and dimensions are
+1..2048 pixels. The app must already implement the version 1 hosted protocol;
+metadata does not turn a console or full-screen app into a windowed app.
+See [HOSTED_APPS.md](../../../cpp/memento-hello/HOSTED_APPS.md) for the binary
+format and how other languages can add a descriptor.
+
+### Low-level hosted transport
+
 When a program would rather draw its whole window than have Memento paint a
 snapshot, [`hosted`](hosted/hosted.go) is the child side of Memento's
 `HostedWindow` (`cpp/memento-hello/windows/hosted_window.cpp`), the window
@@ -182,6 +275,8 @@ and `Fail` leaves a message the window shows after the program has ended.
 `RuntimeOutput`, given to `libgor2.SetConsoleSink`, makes a panic's own words
 that message, without allocating.  An ended program's window offers Enter to
 start it again in place.
+`Notifications` reports whether the host opted into clock bubbles; `Notify`
+queues a bounded message without changing the version 1 block layout.
 `PortBase` is the first of the 32 TCP ports Memento sets aside for the
 window's slot.  A window built with `pictures` set hands the program a PNG of
 the clipboard's picture on a Ctrl+V (`PasteImage`).

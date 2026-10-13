@@ -114,6 +114,7 @@ type Client struct {
 	reason   ExitReason
 
 	runtimeSaid bool // RuntimeOutput has begun the message
+	canvas      Canvas
 }
 
 // Attach checks the block at the address Memento passed (args[2]) and
@@ -151,18 +152,33 @@ func Connect(b *Block, pixels []byte, magic uint32, now uint64) (*Client, error)
 }
 
 // Colours is 16 (the VGA) or 256 (the graphics kernel's framebuffer).
-func (c *Client) Colours() int { return int(c.b.Colours) }
+func (c *Client) Colours() int {
+	if c.b == nil {
+		return 0
+	}
+	return int(c.b.Colours)
+}
 
 // MaxSize is the largest frame the window can show.
-func (c *Client) MaxSize() (int, int) { return int(c.b.MaxWidth), int(c.b.MaxHeight) }
+func (c *Client) MaxSize() (int, int) {
+	if c.b == nil {
+		return 0, 0
+	}
+	return int(c.b.MaxWidth), int(c.b.MaxHeight)
+}
 
 // PortBase is the first of the 32 local TCP ports Memento set aside for this
 // window's process.
-func (c *Client) PortBase() uint16 { return uint16(c.b.PortBase) }
+func (c *Client) PortBase() uint16 {
+	if c.b == nil {
+		return 0
+	}
+	return uint16(c.b.PortBase)
+}
 
 // Fits says whether a w x h frame can be published.
 func (c *Client) Fits(w, h int) bool {
-	return w > 0 && h > 0 && w <= int(c.b.MaxWidth) && h <= int(c.b.MaxHeight) && w*h <= int(c.b.Capacity)
+	return c.b != nil && w > 0 && h > 0 && w <= int(c.b.MaxWidth) && h <= int(c.b.MaxHeight) && w*h <= int(c.b.Capacity)
 }
 
 // Poll beats once and says whether to go on: the window still open, Memento
@@ -209,8 +225,40 @@ func (c *Client) Next(cmd *Command) bool {
 // Memento is not showing and makes it the one to show.  False when it does
 // not fit or Memento is still reading that buffer; try again later.
 func (c *Client) Publish(px []byte, w, h int, title string) bool {
-	if c.reason != Running || !c.Fits(w, h) || len(px) < w*h {
+	if !c.Fits(w, h) || len(px) < w*h {
 		return false
+	}
+	back, frame := c.beginFrame(w, h)
+	if frame == nil {
+		return false
+	}
+	copy(c.pixels[back], px[:w*h])
+	c.commitFrame(back, frame, w, h, title)
+	return true
+}
+
+// Paint leases a free frame and draws into it without allocating or copying a
+// private pixel buffer. False means the size is invalid, the client stopped,
+// or the back buffer is still being read; paint is not called in those cases.
+// The canvas must not escape the callback. Keep this on the client goroutine.
+func (c *Client) Paint(w, h int, title string, paint func(*Canvas)) bool {
+	if paint == nil {
+		return false
+	}
+	back, frame := c.beginFrame(w, h)
+	if frame == nil {
+		return false
+	}
+	c.canvas = Canvas{pixels: c.pixels[back][:w*h], w: w, h: h}
+	paint(&c.canvas)
+	c.canvas = Canvas{}
+	c.commitFrame(back, frame, w, h, title)
+	return true
+}
+
+func (c *Client) beginFrame(w, h int) (uint32, *Frame) {
+	if c.reason != Running || !c.Fits(w, h) {
+		return 0, nil
 	}
 	back := uint32(0)
 	if atomic.LoadUint32(&c.b.Front) == 0 {
@@ -218,22 +266,24 @@ func (c *Client) Publish(px []byte, w, h int, title string) bool {
 	}
 	f := &c.b.Frames[back]
 	if !atomic.CompareAndSwapUint32(&f.State, slotReady, slotWriting) {
-		return false
+		return 0, nil
 	}
-	copy(c.pixels[back], px[:w*h])
+	return back, f
+}
+
+func (c *Client) commitFrame(back uint32, f *Frame, w, h int, title string) {
 	f.Width, f.Height = uint32(w), uint32(h)
 	putText(f.Title[:], title)
 	f.Serial = atomic.LoadUint32(&c.b.Serial) + 1
 	atomic.StoreUint32(&f.State, slotReady)
 	atomic.StoreUint32(&c.b.Front, back)
 	atomic.StoreUint32(&c.b.Serial, f.Serial)
-	return true
 }
 
 // Copy puts text (code page 437) on Memento's clipboard.  False while the
 // last one has not been taken yet.
 func (c *Client) Copy(text string) bool {
-	if atomic.LoadUint32(&c.b.CopyPending) != 0 {
+	if c.b == nil || c.reason != Running || atomic.LoadUint32(&c.b.CopyPending) != 0 {
 		return false
 	}
 	putText(c.b.CopyText[:], text)
@@ -243,7 +293,7 @@ func (c *Client) Copy(text string) bool {
 
 // Open asks Memento for a Web window on url.
 func (c *Client) Open(url string) bool {
-	if atomic.LoadUint32(&c.b.OpenPending) != 0 {
+	if c.b == nil || c.reason != Running || atomic.LoadUint32(&c.b.OpenPending) != 0 {
 		return false
 	}
 	putText(c.b.OpenURL[:], url)
@@ -253,7 +303,11 @@ func (c *Client) Open(url string) bool {
 
 // Attention marks the window (a red title and taskbar button) unless it has
 // the focus.
-func (c *Client) Attention() { atomic.StoreUint32(&c.b.AttentionPending, 1) }
+func (c *Client) Attention() {
+	if c.b != nil && c.reason == Running {
+		atomic.StoreUint32(&c.b.AttentionPending, 1)
+	}
+}
 
 func (c *Client) notifications() *notificationQueue {
 	return (*notificationQueue)(unsafe.Pointer(&c.b.InitialURL[0]))
@@ -282,7 +336,11 @@ func (c *Client) Notify(text string) bool {
 }
 
 // Fail leaves a message the window shows once the program has ended.
-func (c *Client) Fail(msg string) { putText(c.b.Error[:], msg) }
+func (c *Client) Fail(msg string) {
+	if c.b != nil {
+		putText(c.b.Error[:], msg)
+	}
+}
 
 // RuntimeOutput keeps the runtime's own words --- a panic's --- as the
 // message the window shows once the program has ended.  It does not

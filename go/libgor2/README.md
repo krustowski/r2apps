@@ -30,6 +30,12 @@ if err := libgor2.ReadSysInfo(&info); err != nil {
 
 ## Memento windows
 
+For a window drawn in Go, use `memento/hosted.Run` with event and paint hooks.
+It wraps the existing host ABI, including resizing, heartbeat and shutdown,
+and offers clipped drawing, Memento's font and buttons, clipboard and
+notifications. [`hello-world`](../hello-world/README.md) is a complete app
+launched through Files > Run in new window; its UI needs only `OnEvent` and `OnPaint`.
+
 Use [`libgor2/memento`](memento/README.md) for a Go app that runs inside a
 `cpp/memento-hello` window. Memento owns the window and paints snapshots; the
 Go process owns the app state and consumes commands. The package extracts the
