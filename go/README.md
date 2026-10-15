@@ -16,6 +16,7 @@
 | `spotify` | Spotify client hosted by Memento: playlists from the Web API, and Premium tracks streamed, decrypted and decoded (Ogg Vorbis, through Tremor) to HD Audio inside r2, over r2net and r2tls; generated test tones without an account (see its [README](spotify/README.md)). | experimental |
 | `dish` | The [vxn.dev](https://github.com/thevxn/dish) one-shot monitoring service, ported: HTTP, TCP and ICMP checks, results pushed to plain-HTTP channels. | stable |
 | `telegram` | The Telegram client of Memento's Telegram window, out of Memento: a bot over the Bot API (r2net and r2tls), photos, GIFs and H.264 MP4s through Memento's own decoders, screenshots; it draws its window itself (see its [README](telegram/README.md)). | usable |
+| [`mines`](mines/README.md) | Minesweeper for Memento's desktop icon, out of Memento: the three classic boards, a safe first click, chords, best times on the floppy; it draws its window itself with `libgor2/memento/hosted`. | stable |
 
 Go on `r2` is TinyGo, not the `gc` toolchain.  What you get is the whole Go
 *language* --- slices, maps, strings, interfaces, closures, `defer`, `panic`,
