@@ -1,115 +1,106 @@
 #include "int.h"
 #include "cpu.h"
+#include "log.h"
 #include "mmu.h"
 #include "printf.h"
 
-void int_bios(CPU_T *cpu, Memory_T *memory) {
-    INT_BIOS int_code = mmu_read(memory, (cpu->CS << 4) + cpu->IP++);
+/*
+ *  int.c
+ *
+ *  Dispatcher for the interrupt vectors the emulator services natively.
+ *
+ *  Every vector points at a three byte stub in the BIOS area: the callback
+ *  opcode, the vector number, and an IRET. Reaching the callback lands
+ *  here with the vector number still in the instruction stream, which is
+ *  what makes hooking work -- a guest that replaces a vector simply never
+ *  reaches its stub, and one that chains to the old address still does.
+ *
+ *  krusty@vxn.dev / Nov 4, 2025
+ */
 
-    /*printf((const uint8_t *)"=> Interrupt 0x%x\n", int_code);*/
+void int_bios(CPU_T *cpu, Memory_T *memory) {
+    uint8_t int_code = mem_r8(memory, cpu->CS, cpu->IP);
+
+    cpu->IP++;
+
+    if (debug)
+        log_line((const uint8_t *)"INT %x AX=%x from %x:%x", (unsigned int)int_code, (unsigned int)cpu->AX, (unsigned int)mem_r16(memory, cpu->SS, (uint16_t)(cpu->SP + 2)),
+                 (unsigned int)mem_r16(memory, cpu->SS, cpu->SP));
 
     switch (int_code) {
-    case BOUND_FAIL: {
+    case 0x05:
         handle_05h(cpu, memory);
         break;
-    }
-    case REAL_TIME_CLOCK_TICKS: {
+    case 0x08:
         handle_08h(cpu, memory);
         break;
-    }
-    case KEYBOARD_INT: {
+    case 0x09:
         handle_09h(cpu, memory);
         break;
-    }
-    case VIDEO: {
+    case 0x10:
         handle_10h(cpu, memory);
         break;
-    }
-    case EQUIPMENT_LIST: {
+    case 0x11:
         handle_11h(cpu, memory);
         break;
-    }
-    case MEMORY_CONVENTIONAL_SIZE: {
+    case 0x12:
         handle_12h(cpu, memory);
         break;
-    }
-    case DISK_SERVICES: {
+    case 0x13:
         handle_13h(cpu, memory);
         break;
-    }
-    case SERIAL_PORT_SERVICES: {
+    case 0x14:
         handle_14h(cpu, memory);
         break;
-    }
-    case MISC_SYSTEM_SERVICES: {
+    case 0x15:
         handle_15h(cpu, memory);
         break;
-    }
-    case KEYBOARD_SERVICES: {
+    case 0x16:
         handle_16h(cpu, memory);
         break;
-    }
-    case PRINTER_SERVICES: {
+    case 0x17:
         handle_17h(cpu, memory);
         break;
-    }
-    case EXEC_CASSETTE_BASIC: {
+    case 0x18:
         handle_18h(cpu, memory);
         break;
-    }
-    case LOAD_OPERATING_SYSTEM: {
+    case 0x19:
         handle_19h(cpu, memory);
         break;
-    }
-    case RTC_AND_PCI_SERVICES: {
+    case 0x1A:
         handle_1Ah(cpu, memory);
         break;
-    }
-    case CTRL_BREAK_HANDLER: {
+    case 0x1B:
         handle_1Bh(cpu, memory);
         break;
-    }
-    case TIMER_TICK_HANDLER: {
+    case 0x1C:
         handle_1Ch(cpu, memory);
         break;
-    }
-    case _POINTER_TO_VPT: {
-        handle_1Dh(cpu, memory);
-        break;
-    }
-    case _POINTER_TO_DPT: {
-        handle_1Eh(cpu, memory);
-        break;
-    }
-    case _POINTER_TO_VGCT: {
-        handle_1Fh(cpu, memory);
-        break;
-    }
-    case DOS_RESERVED: {
+    case 0x20:
         handle_20h(cpu, memory);
         break;
-    }
-    case DOS_SERVICES: {
+    case 0x21:
         handle_21h(cpu, memory);
         break;
-    }
-    case ADDRESS_POINTER_FDPT_DRV1: {
-        handle_41h(cpu, memory);
+    case 0x27: /* terminate and stay resident */
+        handle_20h(cpu, memory);
+        break;
+    case 0x33: /* mouse driver: report "not installed" */
+        cpu->AX = 0;
+        break;
+    case 0x00: /* divide by zero */
+    case 0x01:
+    case 0x03:
+    case 0x04:
+    case 0x22:
+    case 0x23:
+    case 0x24:
+    case 0x28:
+    case 0x2F:
+        break;
+    default:
+        if (debug)
+            log_line((const uint8_t *)"INT %x NOT IMPLEMENTED", (unsigned int)int_code);
         break;
     }
-    case ADDRESS_POINTER_FDPT_DRV2: {
-        handle_46h(cpu, memory);
-        break;
-    }
-    case RTC_ALARM: {
-        handle_4Ah(cpu, memory);
-        break;
-    }
-    default: {
-        printf((const uint8_t *)"=> Interrupt not implemented\n");
-        break;
-    }
-    }
-
-    return;
 }

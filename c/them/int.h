@@ -245,6 +245,8 @@ typedef enum {
     EXTENDED_OPEN_CREATE,
 } SRV_21H;
 
+extern uint8_t debug;
+
 /*
  *  switch_opcodes()
  *
@@ -254,6 +256,42 @@ typedef enum {
 void switch_opcode(CPU_T *cpu, Memory_T *memory);
 
 void int_bios(CPU_T *cpu, Memory_T *memory);
+
+/* Initialise BIOS drive A: and its diskette parameter table in guest RAM. */
+void bios_disk_init(Memory_T *);
+
+/* Keyboard helpers shared between the BIOS and the DOS console services. */
+uint8_t bios_key_ready(Memory_T *);
+uint8_t bios_key_read(Memory_T *, uint16_t *entry);
+void bios_retry_instruction(CPU_T *, Memory_T *);
+
+/* Set up the DOS state for a program loaded with the given PSP segment. */
+void dos_init(uint16_t psp_segment);
+void dos_shutdown(void);
+uint8_t dos_exit_code(void);
+
+/* Size of a file in the working directory, or 0 when it is not there. */
+uint32_t dos_file_size(const uint8_t *name);
+
+/* Read a file into <dest>; returns the byte count, or 0 on failure.  When
+ * the directory listing cannot supply a size, <fallback> is used instead
+ * (0 makes an unknown size a failure). */
+uint32_t dos_read_file(const uint8_t *name, uint8_t *dest, uint32_t cap, uint32_t fallback);
+
+/* The working directory in the kernel's spelling, asked for until the kernel
+ * actually answers.  Returns 0, and "/", when it never did. */
+uint8_t dos_cwd(uint8_t *out, uint16_t cap);
+void dos_set_cwd(const uint8_t *dir);
+
+/* Put the working directory in front of a relative <name>, in place. */
+void dos_absolute(uint8_t *name, uint16_t cap);
+
+/* Load a .COM or .EXE at <psp_segment> and set the CPU up to enter it.
+ * A flat .COM is loaded and entered at <com_org> within that segment;
+ * .EXE entry points come from the header. DOS EXEC uses com_org = 0x100.
+ * <name> is resolved the way DOS resolves one, so it may be extended in
+ * place with ".COM" or ".EXE". */
+uint8_t dos_load_program(Memory_T *, CPU_T *, uint16_t psp_segment, uint16_t com_org, uint8_t *name);
 
 void handle_05h(CPU_T *, Memory_T *);
 void handle_08h(CPU_T *, Memory_T *);
