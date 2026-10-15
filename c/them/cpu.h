@@ -264,65 +264,6 @@ typedef enum {
 } PREFIX_D5_SUBTYPE;
 
 typedef enum {
-    CMP_BH = 0xFF,
-    CMP_BL = 0xFB,
-} PREFIX_80_SUBTYPE;
-
-typedef enum {
-    INC_BL = 0xC3,
-} PREFIX_FE_SUBTYPE;
-
-/* General-purpose registers */
-typedef enum {
-    ADD_AX = 0xC0,
-    ADD_BX = 0xC3,
-    ADD_CX = 0xC1,
-    ADD_DX = 0xC2,
-    ADD_SP = 0xC4,
-    ADD_BP = 0xC5,
-    ADD_SI = 0xC6,
-    ADD_DI = 0xC7,
-
-    MOV_DS_AX = 0xD8,
-    MOV_DS_BX = 0xDB,
-    MOV_DS_CX = 0xD9,
-    MOV_DS_DX = 0xDA,
-    MOV_DS_SP = 0xDC,
-    MOV_DS_BP = 0xDD,
-    MOV_DS_SI = 0xDE,
-    MOV_DS_DI = 0xDF,
-
-    MOV_ES_AX = 0xC0,
-    MOV_ES_BX = 0xC3,
-    MOV_ES_CX = 0xC1,
-    MOV_ES_DX = 0xC2,
-    MOV_ES_SP = 0xC4,
-    MOV_ES_BP = 0xC5,
-    MOV_ES_SI = 0xC6,
-    MOV_ES_DI = 0xC7,
-
-    MOV_SS_AX = 0xD0,
-    MOV_SS_BX = 0xD3,
-    MOV_SS_CX = 0xD1,
-    MOV_SS_DX = 0xD2,
-    MOV_SS_SP = 0xD4,
-    MOV_SS_BP = 0xD5,
-    MOV_SS_SI = 0xD6,
-    MOV_SS_DI = 0xD7,
-
-    SUB_AX = 0xE8,
-    SUB_BX = 0xEB,
-    SUB_CX = 0xE9,
-    SUB_DX = 0xEA,
-    SUB_SP = 0xEC,
-    SUB_BP = 0xED,
-    SUB_SI = 0xEE,
-    SUB_DI = 0xEF
-} GPR;
-
-typedef enum { AX, BX, CX, DX, CS, DS, ES, SS, SP, BP, SI, DI, IP, FLAGS } REGISTER_T;
-
-typedef enum {
     CF = 0x0001,
     PF = 0x0004,
     AF = 0x0010,
@@ -345,10 +286,53 @@ void dump_registers(CPU_T *);
 uint8_t get_flag(CPU_T *, FLAGS_MASK);
 uint8_t set_flag(CPU_T *, FLAGS_MASK, uint8_t);
 
-uint8_t jump_short(CPU_T *, uint8_t);
+uint8_t get_reg8(CPU_T *, uint8_t idx);
+uint16_t get_reg16(CPU_T *, uint8_t idx);
 
-uint8_t pop_reg(CPU_T *, Memory_T *, REGISTER_T);
-uint8_t push_reg(CPU_T *, Memory_T *, REGISTER_T);
+void set_reg8(CPU_T *, uint8_t idx, uint8_t val);
+void set_reg16(CPU_T *, uint8_t idx, uint16_t val);
+
+/* Linear memory access with the 8086 segment:offset rules; the offset wraps
+ * inside its 64 KiB segment, so a word at offset 0xFFFF reads offset 0. */
+uint8_t mem_r8(Memory_T *, uint16_t seg, uint16_t off);
+void mem_w8(Memory_T *, uint16_t seg, uint16_t off, uint8_t value);
+uint16_t mem_r16(Memory_T *, uint16_t seg, uint16_t off);
+void mem_w16(Memory_T *, uint16_t seg, uint16_t off, uint16_t value);
+
+void push16(CPU_T *, Memory_T *, uint16_t value);
+uint16_t pop16(CPU_T *, Memory_T *);
+
+/* Raise interrupt <n> through the interrupt vector table. */
+void cpu_int(CPU_T *, Memory_T *, uint8_t n);
+
+/* EXEC can terminate a child from inside its IRQ handler. Restoring the
+ * parent's CPU also restores ownership of its interrupt frames, discarding
+ * the child's abandoned frames without expiring any active parent handler. */
+typedef struct {
+    uint32_t frame[2];
+    uint8_t busy;
+} CpuIrqState_T;
+void cpu_irq_save(CpuIrqState_T *state);
+void cpu_irq_restore(const CpuIrqState_T *state);
+
+/* Stop the run loop (used by the DOS terminate services). */
+void cpu_halt(void);
+
+/* The interpreter entry point: runs until the guest terminates. */
+/* How many times a prefix run was cut short as too long to be an instruction,
+ * and the CS:IP of the first one.  A non-zero count means the guest ran off
+ * into something that is not code. */
+void cpu_overlong(uint32_t *count, uint16_t *cs, uint16_t *ip);
+
+/* How many times a REP ran past 0x10000 passes, and the CS:IP of the first.
+ * Non-zero means CX stopped being the counter it is supposed to be. */
+void cpu_runaway(uint32_t *count, uint16_t *cs, uint16_t *ip);
+
+/* Total repeat passes executed, how many slices ended unfinished, and the
+ * opcode and remaining CX of the last one. */
+void cpu_strings(uint64_t *iters, uint32_t *slices, uint8_t *op, uint16_t *cx);
+
+void switch_opcode(CPU_T *, Memory_T *);
 
 #ifdef __cplusplus
 }
