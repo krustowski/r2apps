@@ -15,9 +15,11 @@ extern "C" {
 
 typedef struct {
     uint8_t bytes[1 << 20];
-    uint8_t render_lock;
     uint16_t start;
+    uint16_t next_free_seg; /* end of live DOS blocks (placement for EXEC) */
 } __attribute__((packed)) Memory_T;
+
+uint8_t init_ram(Memory_T *mem);
 
 uint8_t mmu_read(Memory_T *mem, uint32_t addr);
 uint8_t mmu_write(Memory_T *mem, uint32_t addr, uint8_t value);
