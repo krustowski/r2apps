@@ -268,6 +268,7 @@ typedef enum {
 #define DHCP_RETRY_MIN_MS 1000u
 #define DHCP_RETRY_MAX_MS 16000u
 #define DHCP_FALLBACK_MS 6000u /* no lease by then: use the fallback address */
+#define DHCP_NAME_CHECK_MS 2000u /* how often a bound lease looks for a new host name */
 
 static DhcpState_T dhcp_state = DHCP_OFF;
 static uint32_t dhcp_xid;
@@ -283,6 +284,7 @@ static uint64_t dhcp_resend_ms;  /* when to send again if nothing comes */
 static uint32_t dhcp_backoff_ms;
 static uint64_t dhcp_renew_ms;  /* T1 */
 static uint64_t dhcp_expire_ms; /* end of the lease */
+static uint64_t dhcp_name_check_ms;
 
 /* Used until a lease arrives, and for good if none does. */
 static uint8_t fallback_ip[4];
@@ -300,22 +302,31 @@ static const uint8_t bcast_ip[4] = {255, 255, 255, 255};
 static void set_ip(const uint8_t ip[4]);
 
 /* The hostname sent in option 12: the system name from sysinfo, cut down to
- * what a hostname may hold (letters, digits, '-'), or "r2". */
-static void dhcp_init_hostname(void) {
+ * what a hostname may hold (letters, digits, '-'), or "r2".  Read again for
+ * every message, since Settings can rename the machine at any time; a busy
+ * read keeps the name before.  Returns 1 when the name changed. */
+static uint8_t dhcp_read_hostname(void) {
     SysInfo_T si;
     bzero_buf((uint8_t *)&si, sizeof(si));
-    read_sysinfo(&si);
-    hostname_len = 0;
+    if (!read_sysinfo(&si) && hostname_len)
+        return 0;
+    uint8_t name[32];
+    uint8_t n = 0;
     for (uint32_t i = 0; i < sizeof(si.system_name) && si.system_name[i]; i++) {
         uint8_t c = si.system_name[i];
         if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-')
-            hostname[hostname_len++] = c;
+            name[n++] = c;
     }
-    if (!hostname_len) {
-        hostname[0] = 'r';
-        hostname[1] = '2';
-        hostname_len = 2;
+    if (!n) {
+        name[0] = 'r';
+        name[1] = '2';
+        n = 2;
     }
+    if (n == hostname_len && memcmp(name, hostname, n) == 0)
+        return 0;
+    memcpy(hostname, name, n);
+    hostname_len = n;
+    return 1;
 }
 
 /* Fill eth+ip+udp+dhcp fixed headers; return pointer to options area.
@@ -371,6 +382,7 @@ static uint8_t dhcp_common_opts(uint8_t *opt, uint8_t msg_type) {
     opt[i++] = 1; /* client id: Ethernet + MAC */
     memcpy(opt + i, MY_MAC, 6);
     i += 6;
+    dhcp_read_hostname();
     opt[i++] = 12;
     opt[i++] = hostname_len; /* hostname */
     memcpy(opt + i, hostname, hostname_len);
@@ -608,6 +620,21 @@ static void dhcp_poll(void) {
         if (now >= dhcp_renew_ms) {
             dhcp_backoff_ms = DHCP_RETRY_MIN_MS;
             dhcp_send_request(now, 1);
+        } else if (now >= dhcp_name_check_ms) {
+            /* Renamed: renew now rather than at T1, so the server's lease
+             * table, and the DNS name many routers make of it, has the new
+             * name. */
+            dhcp_name_check_ms = now + DHCP_NAME_CHECK_MS;
+            if (dhcp_read_hostname()) {
+                if (debug) {
+                    print((const uint8_t *)"-> eth: host name now ");
+                    for (uint8_t i = 0; i < hostname_len; i++)
+                        printf((const uint8_t *)"%c", hostname[i]);
+                    print((const uint8_t *)", renewing the lease\n");
+                }
+                dhcp_backoff_ms = DHCP_RETRY_MIN_MS;
+                dhcp_send_request(now, 1);
+            }
         }
         break;
     case DHCP_RENEWING:
@@ -826,7 +853,6 @@ int main(int argc, char **argv) {
         memcpy(fallback_ip, my_ip, 4);
         memcpy(my_ip, zero_ip, 4);
         print((const uint8_t *)"  IP: DHCP\n");
-        dhcp_init_hostname();
         dhcp_start(get_ticks());
     }
 
