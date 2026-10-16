@@ -491,6 +491,36 @@ int64_t net_unbind_port(uint16_t port) {
 
 int64_t get_net_status(NetStatus_T *ns) { return syscall(ScNetStatus, (int64_t)ns, 0, 0); }
 
+int64_t get_net_stats(NetStats_T *stats) {
+    if (!stats)
+        return 0xfc;
+    return syscall(ScNetStats, (int64_t)stats, 0, 0);
+}
+
+int64_t get_net_ports(NetPortTable_T *table) {
+    if (!table)
+        return 0xfc;
+    return syscall(ScNetPorts, (int64_t)table, 0, 0);
+}
+
+int64_t net_port_owner(uint16_t port, NetPortBinding_T *owner) {
+    NetPortTable_T table;
+    if (!port || !owner)
+        return 0xfc;
+    int64_t result = get_net_ports(&table);
+    if (result != 0)
+        return result;
+    if (table.n_ports > NET_MAX_PORT_BINDINGS)
+        return 0xfc;
+    for (uint8_t i = 0; i < table.n_ports; i++) {
+        if (table.bindings[i].port == port) {
+            *owner = table.bindings[i];
+            return 0;
+        }
+    }
+    return 0xfe;
+}
+
 int64_t get_net_config(NetConfig_T *cfg) { return syscall(ScNetConfig, 0x01, (int64_t)cfg, 0); }
 
 int64_t set_net_config(const NetConfig_T *cfg) { return syscall(ScNetConfig, 0x02, (int64_t)cfg, 0); }

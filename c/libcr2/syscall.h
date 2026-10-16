@@ -53,6 +53,36 @@ typedef struct {
     uint16_t ports[16];
 } __attribute__((packed)) NetStatus_T;
 
+/* Syscall 0x45: physical NIC totals since boot and a coherent millisecond
+ * timestamp. Bytes include Ethernet headers/padding, exclude FCS and loopback.
+ * TX counts successful submissions to the card, not delivery confirmations. */
+typedef struct {
+    uint64_t timestamp_ms;
+    uint64_t rx_frames;
+    uint64_t rx_bytes;
+    uint64_t tx_frames;
+    uint64_t tx_bytes;
+} __attribute__((packed)) NetStats_T;
+
+#define NET_NO_PID ((uint64_t)-1)
+#define NET_MAX_PORT_BINDINGS 16
+
+/* Syscall 0x46: full process IDs, not reusable scheduler slots. Names are
+ * bounded to 16 bytes and may have no NUL terminator. */
+typedef struct {
+    uint16_t port;
+    uint8_t reserved[6];
+    uint64_t pid;
+    uint8_t name[16];
+} __attribute__((packed)) NetPortBinding_T;
+
+typedef struct {
+    uint64_t driver_pid; /* NET_NO_PID when no global ETH driver is registered */
+    uint8_t n_ports;
+    uint8_t reserved[7];
+    NetPortBinding_T bindings[NET_MAX_PORT_BINDINGS];
+} __attribute__((packed)) NetPortTable_T;
+
 /*
  *  type NetConfig_T structure
  *
@@ -123,6 +153,7 @@ typedef struct {
 #define FS_TYPE_ISO9660 3 /* the CD at /mnt/iso */
 #define FS_TYPE_TAR 4     /* the boot medium's archive at /mnt/tar */
 #define FS_TYPE_MEMDISK 5 /* the RAM disk at /mnt/tmp */
+#define FS_TYPE_NETDISK 6 /* RNTP/TCP FAT12/16 at /mnt/net */
 
 /*
  *  Formats on the medium, FsStat_T.format.
@@ -265,7 +296,9 @@ typedef enum SyscallNumber : int64_t {
     ScNetConfig = 0x3d,
     // Filesystem size
     ScFsStat = 0x40,
-    ScHeapContains = 0x43
+    ScHeapContains = 0x43,
+    ScNetStats = 0x45,
+    ScNetPorts = 0x46
 } SyscallNo_T;
 
 /*
@@ -931,6 +964,17 @@ int64_t net_unbind_port(uint16_t port);
  *  Returns 0 on success, negative on error.
  */
 int64_t get_net_status(NetStatus_T *ns);
+
+/* Read coherent NIC counters (40 bytes, 0x45) or TCP owners (528 bytes, 0x46).
+ * Returns 0 on success, 0xfc for an invalid output, 0xff on older kernels;
+ * get_net_ports also returns 0xfa if the scheduler is busy. Error outputs
+ * are untouched. Rates: delta bytes * 1000 / delta timestamp_ms. */
+int64_t get_net_stats(NetStats_T *stats);
+int64_t get_net_ports(NetPortTable_T *table);
+
+/* Resolve one TCP port. Returns 0 on success, 0xfe if unbound, or a syscall
+ * error above. A zero port or NULL output returns 0xfc. */
+int64_t net_port_owner(uint16_t port, NetPortBinding_T *owner);
 
 /*
  *  int64_t get_net_config() / set_net_config() prototypes

@@ -297,10 +297,21 @@ TcpSocket_T *tcp_connect(TcpSocket_T sockets[MAX_SOCKETS], const uint8_t remote_
  */
 void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8_t flags);
 
-/* Kernel TCP construction uses a 1400-byte buffer, including the 30-byte
- * TcpPacketRequest_T. Bound payloads by this as well as the peer's MSS. */
-#define TCP_MAX_PAYLOAD 1370U
+/* Ethernet MTU 1500 minus IPv4/TCP headers. The packet request has room
+ * for its 30-byte ABI header plus this body. Also respect the peer MSS. */
+#define TCP_MAX_PAYLOAD 1460U
 uint16_t tcp_peer_mss(const TcpSocket_T *sock);
+/* Opt in to SYN MSS advertisement and full Ethernet segments. Zero (default)
+ * preserves plain SYNs and the legacy 1370-byte send limit. Set before connect
+ * or listen. Older kernels automatically retain the legacy limit. */
+void tcp_set_mss(uint16_t mss);
+/* Optional userspace IPv4/TCP construction; default uses the kernel builder.
+ * Set before connecting/listening. Raw Ethernet transmission still uses the kernel. */
+void tcp_set_local_packet_crafting(uint8_t enabled);
+/* Optional application-owned RX storage; socket layout and default capacity
+ * stay compatible. Install before bulk traffic; free/claim resets it. */
+int tcp_set_receive_buffer(TcpSocket_T *sock, uint8_t *buffer, uint32_t capacity);
+uint8_t *tcp_receive_data(TcpSocket_T *sock);
 
 /*
  *  TcpSocket_T *socket_tcp4() prototype

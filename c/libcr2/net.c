@@ -419,22 +419,15 @@ static void eth_drv_send(const uint8_t *ip_pkt, uint32_t len) {
     hdr->header_checksum = 0;
     hdr->header_checksum = htons(inet_cksum(pkt, hdr_len));
 
-    /* Fix TCP header byte order.
-     *
-     * send_tcp_packet stores all TcpHeader_T fields in host byte order.
-     * CRAFT_TCP_PACKET computes a checksum over those raw bytes but does not
-     * reformat the fields — the SLIP send path does the final swap to network
-     * order before the wire, but for Ethernet we must do it ourselves.
-     *
-     * Detection: in network byte order pkt[hdr_len] holds the data-offset byte
-     * whose high nibble is 5 (standard 20-byte header).  In host byte order
-     * that position holds the flags byte instead (SYN=0x02, ACK=0x10, …)
-     * whose high nibble is never 5. */
+    /* The kernel returns a TCP header in network order, including options.
+     * Keep the fallback for older host-order builders; recognize all valid
+     * data offsets, so a 24-byte SYN with MSS is never swapped a second time. */
     if (ipv4.protocol == 6 && ip_total >= hdr_len + (uint32_t)sizeof(TcpHeader_T)) {
         uint8_t *tcpp = pkt + hdr_len;
         TcpHeader_T *t = (TcpHeader_T *)tcpp;
 
-        if ((tcpp[12] >> 4) != 5) {
+        uint32_t wire_header_len = (uint32_t)(tcpp[12] >> 4) * 4;
+        if (wire_header_len < 20 || wire_header_len > ip_total - hdr_len) {
             /* Host byte order — swap every multi-byte field to network order */
             t->source_port = swap16(t->source_port);
             t->dest_port = swap16(t->dest_port);
@@ -515,6 +508,11 @@ static uint8_t net_drv_is_eth = 0;
  * segment (including every ACK), so tracing it unconditionally floods the
  * kernel console and slows transfers to the speed of the serial writes. */
 static uint8_t net_debug = 0;
+static uint16_t local_mss = 0;
+static uint8_t local_packet_crafting = 0;
+void tcp_set_local_packet_crafting(uint8_t enabled) { local_packet_crafting = !!enabled; }
+void tcp_set_mss(uint16_t mss) { local_mss = mss > TCP_MAX_PAYLOAD ? TCP_MAX_PAYLOAD : mss; }
+static uint16_t tcp_payload_limit(void) { return local_mss ? TCP_MAX_PAYLOAD : 1370U; }
 
 /* Keep MSS outside the public socket layout used by existing C++ callers.
  * A missing/evicted entry safely falls back to the IPv4 default of 536. */
@@ -533,8 +531,44 @@ static void remember_mss(const TcpSocket_T *sock, uint16_t mss) {
 uint16_t tcp_peer_mss(const TcpSocket_T *sock) {
     for (uint32_t i = 0; i < MAX_SOCKETS; ++i)
         if (peer_mss[i].socket == sock)
-            return peer_mss[i].mss;
+            return peer_mss[i].mss < tcp_payload_limit()
+                ? peer_mss[i].mss : tcp_payload_limit();
     return 536;
+}
+
+static struct { TcpSocket_T *socket; uint8_t *data; uint32_t capacity; } receive_storage[MAX_SOCKETS];
+static uint32_t receive_capacity(const TcpSocket_T *sock) {
+    for (uint32_t i = 0; i < MAX_SOCKETS; ++i)
+        if (receive_storage[i].socket == sock) return receive_storage[i].capacity;
+    return RX_BUFFER_SIZE;
+}
+uint8_t *tcp_receive_data(TcpSocket_T *sock) {
+    for (uint32_t i = 0; i < MAX_SOCKETS; ++i)
+        if (receive_storage[i].socket == sock) return receive_storage[i].data;
+    return sock->rx_buffer;
+}
+int tcp_set_receive_buffer(TcpSocket_T *sock, uint8_t *buffer, uint32_t capacity) {
+    if (!sock || (buffer && (!capacity || capacity > 65535 || capacity < sock->rx_len))) return 0;
+    uint32_t slot = MAX_SOCKETS;
+    for (uint32_t i = 0; i < MAX_SOCKETS; ++i) {
+        if (receive_storage[i].socket == sock) { slot = i; break; }
+        if (!receive_storage[i].socket) slot = i;
+    }
+    if (!buffer) {
+        if (sock->rx_len > RX_BUFFER_SIZE) return 0;
+        if (slot < MAX_SOCKETS && receive_storage[slot].socket == sock) {
+            memcpy(sock->rx_buffer, receive_storage[slot].data, sock->rx_len);
+            receive_storage[slot].socket = 0;
+        }
+        return 1;
+    }
+    if (slot == MAX_SOCKETS) return 0;
+    uint8_t *old = tcp_receive_data(sock);
+    if (old != buffer) memcpy(buffer, old, sock->rx_len);
+    receive_storage[slot].socket = sock;
+    receive_storage[slot].data = buffer;
+    receive_storage[slot].capacity = capacity;
+    return 1;
 }
 
 static uint16_t syn_mss(const uint8_t *packet, uint32_t len, uint32_t header_len) {
@@ -780,13 +814,19 @@ TcpSocket_T *accept(TcpSocket_T *listener, TcpSocket_T sockets[MAX_SOCKETS]) {
 }
 
 uint32_t tcp_read(TcpSocket_T *sock, uint8_t *buf, uint32_t maxlen) {
+    uint8_t was_full = sock->rx_len == receive_capacity(sock);
     uint32_t n = (sock->rx_len < maxlen) ? sock->rx_len : maxlen;
 
+    uint8_t *received = tcp_receive_data(sock);
     for (uint32_t i = 0; i < n; i++) {
-        buf[i] = sock->rx_buffer[i];
+        buf[i] = received[i];
     }
 
     sock->rx_len = 0;
+    /* A peer that saw a zero window must learn that read() opened it again,
+     * even when this application has no response to piggyback the update on. */
+    if (n && was_full && (sock->state == SOCKET_ESTABLISHED || sock->state == SOCKET_CLOSE_WAIT))
+        send_tcp_packet(sock, 0, 0, TCP_FLAG_ACK);
 
     return n;
 }
@@ -1035,11 +1075,12 @@ void on_tcp_packet(const uint8_t src_ip[4], const uint8_t dst_ip[4], TcpHeader_T
                      * read() drains the buffer and the advertised window
                      * reopens. */
                     const uint8_t *data = payload + tcp_hdr_len;
-                    uint32_t space = RX_BUFFER_SIZE - s->rx_len;
+                    uint32_t space = receive_capacity(s) - s->rx_len;
                     uint32_t take = (data_len < space) ? data_len : space;
 
+                    uint8_t *received = tcp_receive_data(s);
                     for (uint32_t j = 0; j < take; j++) {
-                        s->rx_buffer[s->rx_len + j] = data[j];
+                        received[s->rx_len + j] = data[j];
                     }
 
                     s->rx_len += take;
@@ -1079,6 +1120,7 @@ static void socket_claim(TcpSocket_T *s, uint8_t i) {
     s->id = i;
     remember_mss(s, 536);
     s->rx_len = 0;
+    (void)tcp_set_receive_buffer(s, 0, 0);
     s->tx_len = 0;
     s->tx_acked = 0;
     s->peer_window = 0;
@@ -1135,6 +1177,7 @@ void free_socket(TcpSocket_T *sock) {
     sock->used = 0;
     sock->state = SOCKET_CLOSED;
     sock->rx_len = 0;
+    (void)tcp_set_receive_buffer(sock, 0, 0);
     sock->tx_len = 0;
 }
 
@@ -1147,6 +1190,7 @@ void socket_pool_init(TcpSocket_T sockets[MAX_SOCKETS]) {
         sockets[i].local_port = 0;
         sockets[i].remote_port = 0;
         sockets[i].rx_len = 0;
+        (void)tcp_set_receive_buffer(&sockets[i], 0, 0);
         sockets[i].tx_len = 0;
         sockets[i].seq_num = 0;
         sockets[i].ack_num = 0;
@@ -1226,13 +1270,13 @@ SocketSet_T socket_select(TcpSocket_T sockets[MAX_SOCKETS], uint8_t events) {
 }
 
 void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8_t flags) {
-    if (!sock || len > TCP_MAX_PAYLOAD || (len && !data))
+    if (!sock || len > tcp_payload_limit() || (len && !data))
         return;
     uint8_t packet_buf[1500];
     uint8_t tcp_packet[1500];
 
     TcpPacketRequest_T request;
-    Ipv4Header_T ipv4_header;
+    Ipv4Header_T ipv4_header = {0};
 
     uint8_t ipv4_header_len = sizeof(Ipv4Header_T);
     uint8_t tcp_header_len = sizeof(TcpHeader_T);
@@ -1244,27 +1288,60 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8
     request.header.ack_num = sock->ack_num;
     /* Advertise the space actually left in the receive buffer instead of a
      * constant, so a peer cannot legitimately overrun it. */
-    request.header.window_size = (uint16_t)(RX_BUFFER_SIZE - ((sock->rx_len < RX_BUFFER_SIZE) ? sock->rx_len : RX_BUFFER_SIZE));
+    uint32_t capacity = receive_capacity(sock);
+    request.header.window_size = (uint16_t)(capacity - ((sock->rx_len < capacity) ? sock->rx_len : capacity));
 
-    uint16_t data_offset = (sizeof(TcpHeader_T) / 4) & 0xF;
+    uint8_t mss_option[4] = {2, 4, (uint8_t)(local_mss >> 8), (uint8_t)local_mss};
+    uint32_t options_len = (flags & TCP_FLAG_SYN) && local_mss ? 4 : 0;
+    if (len + options_len > TCP_MAX_PAYLOAD) return;
+    uint16_t data_offset = (sizeof(TcpHeader_T) + options_len) / 4;
     request.header.data_offset_reserved_flags = (data_offset << 12) | (flags & 0xFF);
 
     memcpy(request.src_ip, sock->local_ip, 4);
     memcpy(request.dst_ip, sock->remote_ip, 4);
 
-    request.length = len;
+    request.length = len + options_len;
+    request.header.checksum = request.header.urgent_pointer = 0;
 
-    memcpy(tcp_packet, (uint8_t *)&request, tcp_req_len);
+    if (local_packet_crafting) {
+        tcp_header_len = sizeof(TcpHeader_T) + options_len;
+        // RNTP can build a complete segment without two packet-builder syscalls.
+        // Socket state, flow control and retransmission accounting stay shared.
+        TcpHeader_T h = request.header;
+        h.source_port = htons(h.source_port); h.dest_port = htons(h.dest_port);
+        h.seq_num = swap32(h.seq_num); h.ack_num = swap32(h.ack_num);
+        h.data_offset_reserved_flags = htons(h.data_offset_reserved_flags);
+        h.window_size = htons(h.window_size);
+        memcpy(tcp_packet, &h, sizeof(h));
+        if (options_len) memcpy(tcp_packet + 20, mss_option, options_len);
+        if (data) memcpy(tcp_packet + 20 + options_len, data, len);
+    } else {
+        memcpy(tcp_packet, (uint8_t *)&request, tcp_req_len);
 
-    if (data) {
-        memcpy(tcp_packet + tcp_req_len, data, len);
+        if (options_len) memcpy(tcp_packet + tcp_req_len, mss_option, options_len);
+        if (data) memcpy(tcp_packet + tcp_req_len + options_len, data, len);
+
+        // Create a reply TCP packet
+        if (!new_packet(CRAFT_TCP_PACKET, (uint8_t *)tcp_packet)) {
+            print((const uint8_t *)"-> TCP packet creation failed\n");
+            return;
+        }
+
+        tcp_header_len = (tcp_packet[12] >> 4) * 4;
+        if (options_len && tcp_header_len == sizeof(TcpHeader_T)) {
+            // An older kernel ignored the requested data offset and treated the
+            // option as application data. Rebuild a plain SYN before sending.
+            options_len = 0;
+            local_mss = 0; // Keep the older kernel's 1370-byte construction limit.
+            request.length = len;
+            request.header.data_offset_reserved_flags = (5U << 12) | (flags & 0xff);
+            memcpy(tcp_packet, (uint8_t *)&request, tcp_req_len);
+            if (data) memcpy(tcp_packet + tcp_req_len, data, len);
+            if (!new_packet(CRAFT_TCP_PACKET, tcp_packet)) return;
+            tcp_header_len = (tcp_packet[12] >> 4) * 4;
+        }
     }
-
-    // Create a reply TCP packet
-    if (!new_packet(CRAFT_TCP_PACKET, (uint8_t *)tcp_packet)) {
-        print((const uint8_t *)"-> TCP packet creation failed\n");
-        return;
-    }
+    if (tcp_header_len < 20 || tcp_header_len > 60 || tcp_header_len + len > 1480) return;
 
     // Compose a dummy IPv4 header
     ipv4_header.version = 0x45; // version=4, IHL=5 (20 bytes) — kernel uses this to find payload offset
@@ -1273,17 +1350,29 @@ void send_tcp_packet(TcpSocket_T *sock, const uint8_t *data, uint32_t len, uint8
     ipv4_header.protocol = 6;
     ipv4_header.total_length = htons(ipv4_header_len + tcp_header_len + len);
 
-    // Compose the IP packet: IPv4 header, then TCP header, then payload data.
-    // After new_packet(CRAFT_TCP_PACKET) the kernel writes the computed TCP checksum back
-    // into tcp_packet[0..tcp_header_len-1], so we take the TCP header from there.
-    // We copy `data` directly rather than from tcp_packet+tcp_req_len to avoid the
-    // 10-byte TcpPacketRequest_T padding that would otherwise truncate the payload.
+    // CRAFT_TCP_PACKET replaces the request with a complete wire segment.
+    // Copy that segment, including options, instead of assuming a 20-byte header.
     memcpy(packet_buf, (const uint8_t *)&ipv4_header, ipv4_header_len);
-    memcpy(packet_buf + ipv4_header_len, (const uint8_t *)tcp_packet, tcp_header_len);
-    if (data && len > 0)
-        memcpy(packet_buf + ipv4_header_len + tcp_header_len, data, len);
+    memcpy(packet_buf + ipv4_header_len, tcp_packet, tcp_header_len + len);
 
-    if (!new_packet(CRAFT_IPV4_PACKET, (uint8_t *)packet_buf)) {
+    if (local_packet_crafting) {
+        Ipv4Header_T *ip = (Ipv4Header_T *)packet_buf;
+        ip->dscp_ecn = 0; ip->identification = htons(0x1337);
+        ip->flags_fragment_offset = htons(0x4000); ip->ttl = 64;
+        memcpy(ip->source_addr, sock->local_ip, 4);
+        memcpy(ip->destination_addr, sock->remote_ip, 4);
+        ip->header_checksum = 0;
+        ip->header_checksum = htons(inet_cksum(packet_buf, ipv4_header_len));
+        uint32_t tcp_len = tcp_header_len + len, sum = 6 + tcp_len;
+        for (uint32_t i = 12; i < 20; i += 2)
+            sum += ((uint32_t)packet_buf[i] << 8) | packet_buf[i + 1];
+        const uint8_t *tcp = packet_buf + ipv4_header_len;
+        for (uint32_t i = 0; i + 1 < tcp_len; i += 2)
+            sum += ((uint32_t)tcp[i] << 8) | tcp[i + 1];
+        if (tcp_len & 1) sum += (uint32_t)tcp[tcp_len - 1] << 8;
+        while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
+        ((TcpHeader_T *)(packet_buf + ipv4_header_len))->checksum = htons((uint16_t)~sum);
+    } else if (!new_packet(CRAFT_IPV4_PACKET, (uint8_t *)packet_buf)) {
         print((const uint8_t *)"-> IPv4 packet creation failed\n");
         return;
     }
